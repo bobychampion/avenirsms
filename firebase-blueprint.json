@@ -1,0 +1,277 @@
+{
+  "entities": {
+    "Application": {
+      "title": "Application",
+      "description": "An admission application for a student.",
+      "type": "object",
+      "properties": {
+        "applicantName": { "type": "string", "description": "Full name of the student" },
+        "email": { "type": "string", "format": "email", "description": "Contact email" },
+        "phone": { "type": "string", "description": "Contact phone number" },
+        "dob": { "type": "string", "format": "date", "description": "Date of birth" },
+        "gender": { "type": "string", "enum": ["male", "female", "other"] },
+        "nin": { "type": "string", "description": "National Identification Number" },
+        "classApplyingFor": { "type": "string", "description": "Target class (e.g., JSS 1)" },
+        "previousSchool": { "type": "string" },
+        "waecNecoNumber": { "type": "string", "description": "Examination number for verification" },
+        "status": { "type": "string", "enum": ["pending", "reviewing", "approved", "rejected"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" },
+        "reviewerNotes": { "type": "string" }
+      },
+      "required": ["applicantName", "email", "dob", "classApplyingFor", "status"]
+    },
+    "User": {
+      "title": "User",
+      "description": "User profile information.",
+      "type": "object",
+      "properties": {
+        "email": { "type": "string", "format": "email" },
+        "role": { "type": "string", "enum": ["admin", "applicant", "teacher", "parent"] },
+        "displayName": { "type": "string" }
+      },
+      "required": ["email", "role"]
+    },
+    "Student": {
+      "title": "Student",
+      "description": "An enrolled student.",
+      "type": "object",
+      "properties": {
+        "studentName": { "type": "string" },
+        "email": { "type": "string", "format": "email" },
+        "phone": { "type": "string" },
+        "dob": { "type": "string", "format": "date" },
+        "gender": { "type": "string" },
+        "nin": { "type": "string" },
+        "currentClass": { "type": "string" },
+        "studentId": { "type": "string", "description": "School-assigned student ID" },
+        "enrolledAt": { "type": "string", "format": "date-time" },
+        "applicationId": { "type": "string" },
+        "guardianName": { "type": "string" },
+        "guardianPhone": { "type": "string" },
+        "guardianRelationship": { "type": "string" },
+        "guardianEmail": { "type": "string" },
+        "previousSchool": { "type": "string" },
+        "previousClass": { "type": "string" },
+        "medicalConditions": { "type": "string" },
+        "bloodGroup": { "type": "string" },
+        "allergies": { "type": "string" }
+      },
+      "required": ["studentName", "email", "currentClass", "studentId"]
+    },
+    "Attendance": {
+      "title": "Attendance",
+      "description": "Student attendance record.",
+      "type": "object",
+      "properties": {
+        "studentId": { "type": "string" },
+        "date": { "type": "string", "format": "date" },
+        "status": { "type": "string", "enum": ["present", "absent", "late"] },
+        "class": { "type": "string" },
+        "recordedBy": { "type": "string" }
+      },
+      "required": ["studentId", "date", "status"]
+    },
+    "Assignment": {
+      "title": "Assignment",
+      "description": "Academic assignment.",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "subject": { "type": "string" },
+        "class": { "type": "string" },
+        "dueDate": { "type": "string", "format": "date" },
+        "teacherId": { "type": "string" }
+      },
+      "required": ["title", "subject", "class", "dueDate"]
+    },
+    "Message": {
+      "title": "Message",
+      "description": "Communication between users.",
+      "type": "object",
+      "properties": {
+        "senderId": { "type": "string" },
+        "senderName": { "type": "string" },
+        "receiverId": { "type": "string" },
+        "content": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "read": { "type": "boolean" }
+      },
+      "required": ["senderId", "receiverId", "content"]
+    },
+    "SchoolEvent": {
+      "title": "SchoolEvent",
+      "description": "School event.",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "date": { "type": "string", "format": "date" },
+        "type": { "type": "string", "enum": ["academic", "holiday", "sports", "other"] }
+      },
+      "required": ["title", "date", "type"]
+    },
+    "Invoice": {
+      "title": "Invoice",
+      "description": "Student fee invoice.",
+      "type": "object",
+      "properties": {
+        "studentId": { "type": "string" },
+        "studentName": { "type": "string" },
+        "amount": { "type": "number" },
+        "description": { "type": "string" },
+        "dueDate": { "type": "string", "format": "date" },
+        "status": { "type": "string", "enum": ["pending", "paid", "overdue", "cancelled"] },
+        "term": { "type": "string", "enum": ["1st Term", "2nd Term", "3rd Term"] },
+        "session": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["studentId", "amount", "dueDate", "status"]
+    },
+    "FeePayment": {
+      "title": "FeePayment",
+      "description": "Record of a fee payment.",
+      "type": "object",
+      "properties": {
+        "invoiceId": { "type": "string" },
+        "studentId": { "type": "string" },
+        "amount": { "type": "number" },
+        "paymentMethod": { "type": "string", "enum": ["cash", "bank_transfer", "card", "other"] },
+        "reference": { "type": "string" },
+        "date": { "type": "string", "format": "date" },
+        "recordedBy": { "type": "string" }
+      },
+      "required": ["invoiceId", "studentId", "amount", "date"]
+    },
+    "Expense": {
+      "title": "Expense",
+      "description": "School expense record.",
+      "type": "object",
+      "properties": {
+        "category": { "type": "string", "enum": ["salary", "maintenance", "supplies", "utility", "other"] },
+        "amount": { "type": "number" },
+        "description": { "type": "string" },
+        "date": { "type": "string", "format": "date" },
+        "recordedBy": { "type": "string" }
+      },
+      "required": ["category", "amount", "date"]
+    },
+    "Grade": {
+      "title": "Grade",
+      "description": "A student's grade for a subject in a term.",
+      "type": "object",
+      "properties": {
+        "studentId": { "type": "string" },
+        "subject": { "type": "string" },
+        "class": { "type": "string" },
+        "term": { "type": "string", "enum": ["1st Term", "2nd Term", "3rd Term"] },
+        "session": { "type": "string" },
+        "caScore": { "type": "number", "description": "Continuous Assessment score (usually 40%)" },
+        "examScore": { "type": "number", "description": "Exam score (usually 60%)" },
+        "totalScore": { "type": "number" },
+        "grade": { "type": "string" },
+        "teacherNotes": { "type": "string" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["studentId", "subject", "class", "term", "session"]
+    },
+    "ExamSeating": {
+      "title": "ExamSeating",
+      "description": "Exam seating arrangement.",
+      "type": "object",
+      "properties": {
+        "examName": { "type": "string" },
+        "hallName": { "type": "string" },
+        "studentId": { "type": "string" },
+        "seatNumber": { "type": "string" },
+        "date": { "type": "string", "format": "date" },
+        "time": { "type": "string" }
+      },
+      "required": ["examName", "hallName", "studentId", "seatNumber"]
+    },
+    "Timetable": {
+      "title": "Timetable",
+      "description": "Class timetable for a specific term and session.",
+      "type": "object",
+      "properties": {
+        "class": { "type": "string" },
+        "term": { "type": "string", "enum": ["1st Term", "2nd Term", "3rd Term"] },
+        "session": { "type": "string" },
+        "schedule": { "type": "object", "description": "Map of days to lists of periods" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["class", "term", "session", "schedule"]
+    },
+    "ClassSubject": {
+      "title": "ClassSubject",
+      "description": "A subject assigned to a class with a specific teacher.",
+      "type": "object",
+      "properties": {
+        "classId": { "type": "string" },
+        "subjectName": { "type": "string" },
+        "teacherId": { "type": "string" },
+        "teacherName": { "type": "string" }
+      },
+      "required": ["classId", "subjectName"]
+    }
+  },
+  "firestore": {
+    "/applications/{applicationId}": {
+      "schema": { "$ref": "Application" },
+      "description": "Admission applications."
+    },
+    "/users/{userId}": {
+      "schema": { "$ref": "User" },
+      "description": "User profiles and roles."
+    },
+    "/students/{studentId}": {
+      "schema": { "$ref": "Student" },
+      "description": "Enrolled students."
+    },
+    "/grades/{gradeId}": {
+      "schema": { "$ref": "Grade" },
+      "description": "Student grades."
+    },
+    "/exam_seating/{seatingId}": {
+      "schema": { "$ref": "ExamSeating" },
+      "description": "Exam seating plans."
+    },
+    "/timetables/{timetableId}": {
+      "schema": { "$ref": "Timetable" },
+      "description": "Class timetables."
+    },
+    "/attendance/{attendanceId}": {
+      "schema": { "$ref": "Attendance" },
+      "description": "Attendance records."
+    },
+    "/assignments/{assignmentId}": {
+      "schema": { "$ref": "Assignment" },
+      "description": "Academic assignments."
+    },
+    "/messages/{messageId}": {
+      "schema": { "$ref": "Message" },
+      "description": "User messages."
+    },
+    "/events/{eventId}": {
+      "schema": { "$ref": "SchoolEvent" },
+      "description": "School events."
+    },
+    "/invoices/{invoiceId}": {
+      "schema": { "$ref": "Invoice" },
+      "description": "Student fee invoices."
+    },
+    "/fee_payments/{paymentId}": {
+      "schema": { "$ref": "FeePayment" },
+      "description": "Fee payment records."
+    },
+    "/expenses/{expenseId}": {
+      "schema": { "$ref": "Expense" },
+      "description": "School expense records."
+    },
+    "/class_subjects/{subjectId}": {
+      "schema": { "$ref": "ClassSubject" },
+      "description": "Subjects assigned to classes."
+    }
+  }
+}

@@ -1,0 +1,155 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: users
+    // Document ID: {userId}
+    // Fields:
+    //   - email: string (required)
+    //   - role: string (required, 'admin' | 'applicant')
+    //   - displayName: string
+    //
+    // Collection: applications
+    // Document ID: {applicationId}
+    // Fields:
+    //   - applicantName: string (required)
+    //   - email: string (required)
+    //   - phone: string
+    //   - dob: string (required)
+    //   - gender: string
+    //   - nin: string
+    //   - classApplyingFor: string (required)
+    //   - previousSchool: string
+    //   - waecNecoNumber: string
+    //   - status: string (required, 'pending' | 'reviewing' | 'approved' | 'rejected')
+    //   - createdAt: timestamp (required)
+    //   - updatedAt: timestamp
+    //   - reviewerNotes: string
+    //   - applicantUid: string (required, owner)
+    //
+    // ===============================================================
+
+    // Helper Functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() && 
+        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['admin', 'School_admin'] ||
+         (request.auth.token.email == "jabpa87@gmail.com" && request.auth.token.email_verified == true));
+    }
+
+    function isTeacher() {
+      return isAuthenticated() && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'teacher';
+    }
+
+    function isParent() {
+      return isAuthenticated() && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'parent';
+    }
+
+    function isValidEmail(email) {
+      return email is string && email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$");
+    }
+
+    function isValidApplication(data) {
+      return data.applicantName is string && data.applicantName.size() > 0 && data.applicantName.size() < 100 &&
+             data.email is string && isValidEmail(data.email) &&
+             data.dob is string &&
+             data.classApplyingFor is string &&
+             data.status in ['pending', 'reviewing', 'approved', 'rejected'] &&
+             data.applicantUid == request.auth.uid;
+    }
+
+    // Rules
+    match /users/{userId} {
+      allow read: if isAuthenticated() && (isOwner(userId) || isAdmin() || isTeacher());
+      allow create: if isAuthenticated() && isOwner(userId) && 
+                    request.resource.data.role in ['applicant', 'teacher', 'parent', 'admin', 'School_admin'];
+      allow update: if isAuthenticated() && (isAdmin() || (isOwner(userId) && request.resource.data.role == resource.data.role));
+    }
+
+    match /applications/{applicationId} {
+      allow read: if isAuthenticated() && (resource.data.applicantUid == request.auth.uid || isAdmin());
+      allow create: if isAuthenticated() && isValidApplication(request.resource.data) && 
+                    request.resource.data.status == 'pending';
+      allow update: if isAuthenticated() && (
+        (isAdmin() && request.resource.data.diff(resource.data).affectedKeys().hasAny(['status', 'reviewerNotes', 'updatedAt'])) ||
+        (resource.data.applicantUid == request.auth.uid && resource.data.status == 'pending' && isValidApplication(request.resource.data))
+      );
+      allow delete: if isAdmin();
+    }
+
+    match /students/{studentId} {
+      allow read: if isAuthenticated() && (isAdmin() || isTeacher() || (resource.data.email == request.auth.token.email) || (resource.data.guardianEmail == request.auth.token.email));
+      allow write: if isAdmin();
+    }
+
+    match /grades/{gradeId} {
+      allow read: if isAuthenticated() && (isAdmin() || isTeacher() || (get(/databases/$(database)/documents/students/$(resource.data.studentId)).data.email == request.auth.token.email) || (get(/databases/$(database)/documents/students/$(resource.data.studentId)).data.guardianEmail == request.auth.token.email));
+      allow write: if isAdmin() || isTeacher();
+    }
+
+    match /exam_seating/{seatingId} {
+      allow read: if isAuthenticated() && (isAdmin() || isTeacher() || (get(/databases/$(database)/documents/students/$(resource.data.studentId)).data.email == request.auth.token.email) || (get(/databases/$(database)/documents/students/$(resource.data.studentId)).data.guardianEmail == request.auth.token.email));
+      allow write: if isAdmin();
+    }
+
+    match /timetables/{timetableId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+
+    match /attendance/{attendanceId} {
+      allow read: if isAuthenticated() && (isAdmin() || isTeacher() || (get(/databases/$(database)/documents/students/$(resource.data.studentId)).data.email == request.auth.token.email) || (get(/databases/$(database)/documents/students/$(resource.data.studentId)).data.guardianEmail == request.auth.token.email));
+      allow write: if isAdmin() || isTeacher();
+    }
+
+    match /assignments/{assignmentId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin() || isTeacher();
+    }
+
+    match /messages/{messageId} {
+      allow read: if isAuthenticated() && (request.auth.uid == resource.data.senderId || request.auth.uid == resource.data.receiverId);
+      allow create: if isAuthenticated();
+      allow update: if isAuthenticated() && request.auth.uid == resource.data.receiverId && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['read']);
+    }
+
+    match /events/{eventId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+
+    match /classes/{classId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+
+    match /class_subjects/{subjectId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+
+    match /invoices/{invoiceId} {
+      allow read: if isAuthenticated() && (isAdmin() || (get(/databases/$(database)/documents/students/$(resource.data.studentId)).data.guardianEmail == request.auth.token.email) || (get(/databases/$(database)/documents/students/$(resource.data.studentId)).data.email == request.auth.token.email));
+      allow write: if isAdmin();
+    }
+
+    match /fee_payments/{paymentId} {
+      allow read: if isAuthenticated() && (isAdmin() || (get(/databases/$(database)/documents/students/$(resource.data.studentId)).data.guardianEmail == request.auth.token.email) || (get(/databases/$(database)/documents/students/$(resource.data.studentId)).data.email == request.auth.token.email));
+      allow write: if isAdmin();
+    }
+
+    match /expenses/{expenseId} {
+      allow read, write: if isAdmin();
+    }
+  }
+}

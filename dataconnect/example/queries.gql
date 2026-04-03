@@ -1,0 +1,41 @@
+query ListAllSchools @auth(level: PUBLIC, insecureReason: "This operation is safe to expose to the public") {
+  schools {
+    id
+    name
+    address
+    city
+    state
+    country
+  }
+}
+
+query GetStudentProfile($studentId: UUID!) @auth(level: USER) {
+  student(id: $studentId) {
+    id
+    user {
+      username
+      firstName
+      lastName
+    }
+    school {
+      name
+    }
+    admissionNumber
+    dateOfBirth
+    gender
+    currentClass {
+      name
+      academicYear
+    }
+    medicalInfo
+    bloodGroup
+  }
+}
+
+mutation CreateNewSubject($name: String!, $schoolId: UUID!, $description: String) @auth(level: USER, insecureReason: "This operation is safe to expose to all logged in users.") {
+  subject_insert(data: {name: $name, schoolId: $schoolId, description: $description})
+}
+
+mutation UpdateTeacherQualifications($teacherId: UUID!, $qualifications: String!) @auth(level: USER) {
+  teacher_update(id: $teacherId, data: {qualifications: $qualifications})
+}

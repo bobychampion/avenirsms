@@ -1,280 +1,348 @@
 import React, { useState, useEffect } from 'react';
-import { Link } from 'react-router-dom';
 import { db, handleFirestoreError, OperationType } from '../firebase';
-import { collection, query, onSnapshot, where, getDocs, orderBy } from 'firebase/firestore';
-import { Student, Grade, SCHOOL_CLASSES, SUBJECTS } from '../types';
-import { motion } from 'motion/react';
-import { Search, Filter, FileText, Download, Printer, GraduationCap, User, BookOpen, Clock, ChevronRight, AlertCircle, ArrowLeft } from 'lucide-react';
+import { collection, query, where, getDocs } from 'firebase/firestore';
+import { Student, Grade, calculateGrade, CURRENT_SESSION, formatDate, StudentSkillRecord, StudentSkills, SKILL_LABELS, SKILL_RATING_LABELS, SkillRating } from '../types';
+import { generateReportSummary } from '../services/geminiService';
+import toast from 'react-hot-toast';
+import { useSchool } from '../components/SchoolContext';
+import { FileText, Printer, Sparkles, ChevronDown, Users } from 'lucide-react';
+
+const DEFAULT_SKILLS: StudentSkills = {
+  punctuality: 'G', neatness: 'G', cooperation: 'G', honesty: 'G', sports: 'G', creativity: 'G',
+};
+
+interface StudentReport {
+  student: Student;
+  grades: Grade[];
+  totalScore: number;
+  average: number;
+  position: number;
+  attendanceRate?: number;
+  principalComment?: string;
+  skills?: StudentSkills;
+}
+
+const GRADE_MAP: Record<string, { label: string; color: string }> = {
+  A1: { label: 'Excellent', color: 'text-emerald-600' },
+  B2: { label: 'Very Good', color: 'text-green-600' },
+  B3: { label: 'Good', color: 'text-lime-600' },
+  C4: { label: 'Credit', color: 'text-blue-600' },
+  C5: { label: 'Credit', color: 'text-blue-600' },
+  C6: { label: 'Credit', color: 'text-indigo-600' },
+  D7: { label: 'Pass', color: 'text-amber-600' },
+  E8: { label: 'Pass', color: 'text-orange-600' },
+  F9: { label: 'Fail', color: 'text-rose-600' },
+};
 
 export default function ReportCards() {
-  const [students, setStudents] = useState<Student[]>([]);
-  const [selectedStudent, setSelectedStudent] = useState<Student | null>(null);
-  const [studentGrades, setStudentGrades] = useState<Grade[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [loadingGrades, setLoadingGrades] = useState(false);
-  const [selectedClass, setSelectedClass] = useState(SCHOOL_CLASSES[0]);
+  const { classNames } = useSchool();
+  const [selectedClass, setSelectedClass] = useState('');
   const [selectedTerm, setSelectedTerm] = useState<'1st Term' | '2nd Term' | '3rd Term'>('1st Term');
-  const [session] = useState('2025/2026');
+  const [session] = useState(CURRENT_SESSION);
+  const [reports, setReports] = useState<StudentReport[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [selectedReport, setSelectedReport] = useState<StudentReport | null>(null);
+  const [generatingComment, setGeneratingComment] = useState<string | null>(null);
+  const [schoolName] = useState('Avenir Secondary School');
 
-  useEffect(() => {
+  const loadReports = async () => {
     setLoading(true);
-    const q = query(collection(db, 'students'), where('currentClass', '==', selectedClass));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Student));
-      setStudents(data);
-      setLoading(false);
-    }, (error) => handleFirestoreError(error, OperationType.LIST, 'students'));
+    setSelectedReport(null);
+    const [studentsSnap, gradesSnap, skillsSnap] = await Promise.all([
+      getDocs(query(collection(db, 'students'), where('currentClass', '==', selectedClass))),
+      getDocs(query(collection(db, 'grades'), where('class', '==', selectedClass), where('term', '==', selectedTerm), where('session', '==', session))),
+      getDocs(query(collection(db, 'student_skills'), where('class', '==', selectedClass), where('term', '==', selectedTerm), where('session', '==', session))),
+    ]).catch(e => { handleFirestoreError(e, OperationType.LIST, 'grades'); return [null, null, null]; });
 
-    return () => unsubscribe();
-  }, [selectedClass]);
+    if (!studentsSnap || !gradesSnap) { setLoading(false); return; }
 
-  const fetchStudentGrades = async (student: Student) => {
-    setLoadingGrades(true);
-    setSelectedStudent(student);
+    const students = studentsSnap.docs.map(d => ({ id: d.id, ...d.data() } as Student));
+    const grades = gradesSnap.docs.map(d => ({ id: d.id, ...d.data() } as Grade));
+    const skillsMap: Record<string, StudentSkills> = {};
+    if (skillsSnap) {
+      skillsSnap.docs.forEach(d => {
+        const rec = d.data() as StudentSkillRecord;
+        skillsMap[rec.studentId] = rec.skills;
+      });
+    }
+
+    const studentReports: StudentReport[] = students.map(student => {
+      const studentGrades = grades.filter(g => g.studentId === student.id);
+      const totalScore = studentGrades.reduce((sum, g) => sum + g.totalScore, 0);
+      const average = studentGrades.length > 0 ? Math.round(totalScore / studentGrades.length) : 0;
+      return { student, grades: studentGrades, totalScore, average, position: 0, skills: skillsMap[student.id!] };
+    });
+
+    // Assign positions
+    const sorted = [...studentReports].sort((a, b) => b.average - a.average);
+    sorted.forEach((r, i) => { r.position = i + 1; });
+
+    setReports(sorted);
+    setLoading(false);
+  };
+
+  const generateComment = async (report: StudentReport) => {
+    setGeneratingComment(report.student.id!);
+    const gradeList = report.grades.map(g => ({ subject: g.subject, total: g.totalScore, grade: g.grade }));
+    const tid = toast.loading('Generating AI comment…');
     try {
-      const q = query(
-        collection(db, 'grades'),
-        where('studentId', '==', student.id),
-        where('term', '==', selectedTerm),
-        where('session', '==', session)
-      );
-      const snapshot = await getDocs(q);
-      const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Grade));
-      setStudentGrades(data);
-    } catch (error) {
-      handleFirestoreError(error, OperationType.LIST, 'grades');
+      const comment = await generateReportSummary(report.student.studentName, gradeList, 90);
+      if (comment) {
+        setReports(prev => prev.map(r => r.student.id === report.student.id ? { ...r, principalComment: comment.trim() } : r));
+        setSelectedReport(prev => prev && prev.student.id === report.student.id ? { ...prev, principalComment: comment.trim() } : prev);
+        toast.success('Comment generated!', { id: tid });
+      }
+    } catch (e: any) {
+      toast.error('AI error: ' + (e.message || 'Unknown'), { id: tid });
     } finally {
-      setLoadingGrades(false);
+      setGeneratingComment(null);
     }
   };
 
-  useEffect(() => {
-    if (selectedStudent) {
-      fetchStudentGrades(selectedStudent);
-    }
-  }, [selectedTerm]);
-
-  const calculateAverage = () => {
-    if (studentGrades.length === 0) return "0.00";
-    const sum = studentGrades.reduce((acc, g) => acc + g.totalScore, 0);
-    return (sum / studentGrades.length).toFixed(2);
-  };
+  const handlePrint = () => window.print();
 
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10">
-      <div className="mb-6">
-        <Link to="/admin" className="text-indigo-600 hover:text-indigo-700 font-bold text-sm flex items-center">
-          <ArrowLeft className="w-4 h-4 mr-2" />
-          Back to Dashboard
-        </Link>
-      </div>
-      <div className="mb-10">
-        <h1 className="text-3xl font-bold text-slate-900 tracking-tight">Report Cards & Transcripts</h1>
-        <p className="text-slate-500 mt-1">Generate and review academic performance reports for students.</p>
+    <div className="p-6 lg:p-8 max-w-[1200px] mx-auto print:p-0 print:max-w-none">
+      <div className="mb-8 print:hidden">
+        <h1 className="text-2xl font-bold text-slate-900 flex items-center gap-2">
+          <FileText className="w-6 h-6 text-indigo-600" />
+          Report Cards
+        </h1>
+        <p className="text-slate-500 mt-1 text-sm">Generate and print end-of-term report cards for students.</p>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        {/* Student Selection Sidebar */}
-        <div className="space-y-6">
-          <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
-            <h3 className="text-lg font-bold text-slate-900 mb-6 flex items-center">
-              <Filter className="w-5 h-5 mr-2 text-indigo-600" />
-              Select Student
-            </h3>
-            <div className="space-y-4">
-              <div className="space-y-2">
-                <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">Class</label>
-                <select
-                  value={selectedClass}
-                  onChange={e => setSelectedClass(e.target.value)}
-                  className="w-full px-4 py-2 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none bg-white font-medium text-sm"
-                >
-                  {SCHOOL_CLASSES.map(c => <option key={c} value={c}>{c}</option>)}
-                </select>
-              </div>
-              <div className="space-y-2">
-                <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">Term</label>
-                <select
-                  value={selectedTerm}
-                  onChange={e => setSelectedTerm(e.target.value as any)}
-                  className="w-full px-4 py-2 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none bg-white font-medium text-sm"
-                >
-                  <option value="1st Term">1st Term</option>
-                  <option value="2nd Term">2nd Term</option>
-                  <option value="3rd Term">3rd Term</option>
-                </select>
-              </div>
+      {/* Controls */}
+      <div className="bg-white rounded-2xl border border-slate-200 p-5 mb-6 shadow-sm print:hidden">
+        <div className="flex flex-wrap gap-4 items-end">
+          <div className="flex-1 min-w-[140px]">
+            <label className="text-xs font-bold text-slate-500 uppercase tracking-wide block mb-1.5">Class</label>
+            <select value={selectedClass} onChange={e => setSelectedClass(e.target.value)}
+              className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none bg-white text-sm">
+              {classNames.map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
+          </div>
+          <div className="flex-1 min-w-[140px]">
+            <label className="text-xs font-bold text-slate-500 uppercase tracking-wide block mb-1.5">Term</label>
+            <select value={selectedTerm} onChange={e => setSelectedTerm(e.target.value as any)}
+              className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none bg-white text-sm">
+              <option>1st Term</option><option>2nd Term</option><option>3rd Term</option>
+            </select>
+          </div>
+          <button onClick={loadReports} disabled={loading}
+            className="px-5 py-2.5 bg-indigo-600 text-white font-bold rounded-xl hover:bg-indigo-700 transition-all text-sm shadow-sm disabled:opacity-60">
+            {loading ? 'Loading...' : 'Generate Reports'}
+          </button>
+          {selectedReport && (
+            <button onClick={handlePrint} className="flex items-center gap-2 px-4 py-2.5 bg-slate-800 text-white font-bold rounded-xl hover:bg-slate-900 transition-all text-sm">
+              <Printer className="w-4 h-4" /> Print
+            </button>
+          )}
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 print:block">
+        {/* Student list */}
+        <div className="print:hidden">
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+            <div className="p-4 border-b border-slate-100">
+              <p className="text-sm font-bold text-slate-700">{selectedClass} — {reports.length} students</p>
             </div>
-
-            <div className="mt-8 space-y-2 max-h-[400px] overflow-y-auto pr-2 custom-scrollbar">
-              {loading ? (
-                <p className="text-center text-slate-400 text-sm py-4">Loading students...</p>
-              ) : students.length === 0 ? (
-                <p className="text-center text-slate-400 text-sm py-4">No students in this class.</p>
-              ) : (
-                students.map(student => (
-                  <button
-                    key={student.id}
-                    onClick={() => fetchStudentGrades(student)}
-                    className={`w-full flex items-center p-3 rounded-xl border transition-all text-left ${
-                      selectedStudent?.id === student.id 
-                        ? 'bg-indigo-600 border-indigo-600 text-white shadow-lg shadow-indigo-100' 
-                        : 'bg-slate-50 border-slate-100 text-slate-700 hover:bg-slate-100'
-                    }`}
-                  >
-                    <div className={`w-8 h-8 rounded-lg flex items-center justify-center font-bold text-xs mr-3 ${
-                      selectedStudent?.id === student.id ? 'bg-white/20 text-white' : 'bg-indigo-50 text-indigo-700'
-                    }`}>
-                      {student.studentName.charAt(0)}
+            {reports.length === 0 ? (
+              <div className="py-16 text-center text-slate-400">
+                <Users className="w-10 h-10 mx-auto mb-3 opacity-20" />
+                <p className="text-sm">Generate reports to view the list.</p>
+              </div>
+            ) : (
+              <div className="divide-y divide-slate-100 max-h-[500px] overflow-y-auto">
+                {reports.map(report => (
+                  <button key={report.student.id} onClick={() => setSelectedReport(report)}
+                    className={`w-full flex items-center justify-between px-4 py-3 hover:bg-slate-50 text-left transition-colors ${selectedReport?.student.id === report.student.id ? 'bg-indigo-50 border-l-4 border-indigo-600' : ''}`}>
+                    <div>
+                      <p className="text-sm font-semibold text-slate-800">{report.student.studentName}</p>
+                      <p className="text-xs text-slate-500">{report.grades.length} subjects</p>
                     </div>
-                    <div className="flex-grow">
-                      <p className="font-bold text-sm truncate">{student.studentName}</p>
-                      <p className={`text-[10px] font-mono ${selectedStudent?.id === student.id ? 'text-indigo-100' : 'text-slate-400'}`}>
-                        {student.studentId}
-                      </p>
+                    <div className="text-right">
+                      <p className="text-sm font-bold text-indigo-600">{report.average}%</p>
+                      <p className="text-xs text-slate-400">#{report.position}</p>
                     </div>
-                    <ChevronRight className={`w-4 h-4 ${selectedStudent?.id === student.id ? 'text-white' : 'text-slate-300'}`} />
                   </button>
-                ))
-              )}
-            </div>
+                ))}
+              </div>
+            )}
           </div>
         </div>
 
         {/* Report Card Preview */}
-        <div className="lg:col-span-2">
-          {!selectedStudent ? (
-            <div className="bg-white rounded-3xl border-2 border-dashed border-slate-200 p-20 text-center">
-              <FileText className="w-16 h-16 text-slate-200 mx-auto mb-6" />
-              <h3 className="text-xl font-bold text-slate-400">Select a student to view their report card</h3>
-              <p className="text-slate-300 mt-2">Academic results for the selected term will appear here.</p>
+        <div className="lg:col-span-2 print:col-span-3">
+          {selectedReport ? (
+            <div className="print:shadow-none print:border-none">
+              <div className="print:hidden mb-4 flex justify-end gap-2">
+                <button
+                  onClick={() => generateComment(selectedReport)}
+                  disabled={generatingComment === selectedReport.student.id}
+                  className="flex items-center gap-2 px-4 py-2 bg-violet-600 text-white text-sm font-bold rounded-xl hover:bg-violet-700 transition-all disabled:opacity-60"
+                >
+                  {generatingComment === selectedReport.student.id
+                    ? <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                    : <Sparkles className="w-4 h-4" />}
+                  AI Principal Comment
+                </button>
+              </div>
+
+              {/* Report Card */}
+              <div className="bg-white rounded-2xl border-2 border-slate-200 shadow-sm print:shadow-none print:border-slate-300 overflow-hidden" id="report-card">
+                {/* Header */}
+                <div className="bg-indigo-900 text-white p-6 text-center">
+                  <h2 className="text-xl font-bold">{schoolName}</h2>
+                  <p className="text-indigo-300 text-sm mt-0.5">Student Progress Report</p>
+                  <div className="mt-3 flex justify-center gap-6 text-sm">
+                    <span><span className="text-indigo-300">Term:</span> {selectedTerm}</span>
+                    <span><span className="text-indigo-300">Session:</span> {session}</span>
+                    <span><span className="text-indigo-300">Class:</span> {selectedClass}</span>
+                  </div>
+                </div>
+
+                {/* Student Info */}
+                <div className="p-5 bg-slate-50 border-b border-slate-200 flex flex-wrap gap-6">
+                  {[
+                    { label: 'Name', value: selectedReport.student.studentName },
+                    { label: 'Student ID', value: selectedReport.student.studentId },
+                    { label: 'Gender', value: selectedReport.student.gender },
+                    { label: 'Class Position', value: `${selectedReport.position} of ${reports.length}` },
+                    { label: 'Average', value: `${selectedReport.average}%` },
+                  ].map(item => (
+                    <div key={item.label}>
+                      <p className="text-xs text-slate-500 font-semibold uppercase tracking-wide">{item.label}</p>
+                      <p className="text-sm font-bold text-slate-800 capitalize">{item.value}</p>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Grades Table */}
+                <div className="p-5">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b-2 border-slate-200">
+                        <th className="text-left py-2 text-xs font-bold text-slate-500 uppercase tracking-wide">Subject</th>
+                        <th className="text-center py-2 text-xs font-bold text-slate-500 uppercase tracking-wide">CA /40</th>
+                        <th className="text-center py-2 text-xs font-bold text-slate-500 uppercase tracking-wide">Exam /60</th>
+                        <th className="text-center py-2 text-xs font-bold text-slate-500 uppercase tracking-wide">Total</th>
+                        <th className="text-center py-2 text-xs font-bold text-slate-500 uppercase tracking-wide">Grade</th>
+                        <th className="text-center py-2 text-xs font-bold text-slate-500 uppercase tracking-wide">Pos.</th>
+                        <th className="text-left py-2 text-xs font-bold text-slate-500 uppercase tracking-wide">Remark</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {selectedReport.grades.length === 0 ? (
+                        <tr><td colSpan={7} className="py-8 text-center text-slate-400 text-xs">No grades recorded for this term.</td></tr>
+                      ) : (
+                        selectedReport.grades.map(g => (
+                          <tr key={g.subject}>
+                            <td className="py-2.5 font-medium text-slate-800">{g.subject}</td>
+                            <td className="py-2.5 text-center text-slate-600">{g.caScore}</td>
+                            <td className="py-2.5 text-center text-slate-600">{g.examScore}</td>
+                            <td className="py-2.5 text-center font-bold text-slate-900">{g.totalScore}</td>
+                            <td className="py-2.5 text-center">
+                              <span className={`font-bold ${GRADE_MAP[g.grade]?.color || 'text-slate-700'}`}>{g.grade}</span>
+                            </td>
+                            <td className="py-2.5 text-center text-xs text-slate-500">
+                              {g.subjectPosition ? `#${g.subjectPosition}` : '—'}
+                            </td>
+                            <td className={`py-2.5 text-xs ${GRADE_MAP[g.grade]?.color || 'text-slate-500'}`}>
+                              {GRADE_MAP[g.grade]?.label || g.grade}
+                            </td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                    <tfoot>
+                      <tr className="border-t-2 border-slate-200 bg-slate-50">
+                        <td colSpan={2} className="py-2.5 font-bold text-slate-700 text-sm">Overall Average</td>
+                        <td colSpan={2} className="py-2.5 text-center font-bold text-indigo-700 text-lg">{selectedReport.average}%</td>
+                        <td colSpan={3} className="py-2.5 text-left font-bold text-slate-700">
+                          {calculateGrade(selectedReport.average)} &nbsp;—&nbsp; Position: <span className="text-indigo-700">{selectedReport.position} of {reports.length}</span>
+                        </td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+
+                {/* Skills / Psychomotor Assessment (NERDC) */}
+                <div className="px-5 pb-5">
+                  <div className="border border-slate-200 rounded-xl overflow-hidden">
+                    <div className="bg-slate-50 px-4 py-2 border-b border-slate-200">
+                      <p className="text-xs font-bold text-slate-600 uppercase tracking-wide">Psychomotor / Affective Skills Assessment</p>
+                    </div>
+                    <div className="grid grid-cols-3 sm:grid-cols-6 divide-x divide-y sm:divide-y-0 divide-slate-100">
+                      {SKILL_LABELS.map(({ key, label }) => {
+                        const rating = selectedReport.skills?.[key] ?? 'G';
+                        return (
+                          <div key={key} className="p-3 text-center">
+                            <p className="text-xs font-semibold text-slate-600 mb-1">{label}</p>
+                            <p className={`text-sm font-black ${rating === 'E' || rating === 'VG' ? 'text-emerald-600' : rating === 'P' ? 'text-rose-600' : 'text-slate-700'}`}>
+                              {rating}
+                            </p>
+                            <p className="text-[10px] text-slate-400">{SKILL_RATING_LABELS[rating as SkillRating]}</p>
+                          </div>
+                        );
+                      })}
+                    </div>
+                    <div className="px-4 py-2 border-t border-slate-100 bg-slate-50">
+                      <p className="text-[10px] text-slate-400">E = Excellent &nbsp;|&nbsp; VG = Very Good &nbsp;|&nbsp; G = Good &nbsp;|&nbsp; F = Fair &nbsp;|&nbsp; P = Poor</p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Principal Comment */}
+                <div className="px-5 pb-5">
+                  <div className="bg-indigo-50 rounded-xl p-4 border border-indigo-100">
+                    <p className="text-xs font-bold text-indigo-700 uppercase tracking-wide mb-2">Principal's Comment</p>
+                    <p className="text-sm text-slate-700 italic leading-relaxed">
+                      {selectedReport.principalComment || 'Click "AI Principal Comment" to generate an intelligent comment, or enter manually.'}
+                    </p>
+                  </div>
+                </div>
+
+                {/* Grading Key */}
+                <div className="px-5 pb-5">
+                  <div className="border border-slate-200 rounded-xl p-3">
+                    <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">Grading Scale</p>
+                    <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-600">
+                      {Object.entries(GRADE_MAP).map(([g, v]) => (
+                        <span key={g}><span className="font-bold">{g}</span> — {v.label}</span>
+                      ))}
+                    </div>
+                    <p className="text-xs text-slate-400 mt-1">A1: 75+ | B2: 70–74 | B3: 65–69 | C4: 60–64 | C5: 55–59 | C6: 50–54 | D7: 45–49 | E8: 40–44 | F9: &lt;40</p>
+                  </div>
+                </div>
+
+                {/* Signature Lines — visible on print */}
+                <div className="px-5 pb-8">
+                  <div className="grid grid-cols-3 gap-6 pt-4 border-t border-slate-200">
+                    {['Class Teacher', 'Head of Department', 'Principal / Head Teacher'].map(role => (
+                      <div key={role} className="text-center">
+                        <div className="h-10 border-b-2 border-slate-300 mb-1" />
+                        <p className="text-xs font-bold text-slate-500">{role}</p>
+                        <p className="text-[10px] text-slate-400 mt-0.5">Signature &amp; Date</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Next Term resumption note */}
+                <div className="px-5 pb-5 print:pb-8">
+                  <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 text-xs text-slate-500 text-center">
+                    <strong className="text-slate-700">Next Term Begins:</strong> _________________ &nbsp;|&nbsp;
+                    <strong className="text-slate-700">School Fees Due:</strong> _________________
+                  </div>
+                </div>
+              </div>
             </div>
           ) : (
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              className="bg-white rounded-2xl shadow-xl border border-slate-200 overflow-hidden"
-            >
-              {/* Report Card Header */}
-              <div className="bg-indigo-900 p-8 text-white">
-                <div className="flex justify-between items-start mb-8">
-                  <div className="flex items-center space-x-4">
-                    <div className="bg-white p-3 rounded-2xl shadow-lg">
-                      <GraduationCap className="w-8 h-8 text-indigo-900" />
-                    </div>
-                    <div>
-                      <h2 className="text-2xl font-bold tracking-tight">AVENIR SMART SCHOOL</h2>
-                      <p className="text-indigo-200 text-sm font-medium">Academic Performance Report</p>
-                    </div>
-                  </div>
-                  <div className="flex space-x-2">
-                    <button className="p-2 bg-white/10 rounded-lg hover:bg-white/20 transition-colors" title="Print">
-                      <Printer className="w-5 h-5" />
-                    </button>
-                    <button className="p-2 bg-white/10 rounded-lg hover:bg-white/20 transition-colors" title="Download PDF">
-                      <Download className="w-5 h-5" />
-                    </button>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
-                  <div className="space-y-1">
-                    <p className="text-[10px] font-bold text-indigo-300 uppercase tracking-widest">Student Name</p>
-                    <p className="font-bold">{selectedStudent.studentName}</p>
-                  </div>
-                  <div className="space-y-1">
-                    <p className="text-[10px] font-bold text-indigo-300 uppercase tracking-widest">Student ID</p>
-                    <p className="font-bold font-mono">{selectedStudent.studentId}</p>
-                  </div>
-                  <div className="space-y-1">
-                    <p className="text-[10px] font-bold text-indigo-300 uppercase tracking-widest">Class</p>
-                    <p className="font-bold">{selectedStudent.currentClass}</p>
-                  </div>
-                  <div className="space-y-1">
-                    <p className="text-[10px] font-bold text-indigo-300 uppercase tracking-widest">Term / Session</p>
-                    <p className="font-bold">{selectedTerm} - {session}</p>
-                  </div>
-                </div>
-              </div>
-
-              {/* Results Table */}
-              <div className="p-8">
-                {loadingGrades ? (
-                  <div className="text-center py-20 text-slate-400">Fetching academic records...</div>
-                ) : studentGrades.length === 0 ? (
-                  <div className="text-center py-20 bg-slate-50 rounded-2xl border border-slate-100">
-                    <AlertCircle className="w-12 h-12 text-slate-200 mx-auto mb-4" />
-                    <p className="text-slate-500 font-medium">No results found for this term.</p>
-                    <p className="text-slate-400 text-sm mt-1">Please ensure grades have been uploaded in the Gradebook.</p>
-                  </div>
-                ) : (
-                  <>
-                    <div className="overflow-hidden rounded-xl border border-slate-200 mb-8">
-                      <table className="w-full text-left border-collapse">
-                        <thead>
-                          <tr className="bg-slate-50 border-b border-slate-200">
-                            <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Subject</th>
-                            <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider text-center">CA (40)</th>
-                            <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider text-center">Exam (60)</th>
-                            <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider text-center">Total (100)</th>
-                            <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider text-center">Grade</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-slate-100">
-                          {studentGrades.map((grade) => (
-                            <tr key={grade.id} className="hover:bg-slate-50/50 transition-colors">
-                              <td className="px-6 py-4 font-bold text-slate-900 text-sm">{grade.subject}</td>
-                              <td className="px-6 py-4 text-center text-sm font-medium text-slate-600">{grade.caScore}</td>
-                              <td className="px-6 py-4 text-center text-sm font-medium text-slate-600">{grade.examScore}</td>
-                              <td className="px-6 py-4 text-center">
-                                <span className={`font-bold text-sm ${grade.totalScore >= 50 ? 'text-emerald-600' : 'text-rose-600'}`}>
-                                  {grade.totalScore}
-                                </span>
-                              </td>
-                              <td className="px-6 py-4 text-center">
-                                <span className="font-bold text-indigo-600">{grade.grade}</span>
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-
-                    {/* Summary Stats */}
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                      <div className="bg-slate-50 p-6 rounded-2xl border border-slate-100">
-                        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Total Subjects</p>
-                        <p className="text-3xl font-extrabold text-slate-900">{studentGrades.length}</p>
-                      </div>
-                      <div className="bg-slate-50 p-6 rounded-2xl border border-slate-100">
-                        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Average Score</p>
-                        <p className="text-3xl font-extrabold text-indigo-600">{calculateAverage()}%</p>
-                      </div>
-                      <div className="bg-slate-50 p-6 rounded-2xl border border-slate-100">
-                        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Overall Grade</p>
-                        <p className="text-3xl font-extrabold text-emerald-600">
-                          {parseFloat(calculateAverage()) >= 70 ? 'Distinction' : parseFloat(calculateAverage()) >= 50 ? 'Pass' : 'Fail'}
-                        </p>
-                      </div>
-                    </div>
-
-                    <div className="mt-12 p-6 bg-indigo-50 rounded-2xl border border-indigo-100 flex items-start">
-                      <Clock className="w-5 h-5 text-indigo-600 mr-4 mt-1" />
-                      <div>
-                        <h4 className="font-bold text-indigo-900 text-sm">Principal's Remark</h4>
-                        <p className="text-indigo-700 text-sm mt-1">
-                          {parseFloat(calculateAverage()) >= 70 
-                            ? "An excellent performance. Keep up the high standard and continue to strive for excellence."
-                            : parseFloat(calculateAverage()) >= 50 
-                              ? "A good effort. There is room for improvement in some subjects. Focus more on your weak areas."
-                              : "This performance is below expectation. A serious meeting with parents is required to discuss academic support."}
-                        </p>
-                      </div>
-                    </div>
-                  </>
-                )}
-              </div>
-            </motion.div>
+            <div className="bg-white rounded-2xl border border-slate-200 py-24 text-center shadow-sm print:hidden">
+              <FileText className="w-12 h-12 text-slate-200 mx-auto mb-4" />
+              <p className="text-slate-500 font-medium">Select a student from the list to preview their report card.</p>
+            </div>
           )}
         </div>
       </div>

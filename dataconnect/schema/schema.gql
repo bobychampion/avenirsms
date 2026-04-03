@@ -1,0 +1,73 @@
+type User @table {
+  username: String!
+  passwordHash: String!
+  role: String!
+  createdAt: Timestamp!
+  firstName: String
+  lastName: String
+  email: String
+  phoneNumber: String
+  photoUrl: String
+}
+
+type School @table {
+  name: String!
+  address: String!
+  city: String!
+  state: String!
+  country: String!
+  createdAt: Timestamp!
+  logoUrl: String
+  motto: String
+  website: String
+}
+
+type Student @table {
+  user: User!
+  school: School!
+  admissionNumber: String!
+  dateOfBirth: Date!
+  gender: String!
+  currentClass: Class!
+  createdAt: Timestamp!
+  medicalInfo: String
+  bloodGroup: String
+}
+
+type Teacher @table {
+  user: User!
+  school: School!
+  staffId: String!
+  dateJoined: Date!
+  createdAt: Timestamp!
+  qualifications: String
+  subjectsTaught: String
+}
+
+type Class @table {
+  school: School!
+  name: String!
+  academicYear: String!
+  createdAt: Timestamp!
+  classTeacher: Teacher
+}
+
+type Subject @table {
+  school: School!
+  name: String!
+  createdAt: Timestamp!
+  description: String
+}
+
+type Grade @table {
+  student: Student!
+  subject: Subject!
+  class: Class!
+  teacher: Teacher!
+  score: Int!
+  term: String!
+  academicSession: String!
+  type: String!
+  createdAt: Timestamp!
+  comments: String
+}

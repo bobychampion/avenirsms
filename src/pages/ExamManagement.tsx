@@ -1,308 +1,251 @@
 import React, { useState, useEffect } from 'react';
-import { Link } from 'react-router-dom';
 import { db, handleFirestoreError, OperationType } from '../firebase';
-import { collection, query, onSnapshot, where, getDocs, addDoc, serverTimestamp, orderBy } from 'firebase/firestore';
-import { Student, ExamSeating, SCHOOL_CLASSES } from '../types';
-import { motion } from 'motion/react';
-import { Search, Filter, Calendar, MapPin, Hash, User, Loader2, Save, Printer, Download, GraduationCap, Clock, ArrowLeft } from 'lucide-react';
+import { collection, query, onSnapshot, addDoc, updateDoc, deleteDoc, doc, serverTimestamp, where, getDocs } from 'firebase/firestore';
+import { ExamSeating, Student, SUBJECTS } from '../types';
+import { AnimatePresence, motion } from 'motion/react';
+import { GraduationCap, Plus, Printer, Trash2, X, Search, Edit2, Users, Calendar } from 'lucide-react';
+import { useSchool } from '../components/SchoolContext';
+
+interface Exam {
+  id?: string;
+  name: string;
+  subject: string;
+  class: string;
+  date: string;
+  startTime: string;
+  endTime: string;
+  hall: string;
+  createdAt?: any;
+}
 
 export default function ExamManagement() {
+  const { classNames } = useSchool();
+  const [exams, setExams] = useState<Exam[]>([]);
+  const [seatings, setSeatings] = useState<ExamSeating[]>([]);
   const [students, setStudents] = useState<Student[]>([]);
-  const [seating, setSeating] = useState<ExamSeating[]>([]);
   const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [selectedClass, setSelectedClass] = useState(SCHOOL_CLASSES[0]);
-  const [examName, setExamName] = useState('2025/2026 1st Term Final Exam');
-  const [hallName, setHallName] = useState('Main Hall A');
-  const [examDate, setExamDate] = useState('2025-12-15');
-  const [examTime, setExamTime] = useState('09:00 AM');
+  const [isExamModal, setIsExamModal] = useState(false);
+  const [selectedExam, setSelectedExam] = useState<Exam | null>(null);
+  const [printingId, setPrintingId] = useState<string | null>(null);
+  const [examForm, setExamForm] = useState<Partial<Exam>>({
+    name: '', subject: SUBJECTS[0], class: '',
+    date: '', startTime: '09:00', endTime: '11:00', hall: 'Hall A'
+  });
+  const [autoAssigning, setAutoAssigning] = useState(false);
 
   useEffect(() => {
-    setLoading(true);
-    const q = query(collection(db, 'students'), where('currentClass', '==', selectedClass));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Student));
-      setStudents(data);
-      fetchSeating(data);
-    }, (error) => handleFirestoreError(error, OperationType.LIST, 'students'));
-
-    return () => unsubscribe();
-  }, [selectedClass]);
-
-  const fetchSeating = async (studentList: Student[]) => {
-    if (studentList.length === 0) {
-      setSeating([]);
+    const unsub1 = onSnapshot(query(collection(db, 'exams'), ), snap => {
+      setExams(snap.docs.map(d => ({ id: d.id, ...d.data() } as Exam)));
       setLoading(false);
-      return;
-    }
+    });
+    const unsub2 = onSnapshot(collection(db, 'exam_seating'), snap => {
+      setSeatings(snap.docs.map(d => ({ id: d.id, ...d.data() } as ExamSeating)));
+    });
+    const unsub3 = onSnapshot(collection(db, 'students'), snap => {
+      setStudents(snap.docs.map(d => ({ id: d.id, ...d.data() } as Student)));
+    });
+    return () => { unsub1(); unsub2(); unsub3(); };
+  }, []);
 
-    try {
-      const q = query(
-        collection(db, 'exam_seating'),
-        where('examName', '==', examName)
-      );
-      const snapshot = await getDocs(q);
-      const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as ExamSeating));
-      setSeating(data);
-    } catch (error) {
-      handleFirestoreError(error, OperationType.LIST, 'exam_seating');
-    } finally {
-      setLoading(false);
+  const saveExam = async () => {
+    if (!examForm.name || !examForm.date) return;
+    if ((examForm as any).id) {
+      await updateDoc(doc(db, 'exams', (examForm as any).id), { ...examForm }).catch(console.error);
+    } else {
+      await addDoc(collection(db, 'exams'), { ...examForm, createdAt: serverTimestamp() }).catch(console.error);
     }
+    setIsExamModal(false);
+    setExamForm({ name: '', subject: SUBJECTS[0], class: '', date: '', startTime: '09:00', endTime: '11:00', hall: 'Hall A' });
   };
 
-  const generateSeating = async () => {
-    setSaving(true);
-    try {
-      // Clear existing seating for this exam and class (simplified for demo)
-      // In a real app, you'd delete or update. Here we just add new ones.
-      
-      for (let i = 0; i < students.length; i++) {
-        const student = students[i];
-        const existing = seating.find(s => s.studentId === student.id);
-        if (!existing) {
-          const newSeating: ExamSeating = {
-            examName,
-            hallName,
-            studentId: student.id!,
-            seatNumber: `${selectedClass.charAt(0)}${i + 101}`,
-            date: examDate,
-            time: examTime
-          };
-          await addDoc(collection(db, 'exam_seating'), newSeating);
-        }
-      }
-      fetchSeating(students);
-    } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, 'exam_seating');
-    } finally {
-      setSaving(false);
-    }
+  const deleteExam = async (id: string) => {
+    if (!confirm('Delete this exam?')) return;
+    await deleteDoc(doc(db, 'exams', id)).catch(console.error);
   };
+
+  const autoAssignSeats = async (exam: Exam) => {
+    setAutoAssigning(true);
+    const classStudents = students.filter(s => s.currentClass === exam.class);
+    // remove existing seating for this exam
+    const existingQ = query(collection(db, 'exam_seating'), where('examName', '==', exam.name));
+    const existing = await getDocs(existingQ);
+    await Promise.all(existing.docs.map(d => deleteDoc(d.ref)));
+    // assign
+    await Promise.all(classStudents.map((s, i) =>
+      addDoc(collection(db, 'exam_seating'), {
+        examName: exam.name,
+        hallName: exam.hall,
+        studentId: s.id,
+        seatNumber: `${exam.hall.replace(/\s/g, '')}-${String(i + 1).padStart(2, '0')}`,
+        date: exam.date,
+        time: exam.startTime,
+        createdAt: serverTimestamp(),
+      })
+    ));
+    setAutoAssigning(false);
+    alert(`Seats assigned for ${classStudents.length} students.`);
+  };
+
+  const getSeatingForExam = (examName: string) => seatings.filter(s => s.examName === examName);
+  const getStudentName = (id: string) => students.find(s => s.id === id)?.studentName || id;
+  const getStudentId = (id: string) => students.find(s => s.id === id)?.studentId || '';
 
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10">
-      <div className="mb-6">
-        <Link to="/admin" className="text-indigo-600 hover:text-indigo-700 font-bold text-sm flex items-center">
-          <ArrowLeft className="w-4 h-4 mr-2" />
-          Back to Dashboard
-        </Link>
-      </div>
-      <div className="mb-10">
-        <h1 className="text-3xl font-bold text-slate-900 tracking-tight">Exam Management</h1>
-        <p className="text-slate-500 mt-1">Manage exam seating plans and generate hall tickets for students.</p>
-      </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
-        {/* Configuration Sidebar */}
-        <div className="space-y-6">
-          <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
-            <h3 className="text-lg font-bold text-slate-900 mb-6 flex items-center">
-              <Filter className="w-5 h-5 mr-2 text-indigo-600" />
-              Exam Config
-            </h3>
-            <div className="space-y-4">
-              <div className="space-y-2">
-                <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">Exam Name</label>
-                <input
-                  type="text"
-                  value={examName}
-                  onChange={e => setExamName(e.target.value)}
-                  className="w-full px-4 py-2 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none bg-white font-medium text-sm"
-                />
-              </div>
-              <div className="space-y-2">
-                <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">Hall Name</label>
-                <input
-                  type="text"
-                  value={hallName}
-                  onChange={e => setHallName(e.target.value)}
-                  className="w-full px-4 py-2 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none bg-white font-medium text-sm"
-                />
-              </div>
-              <div className="space-y-2">
-                <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">Exam Date</label>
-                <input
-                  type="date"
-                  value={examDate}
-                  onChange={e => setExamDate(e.target.value)}
-                  className="w-full px-4 py-2 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none bg-white font-medium text-sm"
-                />
-              </div>
-              <div className="space-y-2">
-                <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">Class</label>
-                <select
-                  value={selectedClass}
-                  onChange={e => setSelectedClass(e.target.value)}
-                  className="w-full px-4 py-2 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none bg-white font-medium text-sm"
-                >
-                  {SCHOOL_CLASSES.map(c => <option key={c} value={c}>{c}</option>)}
-                </select>
-              </div>
-              <button
-                onClick={generateSeating}
-                disabled={saving || students.length === 0}
-                className="w-full mt-4 flex items-center justify-center px-6 py-3 bg-indigo-600 text-white font-bold rounded-xl hover:bg-indigo-700 transition-all shadow-sm disabled:opacity-50"
-              >
-                {saving ? <Loader2 className="w-5 h-5 animate-spin mr-2" /> : <Save className="w-5 h-5 mr-2" />}
-                Generate Seating
-              </button>
-            </div>
-          </div>
+    <div className="p-6 lg:p-8 max-w-6xl mx-auto">
+      <div className="mb-8 flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold text-slate-900 flex items-center gap-2">
+            <GraduationCap className="w-6 h-6 text-indigo-600" />
+            Exam Management
+          </h1>
+          <p className="text-slate-500 mt-1 text-sm">Schedule exams, assign halls and seats, print hall tickets.</p>
         </div>
+        <button onClick={() => setIsExamModal(true)}
+          className="flex items-center gap-2 px-4 py-2.5 bg-indigo-600 text-white font-bold rounded-xl hover:bg-indigo-700 transition-all text-sm shadow-sm">
+          <Plus className="w-4 h-4" /> New Exam
+        </button>
+      </div>
 
-        {/* Seating Plan Table */}
-        <div className="lg:col-span-3">
-          <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
-            <div className="p-6 border-b border-slate-100 flex justify-between items-center">
-              <h3 className="text-xl font-bold text-slate-900">Seating Plan: {selectedClass}</h3>
-              <div className="flex space-x-2">
-                <button className="p-2 text-slate-400 hover:text-indigo-600 transition-colors" title="Print All Hall Tickets">
-                  <Printer className="w-5 h-5" />
-                </button>
-                <button className="p-2 text-slate-400 hover:text-indigo-600 transition-colors" title="Download Excel">
-                  <Download className="w-5 h-5" />
-                </button>
-              </div>
-            </div>
-            <div className="overflow-x-auto">
-              <table className="w-full text-left border-collapse">
-                <thead>
-                  <tr className="bg-slate-50 border-b border-slate-200">
-                    <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Student</th>
-                    <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider text-center">Seat Number</th>
-                    <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider text-center">Hall</th>
-                    <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider text-center">Date & Time</th>
-                    <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider text-right">Hall Ticket</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {loading ? (
-                    <tr>
-                      <td colSpan={5} className="px-6 py-12 text-center text-slate-400">Loading seating plan...</td>
-                    </tr>
-                  ) : students.length === 0 ? (
-                    <tr>
-                      <td colSpan={5} className="px-6 py-12 text-center text-slate-400">No students found in this class.</td>
-                    </tr>
-                  ) : (
-                    students.map((student) => {
-                      const seat = seating.find(s => s.studentId === student.id);
-                      return (
-                        <tr key={student.id} className="hover:bg-slate-50/50 transition-colors">
-                          <td className="px-6 py-4">
-                            <div className="flex items-center">
-                              <div className="w-8 h-8 rounded-lg bg-indigo-50 flex items-center justify-center text-indigo-700 font-bold mr-3 text-xs">
-                                {student.studentName.charAt(0)}
-                              </div>
-                              <div>
-                                <p className="font-bold text-slate-900 text-sm">{student.studentName}</p>
-                                <p className="text-[10px] text-slate-400 font-mono">{student.studentId}</p>
-                              </div>
-                            </div>
-                          </td>
-                          <td className="px-6 py-4 text-center">
-                            {seat ? (
-                              <span className="font-bold text-indigo-600 font-mono">{seat.seatNumber}</span>
-                            ) : (
-                              <span className="text-slate-300 italic text-xs">Not assigned</span>
-                            )}
-                          </td>
-                          <td className="px-6 py-4 text-center text-sm text-slate-600">
-                            {seat ? seat.hallName : '-'}
-                          </td>
-                          <td className="px-6 py-4 text-center">
-                            {seat ? (
-                              <div className="flex flex-col items-center">
-                                <span className="text-xs font-bold text-slate-700">{seat.date}</span>
-                                <span className="text-[10px] text-slate-400">{seat.time}</span>
-                              </div>
-                            ) : '-'}
-                          </td>
-                          <td className="px-6 py-4 text-right">
-                            <button
-                              disabled={!seat}
-                              className="inline-flex items-center px-3 py-1 bg-white border border-slate-200 text-slate-700 text-xs font-bold rounded hover:bg-slate-50 transition-all disabled:opacity-30"
-                            >
-                              <Printer className="w-3 h-3 mr-1" />
-                              Print
-                            </button>
-                          </td>
-                        </tr>
-                      );
-                    })
-                  )}
-                </tbody>
-              </table>
-            </div>
+      {/* Exams List */}
+      <div className="space-y-4 mb-8">
+        {loading ? (
+          <div className="bg-white rounded-2xl border border-slate-200 py-16 text-center text-slate-400">Loading...</div>
+        ) : exams.length === 0 ? (
+          <div className="bg-white rounded-2xl border border-slate-200 py-16 text-center">
+            <GraduationCap className="w-12 h-12 text-slate-200 mx-auto mb-3" />
+            <p className="text-slate-500">No exams scheduled. Create your first exam.</p>
           </div>
-
-          {/* Hall Ticket Preview (Mockup) */}
-          <div className="mt-8 grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
-              <div className="flex items-center justify-between mb-6">
-                <div className="flex items-center space-x-2">
-                  <GraduationCap className="w-6 h-6 text-indigo-600" />
-                  <span className="font-bold text-slate-900">Hall Ticket Preview</span>
-                </div>
-                <span className="text-[10px] font-bold text-indigo-600 bg-indigo-50 px-2 py-1 rounded">OFFICIAL</span>
-              </div>
-              <div className="border-2 border-slate-900 p-4 rounded-xl relative overflow-hidden">
-                <div className="absolute top-0 right-0 w-16 h-16 bg-slate-900 rotate-45 translate-x-8 -translate-y-8" />
-                <div className="text-center border-b border-slate-200 pb-4 mb-4">
-                  <h4 className="font-bold uppercase text-sm">Avenir Smart School</h4>
-                  <p className="text-[10px] text-slate-500">EXAMINATION HALL TICKET</p>
-                </div>
-                <div className="grid grid-cols-2 gap-4 text-[10px]">
+        ) : (
+          exams.map(exam => {
+            const examSeatings = getSeatingForExam(exam.name);
+            return (
+              <motion.div key={exam.id} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
+                className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+                <div className="p-5 flex flex-wrap items-center justify-between gap-4">
                   <div>
-                    <p className="text-slate-400 uppercase font-bold tracking-tighter">Student Name</p>
-                    <p className="font-bold">JOHN DOE</p>
-                  </div>
-                  <div>
-                    <p className="text-slate-400 uppercase font-bold tracking-tighter">Student ID</p>
-                    <p className="font-bold font-mono">STU-1234</p>
-                  </div>
-                  <div>
-                    <p className="text-slate-400 uppercase font-bold tracking-tighter">Exam Hall</p>
-                    <p className="font-bold">MAIN HALL A</p>
-                  </div>
-                  <div>
-                    <p className="text-slate-400 uppercase font-bold tracking-tighter">Seat Number</p>
-                    <p className="font-bold text-indigo-600 font-mono">P101</p>
-                  </div>
-                </div>
-                <div className="mt-6 flex justify-between items-end">
-                  <div className="w-16 h-16 bg-slate-100 rounded border border-slate-200 flex items-center justify-center">
-                    <User className="w-8 h-8 text-slate-300" />
-                  </div>
-                  <div className="text-right">
-                    <div className="w-24 h-px bg-slate-900 mb-1" />
-                    <p className="text-[8px] font-bold uppercase">Principal Signature</p>
-                  </div>
-                </div>
-              </div>
-            </div>
-            
-            <div className="bg-indigo-900 p-8 rounded-2xl text-white flex flex-col justify-center">
-              <h3 className="text-xl font-bold mb-4">Automated Hall Tickets</h3>
-              <p className="text-indigo-200 text-sm mb-6 leading-relaxed">
-                Generate professional examination hall tickets for your entire student body in seconds. 
-                Our system ensures zero seating conflicts and clear instructions for every student.
-              </p>
-              <div className="flex items-center space-x-4">
-                <div className="flex -space-x-2">
-                  {[1, 2, 3].map(i => (
-                    <div key={i} className="w-8 h-8 rounded-full border-2 border-indigo-900 bg-indigo-700 flex items-center justify-center text-[10px] font-bold">
-                      {i}
+                    <div className="flex items-center gap-3 mb-1">
+                      <h3 className="font-bold text-slate-900">{exam.name}</h3>
+                      <span className="px-2.5 py-0.5 bg-indigo-50 text-indigo-700 text-xs font-bold rounded-full border border-indigo-100">{exam.class}</span>
                     </div>
-                  ))}
+                    <div className="flex flex-wrap gap-4 text-sm text-slate-500">
+                      <span><span className="font-medium text-slate-700">Subject:</span> {exam.subject}</span>
+                      <span><span className="font-medium text-slate-700">Date:</span> {exam.date}</span>
+                      <span><span className="font-medium text-slate-700">Time:</span> {exam.startTime} – {exam.endTime}</span>
+                      <span><span className="font-medium text-slate-700">Hall:</span> {exam.hall}</span>
+                      <span><span className="font-medium text-slate-700">Seats:</span> {examSeatings.length}</span>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button onClick={() => autoAssignSeats(exam)} disabled={autoAssigning}
+                      className="px-3 py-1.5 bg-emerald-50 text-emerald-700 text-xs font-bold rounded-lg border border-emerald-200 hover:bg-emerald-100 transition-colors disabled:opacity-60">
+                      {autoAssigning ? '...' : 'Auto-Assign Seats'}
+                    </button>
+                    <button onClick={() => { setSelectedExam(exam === selectedExam ? null : exam); }}
+                      className="px-3 py-1.5 bg-slate-50 text-slate-700 text-xs font-bold rounded-lg border border-slate-200 hover:bg-slate-100 transition-colors">
+                      {selectedExam?.id === exam.id ? 'Hide' : 'View Seats'}
+                    </button>
+                    <button onClick={() => { setPrintingId(exam.id!); setTimeout(() => { window.print(); setPrintingId(null); }, 200); }}
+                      className="p-1.5 text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors">
+                      <Printer className="w-4 h-4" />
+                    </button>
+                    <button onClick={() => deleteExam(exam.id!)}
+                      className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors">
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
                 </div>
-                <span className="text-xs font-medium text-indigo-300">Used by 50+ Schools</span>
-              </div>
-            </div>
-          </div>
-        </div>
+
+                {/* Seating list */}
+                <AnimatePresence>
+                  {selectedExam?.id === exam.id && (
+                    <motion.div initial={{ height: 0 }} animate={{ height: 'auto' }} exit={{ height: 0 }} className="overflow-hidden">
+                      <div className="border-t border-slate-100 overflow-x-auto">
+                        {examSeatings.length === 0 ? (
+                          <p className="px-5 py-4 text-sm text-slate-400">No seats assigned yet. Click "Auto-Assign Seats".</p>
+                        ) : (
+                          <table className="w-full text-sm">
+                            <thead className="bg-slate-50 text-xs font-bold text-slate-500 uppercase tracking-wide">
+                              <tr>
+                                <th className="px-5 py-2 text-left">Seat No.</th>
+                                <th className="px-4 py-2 text-left">Student Name</th>
+                                <th className="px-4 py-2 text-left">Student ID</th>
+                                <th className="px-4 py-2 text-left">Hall</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-100">
+                              {examSeatings.map(seat => (
+                                <tr key={seat.id} className="hover:bg-slate-50">
+                                  <td className="px-5 py-2 font-mono font-bold text-indigo-700">{seat.seatNumber}</td>
+                                  <td className="px-4 py-2 font-medium text-slate-800">{getStudentName(seat.studentId)}</td>
+                                  <td className="px-4 py-2 text-slate-500 font-mono text-xs">{getStudentId(seat.studentId)}</td>
+                                  <td className="px-4 py-2 text-slate-500">{seat.hallName}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        )}
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </motion.div>
+            );
+          })
+        )}
       </div>
+
+      {/* Create Exam Modal */}
+      <AnimatePresence>
+        {isExamModal && (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+            onClick={e => e.target === e.currentTarget && setIsExamModal(false)}>
+            <motion.div initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}
+              className="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-6">
+              <div className="flex items-center justify-between mb-5">
+                <h2 className="text-lg font-bold text-slate-900">Schedule New Exam</h2>
+                <button onClick={() => setIsExamModal(false)} className="p-1.5 hover:bg-slate-100 rounded-lg"><X className="w-4 h-4" /></button>
+              </div>
+              <div className="space-y-4">
+                {[
+                  { label: 'Exam Name', key: 'name', type: 'text', placeholder: 'e.g. 1st Term Mathematics Exam' },
+                  { label: 'Date', key: 'date', type: 'date' },
+                  { label: 'Start Time', key: 'startTime', type: 'time' },
+                  { label: 'End Time', key: 'endTime', type: 'time' },
+                  { label: 'Hall / Venue', key: 'hall', type: 'text', placeholder: 'e.g. Hall A' },
+                ].map(f => (
+                  <div key={f.key}>
+                    <label className="text-xs font-bold text-slate-500 uppercase tracking-wide block mb-1">{f.label}</label>
+                    <input type={f.type} value={(examForm as any)[f.key] || ''} placeholder={f.placeholder}
+                      onChange={e => setExamForm(p => ({ ...p, [f.key]: e.target.value }))}
+                      className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm" />
+                  </div>
+                ))}
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-xs font-bold text-slate-500 uppercase tracking-wide block mb-1">Subject</label>
+                    <select value={examForm.subject} onChange={e => setExamForm(p => ({ ...p, subject: e.target.value }))}
+                      className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none bg-white text-sm">
+                      {SUBJECTS.map(s => <option key={s}>{s}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-xs font-bold text-slate-500 uppercase tracking-wide block mb-1">Class</label>
+                    <select value={examForm.class} onChange={e => setExamForm(p => ({ ...p, class: e.target.value }))}
+                      className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none bg-white text-sm">
+                      {classNames.map(c => <option key={c}>{c}</option>)}
+                    </select>
+                  </div>
+                </div>
+              </div>
+              <div className="flex justify-end gap-2 mt-6">
+                <button onClick={() => setIsExamModal(false)} className="px-4 py-2 text-sm text-slate-600 hover:bg-slate-100 rounded-xl transition-colors">Cancel</button>
+                <button onClick={saveExam} className="px-5 py-2 bg-indigo-600 text-white font-bold rounded-xl hover:bg-indigo-700 transition-all text-sm">Save Exam</button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

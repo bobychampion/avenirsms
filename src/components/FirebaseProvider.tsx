@@ -125,10 +125,12 @@ export function FirebaseProvider({ children }: { children: ReactNode }) {
 
   const clearError = () => setAuthError(null);
 
-  const isAdmin = profile?.role === 'admin' || 
+  const isAdmin = profile?.role !== 'teacher' && profile?.role !== 'parent' && profile?.role !== 'applicant' && (
+                  profile?.role === 'admin' || 
                   profile?.role === 'School_admin' || 
                   user?.email === 'jabpa87@gmail.com' ||
-                  user?.email === 'bobychampion87@gmail.com';
+                  user?.email === 'bobychampion87@gmail.com'
+                );
 
   return (
     <AuthContext.Provider value={{ user, profile, loading, isAdmin, authError, login, loginWithEmail, registerWithEmail, logout, clearError }}>

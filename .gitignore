@@ -1,6 +1,9 @@
 node_modules/
 build/
 dist/
+.firebase/
+.codebuddy/
+tsc_out.txt
 coverage/
 .DS_Store
 *.log

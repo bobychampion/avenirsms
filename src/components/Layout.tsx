@@ -1,23 +1,397 @@
-import React from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import React, { useState } from 'react';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from './FirebaseProvider';
-import { GraduationCap, LogOut, User, LayoutDashboard, FileText, Calendar } from 'lucide-react';
+import {
+  GraduationCap, LogOut, LayoutDashboard, Users, UserCheck, BookOpen,
+  ClipboardList, Calendar, DollarSign, FileText, Settings, BarChart3,
+  Clock, Award, Briefcase, CreditCard, Map, Menu, X, Bell,
+  ArrowUpRight, Key, Sparkles, MessageSquare, Star, CheckSquare, FileSpreadsheet, Database
+} from 'lucide-react';
+import { cn } from '../lib/utils';
+
+const teacherNavGroups = [
+  {
+    label: 'My Portal',
+    items: [
+      { to: '/teacher', label: 'Dashboard', icon: LayoutDashboard, exact: true },
+    ],
+  },
+  {
+    label: 'Classroom',
+    items: [
+      { to: '/teacher#students', label: 'My Students', icon: Users, exact: false },
+      { to: '/teacher#attendance', label: 'Attendance', icon: CheckSquare, exact: false },
+      { to: '/teacher#grades', label: 'Gradebook', icon: Award, exact: false },
+      { to: '/teacher#skills', label: 'Skills', icon: Star, exact: false },
+      { to: '/teacher#assignments', label: 'Assignments', icon: BookOpen, exact: false },
+    ],
+  },
+  {
+    label: 'Communication',
+    items: [
+      { to: '/teacher#messages', label: 'Messages', icon: MessageSquare, exact: false },
+    ],
+  },
+  {
+    label: 'AI Tools',
+    items: [
+      { to: '/teacher#ai_tools', label: 'AI Teaching Tools', icon: Sparkles, exact: false },
+    ],
+  },
+];
+
+const adminNavGroups = [
+  {
+    label: 'Core Management',
+    items: [
+      { to: '/admin', label: 'Dashboard', icon: LayoutDashboard, exact: true },
+      { to: '/admin/students', label: 'Students', icon: Users },
+      { to: '/admin/admissions', label: 'Admissions', icon: UserCheck },
+      { to: '/admin/attendance', label: 'Attendance', icon: ClipboardList },
+    ],
+  },
+  {
+    label: 'Academic',
+    items: [
+      { to: '/admin/classes', label: 'Classes', icon: BookOpen },
+      { to: '/admin/timetable', label: 'Timetable', icon: Clock },
+      { to: '/admin/gradebook', label: 'Gradebook', icon: Award },
+      { to: '/admin/report-cards', label: 'Report Cards', icon: FileText },
+      { to: '/admin/exams', label: 'Exams', icon: ClipboardList },
+      { to: '/admin/curriculum', label: 'Curriculum', icon: Map },
+      { to: '/admin/promotion', label: 'Promotion', icon: ArrowUpRight },
+    ],
+  },
+  {
+    label: 'Finance',
+    items: [
+      { to: '/admin/finance', label: 'Finance', icon: DollarSign },
+      { to: '/admin/payroll', label: 'Payroll', icon: CreditCard },
+    ],
+  },
+  {
+    label: 'HR & System',
+    items: [
+      { to: '/admin/staff', label: 'Staff / HR', icon: Briefcase },
+      { to: '/admin/analytics', label: 'Analytics', icon: BarChart3 },
+      { to: '/admin/users', label: 'User Management', icon: Users },
+      { to: '/admin/notifications', label: 'Notifications', icon: Bell },
+      { to: '/admin/pins', label: 'Result PINs', icon: Key },
+      { to: '/admin/settings', label: 'School Settings', icon: Settings },
+      { to: '/admin/bulk-import', label: 'Bulk Import', icon: FileSpreadsheet },
+      { to: '/admin/whatsapp', label: 'WhatsApp', icon: MessageSquare },
+      { to: '/admin/seed', label: 'Seed Demo Data', icon: Database },
+    ],
+  },
+];
+
+function AdminSidebar({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const location = useLocation();
+
+  return (
+    <>
+      {/* Overlay */}
+      {open && (
+        <div
+          className="fixed inset-0 bg-black/50 z-40 lg:hidden"
+          onClick={onClose}
+        />
+      )}
+
+      {/* Sidebar */}
+      <aside
+        className={cn(
+          'fixed top-0 left-0 h-full w-64 bg-slate-900 z-50 flex flex-col transition-transform duration-300',
+          'lg:translate-x-0 lg:static lg:z-auto',
+          open ? 'translate-x-0' : '-translate-x-full'
+        )}
+      >
+        {/* Logo */}
+        <div className="flex items-center justify-between px-5 py-5 border-b border-slate-700">
+          <Link to="/admin" className="flex items-center gap-3" onClick={onClose}>
+            <div className="bg-indigo-600 p-2 rounded-xl">
+              <GraduationCap className="w-5 h-5 text-white" />
+            </div>
+            <div>
+              <p className="text-white font-bold text-sm leading-tight">Avenir SIS</p>
+              <p className="text-slate-400 text-xs">School Management</p>
+            </div>
+          </Link>
+          <button onClick={onClose} className="lg:hidden text-slate-400 hover:text-white">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        {/* Nav */}
+        <nav className="flex-1 overflow-y-auto py-4 px-3 space-y-6">
+          {adminNavGroups.map(group => (
+            <div key={group.label}>
+              <p className="text-slate-500 text-xs font-semibold uppercase tracking-widest px-3 mb-2">
+                {group.label}
+              </p>
+              <ul className="space-y-1">
+                {group.items.map(item => {
+                  const active = item.exact
+                    ? location.pathname === item.to
+                    : location.pathname.startsWith(item.to) && item.to !== '/admin';
+                  const isExactAdmin = item.to === '/admin' && location.pathname === '/admin';
+                  const isActive = item.exact ? isExactAdmin : (item.to !== '/admin' && location.pathname.startsWith(item.to));
+                  return (
+                    <li key={item.to}>
+                      <Link
+                        to={item.to}
+                        onClick={onClose}
+                        className={cn(
+                          'flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-150',
+                          isActive || isExactAdmin
+                            ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/30'
+                            : 'text-slate-300 hover:bg-slate-800 hover:text-white'
+                        )}
+                      >
+                        <item.icon className="w-4 h-4 flex-shrink-0" />
+                        {item.label}
+                      </Link>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          ))}
+        </nav>
+
+        {/* Calendar quick link */}
+        <div className="p-3 border-t border-slate-700">
+          <Link
+            to="/calendar"
+            onClick={onClose}
+            className="flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium text-slate-300 hover:bg-slate-800 hover:text-white transition-all"
+          >
+            <Calendar className="w-4 h-4" />
+            School Calendar
+          </Link>
+        </div>
+      </aside>
+    </>
+  );
+}
+
+function TeacherSidebar({ open, onClose, displayName }: { open: boolean; onClose: () => void; displayName?: string }) {
+  const location = useLocation();
+
+  return (
+    <>
+      {open && (
+        <div className="fixed inset-0 bg-black/50 z-40 lg:hidden" onClick={onClose} />
+      )}
+      <aside
+        className={cn(
+          'fixed top-0 left-0 h-full w-64 bg-slate-900 z-50 flex flex-col transition-transform duration-300',
+          'lg:translate-x-0 lg:static lg:z-auto',
+          open ? 'translate-x-0' : '-translate-x-full'
+        )}
+      >
+        {/* Logo */}
+        <div className="flex items-center justify-between px-5 py-5 border-b border-slate-700">
+          <Link to="/teacher" className="flex items-center gap-3" onClick={onClose}>
+            <div className="bg-emerald-600 p-2 rounded-xl">
+              <GraduationCap className="w-5 h-5 text-white" />
+            </div>
+            <div>
+              <p className="text-white font-bold text-sm leading-tight">Avenir SIS</p>
+              <p className="text-emerald-400 text-xs font-medium">Teacher Portal</p>
+            </div>
+          </Link>
+          <button onClick={onClose} className="lg:hidden text-slate-400 hover:text-white">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        {/* Teacher profile badge */}
+        <div className="px-5 py-4 border-b border-slate-700/50">
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 bg-gradient-to-br from-emerald-500 to-teal-600 rounded-full flex items-center justify-center flex-shrink-0">
+              <span className="text-white text-sm font-bold">{displayName?.[0]?.toUpperCase() || 'T'}</span>
+            </div>
+            <div className="min-w-0">
+              <p className="text-white text-sm font-semibold truncate">{displayName || 'Teacher'}</p>
+              <p className="text-emerald-400 text-xs">Class Teacher</p>
+            </div>
+          </div>
+        </div>
+
+        {/* Nav */}
+        <nav className="flex-1 overflow-y-auto py-4 px-3 space-y-5">
+          {teacherNavGroups.map(group => (
+            <div key={group.label}>
+              <p className="text-slate-500 text-xs font-semibold uppercase tracking-widest px-3 mb-2">
+                {group.label}
+              </p>
+              <ul className="space-y-1">
+                {group.items.map(item => {
+                  const basePath = item.to.split('#')[0];
+                  const isActive = item.exact
+                    ? location.pathname === basePath
+                    : location.pathname === basePath;
+                  return (
+                    <li key={item.to}>
+                      <Link
+                        to={item.to}
+                        onClick={onClose}
+                        className={cn(
+                          'flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-150',
+                          isActive
+                            ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-600/30'
+                            : 'text-slate-300 hover:bg-slate-800 hover:text-white'
+                        )}
+                      >
+                        <item.icon className="w-4 h-4 flex-shrink-0" />
+                        {item.label}
+                      </Link>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          ))}
+        </nav>
+
+        {/* Calendar quick link */}
+        <div className="p-3 border-t border-slate-700">
+          <Link
+            to="/calendar"
+            onClick={onClose}
+            className="flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium text-slate-300 hover:bg-slate-800 hover:text-white transition-all"
+          >
+            <Calendar className="w-4 h-4" />
+            School Calendar
+          </Link>
+        </div>
+      </aside>
+    </>
+  );
+}
 
 export function Layout({ children }: { children: React.ReactNode }) {
   const { user, profile, logout, login, isAdmin } = useAuth();
   const navigate = useNavigate();
+  const [sidebarOpen, setSidebarOpen] = useState(false);
 
   const handleLogout = async () => {
     await logout();
     navigate('/');
   };
 
+  const isTeacher = profile?.role === 'teacher';
+
+  // ── TEACHER LAYOUT ──
+  if (isTeacher) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex">
+        <TeacherSidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} displayName={profile?.displayName} />
+        <div className="flex-1 flex flex-col min-w-0">
+          <header className="bg-white border-b border-slate-200 sticky top-0 z-30 h-16 flex items-center px-4 sm:px-6 gap-4">
+            <button
+              onClick={() => setSidebarOpen(true)}
+              className="lg:hidden p-2 text-slate-500 hover:text-slate-900 hover:bg-slate-100 rounded-lg"
+            >
+              <Menu className="w-5 h-5" />
+            </button>
+            <div className="flex-1" />
+            <Link
+              to="/calendar"
+              className="hidden sm:flex items-center gap-2 text-sm text-slate-600 hover:text-emerald-600 px-3 py-2 rounded-lg hover:bg-emerald-50 transition-colors"
+            >
+              <Calendar className="w-4 h-4" />
+              Calendar
+            </Link>
+            <div className="flex items-center gap-3">
+              <div className="text-right hidden sm:block">
+                <p className="text-sm font-semibold text-slate-900">{profile?.displayName}</p>
+                <p className="text-xs text-emerald-600 font-medium">Teacher</p>
+              </div>
+              <div className="w-9 h-9 bg-gradient-to-br from-emerald-500 to-teal-600 rounded-full flex items-center justify-center">
+                <span className="text-white text-sm font-bold">
+                  {profile?.displayName?.[0]?.toUpperCase() || 'T'}
+                </span>
+              </div>
+              <button
+                onClick={handleLogout}
+                className="p-2 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"
+                title="Logout"
+              >
+                <LogOut className="w-4 h-4" />
+              </button>
+            </div>
+          </header>
+          <main className="flex-1 overflow-auto">
+            {children}
+          </main>
+        </div>
+      </div>
+    );
+  }
+
+  // ── ADMIN LAYOUT ──
+  if (isAdmin) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex">
+        <AdminSidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} />
+
+        {/* Main Content */}
+        <div className="flex-1 flex flex-col min-w-0">
+          {/* Top Bar */}
+          <header className="bg-white border-b border-slate-200 sticky top-0 z-30 h-16 flex items-center px-4 sm:px-6 gap-4">
+            <button
+              onClick={() => setSidebarOpen(true)}
+              className="lg:hidden p-2 text-slate-500 hover:text-slate-900 hover:bg-slate-100 rounded-lg"
+            >
+              <Menu className="w-5 h-5" />
+            </button>
+
+            <div className="flex-1" />
+
+            <Link
+              to="/calendar"
+              className="hidden sm:flex items-center gap-2 text-sm text-slate-600 hover:text-indigo-600 px-3 py-2 rounded-lg hover:bg-indigo-50 transition-colors"
+            >
+              <Calendar className="w-4 h-4" />
+              Calendar
+            </Link>
+
+            <div className="flex items-center gap-3">
+              <div className="text-right hidden sm:block">
+                <p className="text-sm font-semibold text-slate-900">{profile?.displayName}</p>
+                <p className="text-xs text-slate-500 capitalize">{profile?.role?.replace('_', ' ')}</p>
+              </div>
+              <div className="w-9 h-9 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-full flex items-center justify-center">
+                <span className="text-white text-sm font-bold">
+                  {profile?.displayName?.[0]?.toUpperCase() || 'A'}
+                </span>
+              </div>
+              <button
+                onClick={handleLogout}
+                className="p-2 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"
+                title="Logout"
+              >
+                <LogOut className="w-4 h-4" />
+              </button>
+            </div>
+          </header>
+
+          <main className="flex-1 overflow-auto">
+            {children}
+          </main>
+        </div>
+      </div>
+    );
+  }
+
+  // Non-admin layout (top nav)
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col font-sans">
       <header className="bg-white border-b border-slate-200 sticky top-0 z-50">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
-          <Link 
-            to={!user ? "/" : isAdmin ? "/admin" : profile?.role === 'teacher' ? "/teacher" : profile?.role === 'parent' ? "/parent" : "/apply"} 
+          <Link to={!user ? '/' : profile?.role === 'teacher' ? '/teacher' : profile?.role === 'parent' ? '/parent' : '/apply'}
             className="flex items-center space-x-2"
           >
             <div className="bg-indigo-600 p-2 rounded-lg">
@@ -29,66 +403,35 @@ export function Layout({ children }: { children: React.ReactNode }) {
           <nav className="flex items-center space-x-4">
             {user ? (
               <>
-                <Link
-                  to="/calendar"
-                  className="text-slate-600 hover:text-indigo-600 font-medium flex items-center px-3 py-2 rounded-md transition-colors"
-                >
-                  <Calendar className="w-4 h-4 mr-2" />
-                  Calendar
+                <Link to="/calendar" className="text-slate-600 hover:text-indigo-600 font-medium flex items-center px-3 py-2 rounded-md transition-colors text-sm">
+                  <Calendar className="w-4 h-4 mr-2" />Calendar
                 </Link>
-                {isAdmin ? (
-                  <Link
-                    to="/admin"
-                    className="text-slate-600 hover:text-indigo-600 font-medium flex items-center px-3 py-2 rounded-md transition-colors"
-                  >
-                    <LayoutDashboard className="w-4 h-4 mr-2" />
-                    Admin Dashboard
-                  </Link>
-                ) : profile?.role === 'teacher' ? (
-                  <Link
-                    to="/teacher"
-                    className="text-slate-600 hover:text-indigo-600 font-medium flex items-center px-3 py-2 rounded-md transition-colors"
-                  >
-                    <LayoutDashboard className="w-4 h-4 mr-2" />
-                    Teacher Portal
+                {profile?.role === 'teacher' ? (
+                  <Link to="/teacher" className="text-slate-600 hover:text-indigo-600 font-medium flex items-center px-3 py-2 rounded-md transition-colors text-sm">
+                    <LayoutDashboard className="w-4 h-4 mr-2" />Teacher Portal
                   </Link>
                 ) : profile?.role === 'parent' ? (
-                  <Link
-                    to="/parent"
-                    className="text-slate-600 hover:text-indigo-600 font-medium flex items-center px-3 py-2 rounded-md transition-colors"
-                  >
-                    <LayoutDashboard className="w-4 h-4 mr-2" />
-                    Parent Portal
+                  <Link to="/parent" className="text-slate-600 hover:text-indigo-600 font-medium flex items-center px-3 py-2 rounded-md transition-colors text-sm">
+                    <LayoutDashboard className="w-4 h-4 mr-2" />Parent Portal
                   </Link>
                 ) : (
-                  <Link
-                    to="/apply"
-                    className="text-slate-600 hover:text-indigo-600 font-medium flex items-center px-3 py-2 rounded-md transition-colors"
-                  >
-                    <FileText className="w-4 h-4 mr-2" />
-                    My Application
+                  <Link to="/apply" className="text-slate-600 hover:text-indigo-600 font-medium flex items-center px-3 py-2 rounded-md transition-colors text-sm">
+                    <FileText className="w-4 h-4 mr-2" />My Application
                   </Link>
                 )}
-                <div className="h-6 w-px bg-slate-200 mx-2" />
+                <div className="h-6 w-px bg-slate-200" />
                 <div className="flex items-center space-x-3">
                   <div className="text-right hidden sm:block">
                     <p className="text-sm font-semibold text-slate-900">{profile?.displayName}</p>
                     <p className="text-xs text-slate-500 capitalize">{profile?.role}</p>
                   </div>
-                  <button
-                    onClick={handleLogout}
-                    className="p-2 text-slate-400 hover:text-red-500 transition-colors"
-                    title="Logout"
-                  >
+                  <button onClick={handleLogout} className="p-2 text-slate-400 hover:text-red-500 transition-colors" title="Logout">
                     <LogOut className="w-5 h-5" />
                   </button>
                 </div>
               </>
             ) : (
-              <button
-                onClick={login}
-                className="bg-indigo-600 text-white px-5 py-2 rounded-lg font-medium hover:bg-indigo-700 transition-all shadow-sm hover:shadow-md"
-              >
+              <button onClick={login} className="bg-indigo-600 text-white px-5 py-2 rounded-lg font-medium hover:bg-indigo-700 transition-all shadow-sm">
                 Sign In
               </button>
             )}
@@ -96,11 +439,9 @@ export function Layout({ children }: { children: React.ReactNode }) {
         </div>
       </header>
 
-      <main className="flex-grow">
-        {children}
-      </main>
+      <main className="flex-grow">{children}</main>
 
-      <footer className="bg-white border-t border-slate-200 py-12 mt-auto">
+      <footer className="bg-white border-t border-slate-200 py-10 mt-auto">
         <div className="max-w-7xl mx-auto px-4">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-8 mb-8 text-center md:text-left">
             <div>
@@ -108,7 +449,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
                 <div className="bg-indigo-600 p-1.5 rounded-lg">
                   <GraduationCap className="w-5 h-5 text-white" />
                 </div>
-                <span className="text-lg font-bold text-slate-900 tracking-tight">Avenir SIS</span>
+                <span className="text-lg font-bold text-slate-900">Avenir SIS</span>
               </div>
               <p className="text-slate-500 text-sm leading-relaxed">
                 Empowering Nigerian schools with smart, secure, and efficient management tools.
@@ -117,22 +458,8 @@ export function Layout({ children }: { children: React.ReactNode }) {
             <div>
               <h4 className="font-bold text-slate-900 mb-4">Quick Access</h4>
               <ul className="space-y-2 text-sm">
-                <li>
-                  <Link to="/" className="text-slate-500 hover:text-indigo-600 transition-colors">Home</Link>
-                </li>
-                <li>
-                  <Link to="/calendar" className="text-slate-500 hover:text-indigo-600 transition-colors">School Calendar</Link>
-                </li>
-                {user && (
-                  <li>
-                    <Link 
-                      to={isAdmin ? '/admin' : profile?.role === 'teacher' ? '/teacher' : profile?.role === 'parent' ? '/parent' : '/apply'} 
-                      className="text-slate-500 hover:text-indigo-600 transition-colors font-medium"
-                    >
-                      My Dashboard
-                    </Link>
-                  </li>
-                )}
+                <li><Link to="/" className="text-slate-500 hover:text-indigo-600 transition-colors">Home</Link></li>
+                <li><Link to="/calendar" className="text-slate-500 hover:text-indigo-600 transition-colors">School Calendar</Link></li>
               </ul>
             </div>
             <div>

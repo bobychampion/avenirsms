@@ -2,13 +2,28 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { db, handleFirestoreError, OperationType } from '../firebase';
 import { useAuth } from '../components/FirebaseProvider';
-import { collection, query, onSnapshot, where, addDoc, serverTimestamp, getDocs, orderBy, updateDoc, doc } from 'firebase/firestore';
-import { Student, Assignment, Message, Grade, Attendance, SchoolEvent, Invoice } from '../types';
-import { motion } from 'motion/react';
-import { 
-  BookOpen, Calendar, MessageSquare, Loader2, 
-  CheckCircle2, Clock, User, Bell, TrendingUp, AlertCircle, DollarSign, Receipt, Plus, Send
+import {
+  collection, query, onSnapshot, where, addDoc, serverTimestamp,
+  orderBy, updateDoc, doc, getDocs
+} from 'firebase/firestore';
+import { Student, Assignment, Message, Grade, Attendance, SchoolEvent, Invoice, Notification, TERMS, CURRENT_SESSION, calculateGrade, SKILL_LABELS, SKILL_RATING_LABELS, SkillRating } from '../types';
+import { motion, AnimatePresence } from 'motion/react';
+import {
+  BookOpen, Calendar, MessageSquare, Loader2, CheckCircle2, Clock,
+  Bell, TrendingUp, AlertCircle, DollarSign, Receipt, Plus, Send,
+  User, Award, Activity, X, BarChart2, FileText, Printer, CreditCard
 } from 'lucide-react';
+import PaystackButton from '../components/PaystackPayment';
+
+const GRADE_COLORS: Record<string, string> = {
+  A1: 'text-emerald-700 bg-emerald-50', B2: 'text-emerald-600 bg-emerald-50',
+  B3: 'text-teal-700 bg-teal-50', C4: 'text-blue-700 bg-blue-50',
+  C5: 'text-blue-600 bg-blue-50', C6: 'text-indigo-700 bg-indigo-50',
+  D7: 'text-amber-700 bg-amber-50', E8: 'text-orange-700 bg-orange-50',
+  F9: 'text-rose-700 bg-rose-50',
+};
+
+type TabType = 'progress' | 'attendance' | 'assignments' | 'finance' | 'messages' | 'notifications' | 'report_card';
 
 export default function ParentPortal() {
   const { user, profile } = useAuth();
@@ -18,59 +33,47 @@ export default function ParentPortal() {
   const [grades, setGrades] = useState<Grade[]>([]);
   const [attendance, setAttendance] = useState<Attendance[]>([]);
   const [assignments, setAssignments] = useState<Assignment[]>([]);
-  const [events, setEvents] = useState<SchoolEvent[]>([]);
   const [messages, setMessages] = useState<Message[]>([]);
   const [invoices, setInvoices] = useState<Invoice[]>([]);
+  const [notifications, setNotifications] = useState<Notification[]>([]);
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<'progress' | 'attendance' | 'assignments' | 'events' | 'messages' | 'finance'>('progress');
-
-  // New Message Form
-  const [newMessage, setNewMessage] = useState({
-    receiverId: '',
-    content: ''
-  });
+  const [activeTab, setActiveTab] = useState<TabType>('progress');
+  const [filterTerm, setFilterTerm] = useState<string>(TERMS[0]);
+  const [newMessage, setNewMessage] = useState({ receiverId: '', content: '' });
+  const [reportCardTerm, setReportCardTerm] = useState<string>(TERMS[0]);
+  const [reportCardSkills, setReportCardSkills] = useState<any>(null);
 
   useEffect(() => {
     if (!user) return;
 
     const qChildren = query(collection(db, 'students'), where('guardianEmail', '==', user.email));
-    const unsubscribeChildren = onSnapshot(qChildren, (snapshot) => {
-      const childrenData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Student));
-      setChildren(childrenData);
-      if (childrenData.length > 0 && !selectedChild) {
-        setSelectedChild(childrenData[0]);
-      }
+    const unsubChildren = onSnapshot(qChildren, snap => {
+      const list = snap.docs.map(d => ({ id: d.id, ...d.data() } as Student));
+      setChildren(list);
+      if (list.length > 0 && !selectedChild) setSelectedChild(list[0]);
       setLoading(false);
     });
 
-    const qEvents = query(collection(db, 'events'), orderBy('date', 'asc'));
-    const unsubscribeEvents = onSnapshot(qEvents, (snapshot) => {
-      setEvents(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as SchoolEvent)));
+    const qNotif = query(collection(db, 'notifications'),
+      where('recipientId', 'in', [user.uid, 'all']),
+      orderBy('createdAt', 'desc'));
+    const unsubNotif = onSnapshot(qNotif, snap => {
+      setNotifications(snap.docs.map(d => ({ id: d.id, ...d.data() } as Notification)));
     });
 
-    const qMessages = query(
-      collection(db, 'messages'), 
-      where('receiverId', 'in', [user.uid, user.email]),
-      orderBy('timestamp', 'desc')
-    );
-    const qSentMessages = query(
-      collection(db, 'messages'),
-      where('senderId', '==', user.uid),
-      orderBy('timestamp', 'desc')
-    );
+    const qMsgs = query(collection(db, 'messages'), where('receiverId', 'in', [user.uid, user.email!]), orderBy('timestamp', 'desc'));
+    const qSent = query(collection(db, 'messages'), where('senderId', '==', user.uid), orderBy('timestamp', 'desc'));
 
-    const unsubscribeMessages = onSnapshot(qMessages, (snapshot) => {
-      const received = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Message));
+    const unsubMsgs = onSnapshot(qMsgs, snap => {
+      const received = snap.docs.map(d => ({ id: d.id, ...d.data() } as Message));
       setMessages(prev => {
         const sent = prev.filter(m => m.senderId === user.uid);
         const all = [...received, ...sent].sort((a, b) => (b.timestamp?.seconds || 0) - (a.timestamp?.seconds || 0));
-        // Deduplicate by ID
         return Array.from(new Map(all.map(m => [m.id, m])).values());
       });
     });
-
-    const unsubscribeSent = onSnapshot(qSentMessages, (snapshot) => {
-      const sent = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Message));
+    const unsubSent = onSnapshot(qSent, snap => {
+      const sent = snap.docs.map(d => ({ id: d.id, ...d.data() } as Message));
       setMessages(prev => {
         const received = prev.filter(m => m.receiverId === user.uid || m.receiverId === user.email);
         const all = [...received, ...sent].sort((a, b) => (b.timestamp?.seconds || 0) - (a.timestamp?.seconds || 0));
@@ -78,64 +81,89 @@ export default function ParentPortal() {
       });
     });
 
-    return () => {
-      unsubscribeChildren();
-      unsubscribeEvents();
-      unsubscribeMessages();
-      unsubscribeSent();
-    };
+    return () => { unsubChildren(); unsubNotif(); unsubMsgs(); unsubSent(); };
   }, [user]);
 
   useEffect(() => {
     if (!selectedChild) return;
 
     const qGrades = query(collection(db, 'grades'), where('studentId', '==', selectedChild.id));
-    const unsubscribeGrades = onSnapshot(qGrades, (snapshot) => {
-      setGrades(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Grade)));
-    });
+    const unsubGrades = onSnapshot(qGrades, snap => setGrades(snap.docs.map(d => ({ id: d.id, ...d.data() } as Grade))));
 
-    const qAttendance = query(collection(db, 'attendance'), where('studentId', '==', selectedChild.id));
-    const unsubscribeAttendance = onSnapshot(qAttendance, (snapshot) => {
-      setAttendance(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Attendance)));
-    });
+    const qAtt = query(collection(db, 'attendance'), where('studentId', '==', selectedChild.id), orderBy('date', 'desc'));
+    const unsubAtt = onSnapshot(qAtt, snap => setAttendance(snap.docs.map(d => ({ id: d.id, ...d.data() } as Attendance))));
 
-    const qAssignments = query(collection(db, 'assignments'), where('class', '==', selectedChild.currentClass));
-    const unsubscribeAssignments = onSnapshot(qAssignments, (snapshot) => {
-      setAssignments(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Assignment)));
-    });
+    const qAssign = query(collection(db, 'assignments'), where('class', '==', selectedChild.currentClass));
+    const unsubAssign = onSnapshot(qAssign, snap => setAssignments(snap.docs.map(d => ({ id: d.id, ...d.data() } as Assignment))));
 
-    const qInvoices = query(collection(db, 'invoices'), where('studentId', '==', selectedChild.id));
-    const unsubscribeInvoices = onSnapshot(qInvoices, (snapshot) => {
-      setInvoices(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Invoice)));
-    });
+    const qInv = query(collection(db, 'invoices'), where('studentId', '==', selectedChild.id), orderBy('createdAt', 'desc'));
+    const unsubInv = onSnapshot(qInv, snap => setInvoices(snap.docs.map(d => ({ id: d.id, ...d.data() } as Invoice))));
 
-    return () => {
-      unsubscribeGrades();
-      unsubscribeAttendance();
-      unsubscribeAssignments();
-      unsubscribeInvoices();
-    };
+    return () => { unsubGrades(); unsubAtt(); unsubAssign(); unsubInv(); };
   }, [selectedChild]);
 
   const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!user || !profile) return;
-    try {
-      await addDoc(collection(db, 'messages'), {
-        ...newMessage,
-        senderId: user.uid,
-        senderName: profile.displayName,
-        timestamp: serverTimestamp(),
-        read: false
-      });
-      setNewMessage({ receiverId: '', content: '' });
-      alert('Message sent!');
-    } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, 'messages');
-    }
+    if (!user || !profile || !newMessage.receiverId) return;
+    await addDoc(collection(db, 'messages'), {
+      ...newMessage, senderId: user.uid, senderName: profile.displayName,
+      timestamp: serverTimestamp(), read: false
+    });
+    setNewMessage({ ...newMessage, content: '' });
   };
 
-  if (loading) return <div className="flex items-center justify-center min-h-screen"><Loader2 className="w-8 h-8 animate-spin text-indigo-600" /></div>;
+  const markNotifRead = async (id: string) => {
+    await updateDoc(doc(db, 'notifications', id), { read: true });
+  };
+
+  // Derived stats
+  const filteredGrades = grades.filter(g => g.term === filterTerm && g.session === CURRENT_SESSION);
+  const avgScore = filteredGrades.length > 0
+    ? Math.round(filteredGrades.reduce((s, g) => s + (g.totalScore || (g.caScore + g.examScore)), 0) / filteredGrades.length)
+    : 0;
+  const presentCount = attendance.filter(a => a.status === 'present').length;
+  const attendanceRate = attendance.length > 0 ? Math.round((presentCount / attendance.length) * 100) : 0;
+  const unpaidInvoices = invoices.filter(i => i.status !== 'paid');
+  const unreadNotifs = notifications.filter(n => !n.read).length;
+  const unreadMsgs = messages.filter(m => m.senderId !== user?.uid && !m.read).length;
+
+  // Report card derived data
+  const reportCardGrades = grades.filter(g => g.term === reportCardTerm && g.session === CURRENT_SESSION);
+  const reportCardAvg = reportCardGrades.length > 0
+    ? Math.round(reportCardGrades.reduce((s, g) => s + (g.totalScore || (g.caScore + g.examScore)), 0) / reportCardGrades.length)
+    : 0;
+
+  // Fetch skills record when report card tab is active
+  useEffect(() => {
+    if (!selectedChild || activeTab !== 'report_card') return;
+    const fetchSkills = async () => {
+      const snap = await getDocs(query(
+        collection(db, 'student_skills'),
+        where('studentId', '==', selectedChild.id),
+        where('term', '==', reportCardTerm),
+        where('session', '==', CURRENT_SESSION)
+      ));
+      if (!snap.empty) setReportCardSkills(snap.docs[0].data().skills);
+      else setReportCardSkills(null);
+    };
+    fetchSkills();
+  }, [selectedChild, activeTab, reportCardTerm]);
+
+  const tabs: { id: TabType; label: string; Icon: React.ElementType; badge?: number }[] = [
+    { id: 'progress', label: 'Academic', Icon: TrendingUp },
+    { id: 'report_card', label: 'Report Card', Icon: FileText },
+    { id: 'attendance', label: 'Attendance', Icon: CheckCircle2 },
+    { id: 'assignments', label: 'Assignments', Icon: BookOpen },
+    { id: 'finance', label: 'Fees', Icon: DollarSign },
+    { id: 'messages', label: 'Messages', Icon: MessageSquare, badge: unreadMsgs },
+    { id: 'notifications', label: 'Notifications', Icon: Bell, badge: unreadNotifs },
+  ];
+
+  if (loading) return (
+    <div className="flex items-center justify-center min-h-screen">
+      <Loader2 className="w-8 h-8 animate-spin text-indigo-600" />
+    </div>
+  );
 
   if (children.length === 0) {
     return (
@@ -149,231 +177,329 @@ export default function ParentPortal() {
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10">
-      <div className="flex flex-col md:flex-row md:items-center justify-between mb-10 gap-4">
+      {/* Header */}
+      <div className="flex flex-col md:flex-row md:items-center justify-between mb-8 gap-4">
         <div>
           <h1 className="text-3xl font-bold text-slate-900 tracking-tight">Parent Portal</h1>
           <p className="text-slate-500 mt-1">Welcome back, {profile?.displayName}. Monitor your child's progress.</p>
         </div>
-        <div className="flex items-center space-x-4">
-          <label className="text-xs font-bold text-slate-400 uppercase">Child:</label>
-          <select
-            value={selectedChild?.id}
-            onChange={(e) => setSelectedChild(children.find(c => c.id === e.target.value) || null)}
-            className="px-4 py-2 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none bg-white font-medium text-sm"
-          >
-            {children.map(child => <option key={child.id} value={child.id}>{child.studentName}</option>)}
-          </select>
+        {children.length > 1 && (
+          <div className="flex items-center gap-3">
+            <User className="w-5 h-5 text-slate-400" />
+            <select
+              value={selectedChild?.id}
+              onChange={e => setSelectedChild(children.find(c => c.id === e.target.value) || null)}
+              className="px-4 py-2 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none bg-white font-medium text-sm"
+            >
+              {children.map(c => <option key={c.id} value={c.id}>{c.studentName}</option>)}
+            </select>
+          </div>
+        )}
+      </div>
+
+      {/* Child Overview Cards */}
+      {selectedChild && (
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+          {[
+            { label: 'Class', value: selectedChild.currentClass, Icon: User, color: 'indigo' },
+            { label: `${filterTerm} Avg Score`, value: avgScore ? `${avgScore}%` : 'N/A', Icon: Award, color: 'emerald' },
+            { label: 'Attendance Rate', value: `${attendanceRate}%`, Icon: Activity, color: attendanceRate >= 75 ? 'emerald' : 'amber' },
+            { label: 'Outstanding Fees', value: `₦${unpaidInvoices.reduce((s, i) => s + i.amount, 0).toLocaleString()}`, Icon: DollarSign, color: unpaidInvoices.length > 0 ? 'rose' : 'emerald' },
+          ].map(card => (
+            <div key={card.label} className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
+              <div className={`w-9 h-9 rounded-xl bg-${card.color}-50 flex items-center justify-center mb-3`}>
+                <card.Icon className={`w-5 h-5 text-${card.color}-600`} />
+              </div>
+              <p className="text-xl font-bold text-slate-900">{card.value}</p>
+              <p className="text-xs text-slate-500 font-medium mt-0.5">{card.label}</p>
+            </div>
+          ))}
         </div>
-      </div>
+      )}
 
-      <div className="flex space-x-1 bg-slate-100 p-1 rounded-xl mb-8 w-fit overflow-x-auto">
-        <button
-          onClick={() => setActiveTab('progress')}
-          className={`px-4 py-2 rounded-lg text-sm font-bold transition-all whitespace-nowrap ${activeTab === 'progress' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
-        >
-          <TrendingUp className="w-4 h-4 inline mr-2" />
-          Academic Progress
-        </button>
-        <button
-          onClick={() => setActiveTab('attendance')}
-          className={`px-4 py-2 rounded-lg text-sm font-bold transition-all whitespace-nowrap ${activeTab === 'attendance' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
-        >
-          <CheckCircle2 className="w-4 h-4 inline mr-2" />
-          Attendance
-        </button>
-        <button
-          onClick={() => setActiveTab('assignments')}
-          className={`px-4 py-2 rounded-lg text-sm font-bold transition-all whitespace-nowrap ${activeTab === 'assignments' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
-        >
-          <BookOpen className="w-4 h-4 inline mr-2" />
-          Assignments
-        </button>
-        <button
-          onClick={() => setActiveTab('events')}
-          className={`px-4 py-2 rounded-lg text-sm font-bold transition-all whitespace-nowrap ${activeTab === 'events' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
-        >
-          <Calendar className="w-4 h-4 inline mr-2" />
-          Events
-        </button>
-        <button
-          onClick={() => setActiveTab('messages')}
-          className={`px-4 py-2 rounded-lg text-sm font-bold transition-all whitespace-nowrap ${activeTab === 'messages' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
-        >
-          <MessageSquare className="w-4 h-4 inline mr-2" />
-          Messages
-        </button>
-        <button
-          onClick={() => setActiveTab('finance')}
-          className={`px-4 py-2 rounded-lg text-sm font-bold transition-all whitespace-nowrap ${activeTab === 'finance' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
-        >
-          <DollarSign className="w-4 h-4 inline mr-2" />
-          Fees & Invoices
-        </button>
-        <button
-          onClick={() => navigate('/calendar')}
-          className="px-4 py-2 rounded-lg text-sm font-bold text-slate-500 hover:text-indigo-600 transition-all whitespace-nowrap"
-        >
-          <Calendar className="w-4 h-4 inline mr-2" />
-          Calendar
+      {/* Tab Bar */}
+      <div className="flex flex-wrap gap-1 bg-slate-100 p-1 rounded-xl mb-8">
+        {tabs.map(({ id, label, Icon, badge }) => (
+          <button key={id} onClick={() => setActiveTab(id)}
+            className={`px-4 py-2 rounded-lg text-sm font-bold transition-all flex items-center gap-2 relative whitespace-nowrap ${
+              activeTab === id ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+            }`}>
+            <Icon className="w-4 h-4" />
+            {label}
+            {badge && badge > 0 && (
+              <span className="absolute -top-1 -right-1 min-w-[16px] h-4 px-0.5 bg-rose-500 text-white text-[9px] font-bold rounded-full flex items-center justify-center">
+                {badge}
+              </span>
+            )}
+          </button>
+        ))}
+        <button onClick={() => navigate('/calendar')}
+          className="px-4 py-2 rounded-lg text-sm font-bold text-slate-500 hover:text-indigo-600 transition-all flex items-center gap-2">
+          <Calendar className="w-4 h-4" />Calendar
         </button>
       </div>
 
+      {/* ── ACADEMIC PROGRESS ── */}
       {activeTab === 'progress' && (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {grades.length === 0 ? (
-            <div className="col-span-full py-20 text-center bg-slate-50 rounded-2xl border border-slate-100">
+        <div className="space-y-6">
+          <div className="flex items-center gap-4">
+            <label className="text-sm font-bold text-slate-500">Term:</label>
+            <select value={filterTerm} onChange={e => setFilterTerm(e.target.value)}
+              className="px-3 py-2 rounded-xl border border-slate-200 text-sm font-medium outline-none focus:ring-2 focus:ring-indigo-500">
+              {TERMS.map(t => <option key={t} value={t}>{t}</option>)}
+            </select>
+            <span className="text-xs text-slate-400">{CURRENT_SESSION} Session</span>
+          </div>
+
+          {filteredGrades.length === 0 ? (
+            <div className="py-16 text-center bg-slate-50 rounded-2xl border border-slate-100">
               <BookOpen className="w-12 h-12 text-slate-200 mx-auto mb-4" />
-              <p className="text-slate-500">No grades recorded yet.</p>
+              <p className="text-slate-500">No grades recorded for {filterTerm} yet.</p>
             </div>
           ) : (
-            grades.map(grade => (
-              <div key={grade.id} className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
-                <div className="flex justify-between items-start mb-4">
-                  <div>
-                    <h4 className="font-bold text-slate-900">{grade.subject}</h4>
-                    <p className="text-xs text-slate-500">{grade.term} • {grade.session}</p>
+            <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+              <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
+                <h3 className="font-bold text-slate-900">{filterTerm} Results — {selectedChild?.studentName}</h3>
+                {avgScore > 0 && (
+                  <div className="flex items-center gap-2 text-sm font-bold text-slate-600">
+                    <BarChart2 className="w-4 h-4 text-indigo-500" />
+                    Average: <span className={`px-2 py-0.5 rounded-lg font-bold ${avgScore >= 70 ? 'text-emerald-700 bg-emerald-50' : avgScore >= 50 ? 'text-amber-700 bg-amber-50' : 'text-rose-700 bg-rose-50'}`}>{avgScore}%</span>
                   </div>
-                  <div className="bg-indigo-50 px-3 py-1 rounded-lg text-indigo-700 font-bold text-lg">
-                    {grade.grade}
-                  </div>
-                </div>
-                <div className="grid grid-cols-2 gap-4 text-sm">
-                  <div>
-                    <p className="text-slate-400 text-[10px] font-bold uppercase">CA Score</p>
-                    <p className="font-medium">{grade.caScore}/40</p>
-                  </div>
-                  <div>
-                    <p className="text-slate-400 text-[10px] font-bold uppercase">Exam Score</p>
-                    <p className="font-medium">{grade.examScore}/60</p>
-                  </div>
-                </div>
+                )}
               </div>
-            ))
+              <div className="overflow-x-auto">
+                <table className="w-full text-left">
+                  <thead className="bg-slate-50">
+                    <tr>
+                      <th className="px-6 py-3 text-xs font-bold text-slate-400 uppercase">Subject</th>
+                      <th className="px-6 py-3 text-xs font-bold text-slate-400 uppercase text-center">CA (40)</th>
+                      <th className="px-6 py-3 text-xs font-bold text-slate-400 uppercase text-center">Exam (60)</th>
+                      <th className="px-6 py-3 text-xs font-bold text-slate-400 uppercase text-center">Total (100)</th>
+                      <th className="px-6 py-3 text-xs font-bold text-slate-400 uppercase text-center">Grade</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-50">
+                    {filteredGrades.map(g => {
+                      const total = g.totalScore ?? (g.caScore + g.examScore);
+                      return (
+                        <tr key={g.id} className="hover:bg-slate-50/50 transition-colors">
+                          <td className="px-6 py-3 font-medium text-slate-900 text-sm">{g.subject}</td>
+                          <td className="px-6 py-3 text-center text-sm text-slate-600">{g.caScore}</td>
+                          <td className="px-6 py-3 text-center text-sm text-slate-600">{g.examScore}</td>
+                          <td className="px-6 py-3 text-center">
+                            <div className="flex items-center justify-center gap-2">
+                              <div className="w-24 bg-slate-100 rounded-full h-1.5">
+                                <div className={`h-1.5 rounded-full ${total >= 70 ? 'bg-emerald-500' : total >= 50 ? 'bg-amber-500' : 'bg-rose-500'}`} style={{ width: `${total}%` }} />
+                              </div>
+                              <span className="text-sm font-bold text-slate-900">{total}</span>
+                            </div>
+                          </td>
+                          <td className="px-6 py-3 text-center">
+                            <span className={`px-2.5 py-1 rounded-xl text-xs font-bold ${GRADE_COLORS[g.grade] || 'bg-slate-50 text-slate-700'}`}>
+                              {g.grade}
+                            </span>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              {filteredGrades.length > 0 && (
+                <div className="px-6 py-4 bg-slate-50/50 border-t border-slate-100">
+                  <p className="text-xs text-slate-400">Grade Scale: A1 (75–100) · B2 (70–74) · B3 (65–69) · C4 (60–64) · C5 (55–59) · C6 (50–54) · D7 (45–49) · E8 (40–44) · F9 (0–39)</p>
+                </div>
+              )}
+            </div>
           )}
         </div>
       )}
 
+      {/* ── ATTENDANCE ── */}
       {activeTab === 'attendance' && (
-        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-          <table className="w-full text-left">
-            <thead className="bg-slate-50 border-b border-slate-200">
-              <tr>
-                <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase tracking-wider">Date</th>
-                <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase tracking-wider">Status</th>
-                <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase tracking-wider">Class</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {attendance.map(record => (
-                <tr key={record.id}>
-                  <td className="px-6 py-4 text-sm text-slate-900 font-medium">{record.date}</td>
-                  <td className="px-6 py-4">
-                    <span className={`px-2 py-1 rounded-full text-[10px] font-bold uppercase ${
-                      record.status === 'present' ? 'bg-emerald-50 text-emerald-700' :
-                      record.status === 'absent' ? 'bg-rose-50 text-rose-700' : 'bg-amber-50 text-amber-700'
-                    }`}>
-                      {record.status}
-                    </span>
-                  </td>
-                  <td className="px-6 py-4 text-sm text-slate-500">{record.class}</td>
-                </tr>
-              ))}
-              {attendance.length === 0 && (
-                <tr>
-                  <td colSpan={3} className="px-6 py-10 text-center text-slate-400 italic">No attendance records found.</td>
-                </tr>
+        <div className="space-y-6">
+          {/* Summary cards */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            {[
+              { label: 'Total Days', value: attendance.length, color: 'slate' },
+              { label: 'Present', value: attendance.filter(a => a.status === 'present').length, color: 'emerald' },
+              { label: 'Absent', value: attendance.filter(a => a.status === 'absent').length, color: 'rose' },
+              { label: 'Late', value: attendance.filter(a => a.status === 'late').length, color: 'amber' },
+            ].map(s => (
+              <div key={s.label} className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
+                <p className={`text-2xl font-bold text-${s.color}-600`}>{s.value}</p>
+                <p className="text-xs text-slate-500 font-medium mt-0.5">{s.label}</p>
+              </div>
+            ))}
+          </div>
+
+          {/* Rate bar */}
+          {attendance.length > 0 && (
+            <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
+              <div className="flex justify-between items-center mb-2">
+                <span className="text-sm font-bold text-slate-700">Overall Attendance Rate</span>
+                <span className={`text-sm font-bold ${attendanceRate >= 75 ? 'text-emerald-600' : attendanceRate >= 50 ? 'text-amber-600' : 'text-rose-600'}`}>
+                  {attendanceRate}%
+                </span>
+              </div>
+              <div className="w-full bg-slate-100 rounded-full h-3">
+                <div
+                  className={`h-3 rounded-full transition-all ${attendanceRate >= 75 ? 'bg-emerald-500' : attendanceRate >= 50 ? 'bg-amber-500' : 'bg-rose-500'}`}
+                  style={{ width: `${attendanceRate}%` }}
+                />
+              </div>
+              {attendanceRate < 75 && (
+                <p className="text-xs text-amber-600 font-medium mt-2 flex items-center gap-1">
+                  <AlertCircle className="w-3 h-3" />
+                  Attendance below 75%. Please contact the school if there are any concerns.
+                </p>
               )}
-            </tbody>
-          </table>
+            </div>
+          )}
+
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full text-left">
+                <thead className="bg-slate-50">
+                  <tr>
+                    <th className="px-6 py-3 text-xs font-bold text-slate-400 uppercase">Date</th>
+                    <th className="px-6 py-3 text-xs font-bold text-slate-400 uppercase">Status</th>
+                    <th className="px-6 py-3 text-xs font-bold text-slate-400 uppercase">Class</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {attendance.slice(0, 50).map(r => (
+                    <tr key={r.id} className="hover:bg-slate-50/50">
+                      <td className="px-6 py-3 text-sm text-slate-900 font-medium">{r.date}</td>
+                      <td className="px-6 py-3">
+                        <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold uppercase ${
+                          r.status === 'present' ? 'bg-emerald-50 text-emerald-700' :
+                          r.status === 'absent' ? 'bg-rose-50 text-rose-700' : 'bg-amber-50 text-amber-700'
+                        }`}>{r.status}</span>
+                      </td>
+                      <td className="px-6 py-3 text-sm text-slate-500">{r.class}</td>
+                    </tr>
+                  ))}
+                  {attendance.length === 0 && (
+                    <tr>
+                      <td colSpan={3} className="px-6 py-12 text-center text-slate-400">No attendance records found.</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
         </div>
       )}
 
+      {/* ── ASSIGNMENTS ── */}
       {activeTab === 'assignments' && (
         <div className="space-y-4">
-          {assignments.map(assignment => (
-            <div key={assignment.id} className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex justify-between items-center">
-              <div>
-                <h4 className="font-bold text-slate-900">{assignment.title}</h4>
-                <p className="text-sm text-slate-500">{assignment.subject} • {assignment.description}</p>
-              </div>
-              <div className="text-right">
-                <p className="text-xs font-bold text-rose-600 uppercase tracking-wider">Due: {assignment.dueDate}</p>
-              </div>
-            </div>
-          ))}
-          {assignments.length === 0 && (
-            <div className="text-center py-20 bg-slate-50 rounded-2xl border border-slate-100">
+          {assignments.length === 0 ? (
+            <div className="text-center py-16 bg-slate-50 rounded-2xl border border-slate-100">
               <BookOpen className="w-12 h-12 text-slate-200 mx-auto mb-4" />
-              <p className="text-slate-500">No assignments posted for this class.</p>
+              <p className="text-slate-500">No assignments posted for {selectedChild?.currentClass}.</p>
             </div>
-          )}
+          ) : assignments.map(a => {
+            const isOverdue = new Date(a.dueDate) < new Date();
+            return (
+              <div key={a.id} className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex justify-between items-start gap-4">
+                <div className="flex items-start gap-3">
+                  <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${isOverdue ? 'bg-rose-50' : 'bg-indigo-50'}`}>
+                    <BookOpen className={`w-5 h-5 ${isOverdue ? 'text-rose-600' : 'text-indigo-600'}`} />
+                  </div>
+                  <div>
+                    <h4 className="font-bold text-slate-900">{a.title}</h4>
+                    <p className="text-xs text-slate-500 mt-0.5">{a.subject} · {a.description}</p>
+                  </div>
+                </div>
+                <div className="text-right shrink-0">
+                  <p className={`text-xs font-bold uppercase tracking-wider ${isOverdue ? 'text-rose-600' : 'text-slate-400'}`}>
+                    {isOverdue ? 'Overdue' : 'Due'}
+                  </p>
+                  <p className="text-sm font-medium text-slate-700 mt-0.5">{a.dueDate}</p>
+                </div>
+              </div>
+            );
+          })}
         </div>
       )}
 
-      {activeTab === 'events' && (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          {events.map(event => (
-            <div key={event.id} className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex items-start">
-              <div className="bg-indigo-50 w-12 h-12 rounded-xl flex flex-col items-center justify-center text-indigo-700 mr-4 shrink-0">
-                <Calendar className="w-5 h-5" />
+      {/* ── FINANCE ── */}
+      {activeTab === 'finance' && (
+        <div className="space-y-6">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            {[
+              { label: 'Total Invoiced', value: invoices.reduce((s, i) => s + i.amount, 0), color: 'slate' },
+              { label: 'Total Paid', value: invoices.filter(i => i.status === 'paid').reduce((s, i) => s + i.amount, 0), color: 'emerald' },
+              { label: 'Outstanding', value: unpaidInvoices.reduce((s, i) => s + i.amount, 0), color: 'rose' },
+            ].map(card => (
+              <div key={card.label} className={`bg-white p-6 rounded-2xl border ${card.color === 'rose' && unpaidInvoices.length > 0 ? 'border-rose-200 shadow-rose-50' : 'border-slate-200'} shadow-sm`}>
+                <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1">{card.label}</p>
+                <h3 className={`text-2xl font-bold text-${card.color === 'slate' ? 'slate-900' : card.color + '-600'}`}>
+                  ₦{card.value.toLocaleString()}
+                </h3>
               </div>
-              <div>
-                <h4 className="font-bold text-slate-900">{event.title}</h4>
-                <p className="text-xs text-indigo-600 font-bold uppercase mb-2">{event.date} • {event.type}</p>
-                <p className="text-sm text-slate-600">{event.description}</p>
-              </div>
+            ))}
+          </div>
+
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+            <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
+              <h3 className="font-bold text-slate-900">Fee Invoices</h3>
+              <Receipt className="w-5 h-5 text-slate-400" />
             </div>
-          ))}
-          {events.length === 0 && (
-            <div className="col-span-full text-center py-20 bg-slate-50 rounded-2xl border border-slate-100">
-              <Calendar className="w-12 h-12 text-slate-200 mx-auto mb-4" />
-              <p className="text-slate-500">No upcoming events.</p>
+            <div className="divide-y divide-slate-100">
+              {invoices.length === 0 ? (
+                <div className="px-6 py-10 text-center text-slate-400">No invoices found.</div>
+              ) : invoices.map(inv => (
+                <div key={inv.id} className="px-6 py-4 flex flex-col sm:flex-row sm:items-center gap-4">
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-bold text-slate-900">{inv.description}</p>
+                    <p className="text-xs text-slate-500">{inv.term} · {inv.session} · Due: {inv.dueDate}</p>
+                  </div>
+                  <div className="flex items-center gap-3 flex-shrink-0">
+                    <p className="text-sm font-bold text-slate-900">₦{inv.amount.toLocaleString()}</p>
+                    <span className={`px-2 py-1 rounded-full text-[10px] font-bold uppercase ${
+                      inv.status === 'paid' ? 'bg-emerald-50 text-emerald-700' :
+                      inv.status === 'pending' ? 'bg-amber-50 text-amber-700' : 'bg-rose-50 text-rose-700'
+                    }`}>{inv.status}</span>
+                    {inv.status !== 'paid' && (
+                      <PaystackButton
+                        invoice={inv}
+                        payerEmail={user?.email || ''}
+                        payerName={profile?.displayName || ''}
+                      />
+                    )}
+                  </div>
+                </div>
+              ))}
             </div>
-          )}
+          </div>
         </div>
       )}
 
+      {/* ── MESSAGES ── */}
       {activeTab === 'messages' && (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 h-[600px]">
           <div className="lg:col-span-1 bg-white rounded-3xl border border-slate-200 shadow-sm flex flex-col overflow-hidden">
-            <div className="p-6 border-b border-slate-100">
-              <h3 className="font-bold text-slate-900 flex items-center">
-                <MessageSquare className="w-5 h-5 mr-2 text-indigo-600" />
-                Conversations
-              </h3>
+            <div className="p-5 border-b border-slate-100">
+              <h3 className="font-bold text-slate-900 flex items-center gap-2"><MessageSquare className="w-4 h-4 text-indigo-600" />Conversations</h3>
             </div>
-            <div className="flex-1 overflow-y-auto p-4 space-y-2">
-              <button 
-                onClick={() => setNewMessage({ receiverId: '', content: '' })}
-                className="w-full p-3 text-left rounded-2xl border-2 border-dashed border-slate-200 text-slate-400 hover:border-indigo-300 hover:text-indigo-500 transition-all text-sm font-bold flex items-center justify-center"
-              >
-                <Plus className="w-4 h-4 mr-2" />
-                New Conversation
+            <div className="flex-1 overflow-y-auto p-3 space-y-2">
+              <button onClick={() => setNewMessage({ receiverId: '', content: '' })}
+                className="w-full p-3 rounded-2xl border-2 border-dashed border-slate-200 text-slate-400 hover:border-indigo-300 hover:text-indigo-500 transition-all text-sm font-bold flex items-center justify-center gap-2">
+                <Plus className="w-4 h-4" /> New Conversation
               </button>
               {Array.from(new Set(messages.map(m => m.senderId === user?.uid ? m.receiverId : m.senderId))).map(otherId => {
                 const lastMsg = messages.find(m => m.senderId === otherId || m.receiverId === otherId);
-                const unreadCount = messages.filter(m => m.senderId === otherId && !m.read).length;
+                const unread = messages.filter(m => m.senderId === otherId && !m.read).length;
                 return (
-                  <button 
-                    key={otherId}
-                    onClick={() => {
-                      setNewMessage({ receiverId: otherId, content: '' });
-                      // Mark as read
-                      messages.filter(m => m.senderId === otherId && !m.read).forEach(async m => {
-                        await updateDoc(doc(db, 'messages', m.id!), { read: true });
-                      });
-                    }}
-                    className={`w-full p-4 text-left rounded-2xl transition-all ${newMessage.receiverId === otherId ? 'bg-indigo-50 border-indigo-100' : 'hover:bg-slate-50 border-transparent'} border`}
-                  >
+                  <button key={otherId}
+                    onClick={() => { setNewMessage({ receiverId: otherId, content: '' }); messages.filter(m => m.senderId === otherId && !m.read).forEach(async m => { await updateDoc(doc(db, 'messages', m.id!), { read: true }); }); }}
+                    className={`w-full p-4 text-left rounded-2xl transition-all border ${newMessage.receiverId === otherId ? 'bg-indigo-50 border-indigo-100' : 'hover:bg-slate-50 border-transparent'}`}>
                     <div className="flex justify-between items-start mb-1">
-                      <p className="font-bold text-slate-900 text-sm truncate max-w-[120px]">
-                        {lastMsg?.senderId === otherId ? lastMsg.senderName : otherId}
-                      </p>
-                      {unreadCount > 0 && (
-                        <span className="bg-indigo-600 text-white text-[10px] px-1.5 py-0.5 rounded-full font-bold">
-                          {unreadCount}
-                        </span>
-                      )}
+                      <p className="font-bold text-slate-900 text-sm truncate max-w-[120px]">{lastMsg?.senderId === otherId ? lastMsg.senderName : otherId}</p>
+                      {unread > 0 && <span className="bg-indigo-600 text-white text-[10px] px-1.5 py-0.5 rounded-full font-bold">{unread}</span>}
                     </div>
                     <p className="text-xs text-slate-500 truncate">{lastMsg?.content}</p>
                   </button>
@@ -382,151 +508,262 @@ export default function ParentPortal() {
             </div>
           </div>
 
-          <div className="lg:col-span-2 bg-white rounded-3xl border border-slate-200 shadow-sm flex flex-col overflow-hidden relative">
+          <div className="lg:col-span-2 bg-white rounded-3xl border border-slate-200 shadow-sm flex flex-col overflow-hidden">
             {newMessage.receiverId ? (
               <>
-                <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
-                  <div>
-                    <h3 className="font-bold text-slate-900">{newMessage.receiverId}</h3>
-                    <p className="text-[10px] text-slate-400 uppercase font-bold tracking-wider">Communication Log</p>
-                  </div>
+                <div className="p-5 border-b border-slate-100 bg-slate-50/50">
+                  <h3 className="font-bold text-slate-900">{newMessage.receiverId}</h3>
+                  <p className="text-[10px] text-slate-400 uppercase font-bold tracking-wider">Communication Log</p>
                 </div>
-                <div className="flex-1 overflow-y-auto p-6 space-y-4 bg-slate-50/30">
-                  {messages
-                    .filter(m => m.senderId === newMessage.receiverId || m.receiverId === newMessage.receiverId)
+                <div className="flex-1 overflow-y-auto p-5 space-y-4 bg-slate-50/30">
+                  {messages.filter(m => m.senderId === newMessage.receiverId || m.receiverId === newMessage.receiverId)
                     .sort((a, b) => (a.timestamp?.seconds || 0) - (b.timestamp?.seconds || 0))
                     .map(msg => (
                       <div key={msg.id} className={`flex ${msg.senderId === user?.uid ? 'justify-end' : 'justify-start'}`}>
-                        <div className={`max-w-[80%] p-4 rounded-2xl shadow-sm ${
-                          msg.senderId === user?.uid 
-                            ? 'bg-indigo-600 text-white rounded-tr-none' 
-                            : 'bg-white text-slate-700 rounded-tl-none border border-slate-100'
-                        }`}>
+                        <div className={`max-w-[80%] p-4 rounded-2xl shadow-sm ${msg.senderId === user?.uid ? 'bg-indigo-600 text-white rounded-tr-none' : 'bg-white text-slate-700 rounded-tl-none border border-slate-100'}`}>
                           <p className="text-sm leading-relaxed">{msg.content}</p>
-                          <div className={`flex items-center mt-2 text-[10px] ${msg.senderId === user?.uid ? 'text-indigo-200' : 'text-slate-400'}`}>
-                            <Clock className="w-3 h-3 mr-1" />
+                          <p className={`mt-2 text-[10px] flex items-center gap-1 ${msg.senderId === user?.uid ? 'text-indigo-200' : 'text-slate-400'}`}>
+                            <Clock className="w-3 h-3" />
                             {msg.timestamp?.toDate().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                            {msg.senderId === user?.uid && (
-                              <span className="ml-2 flex items-center">
-                                {msg.read ? (
-                                  <><CheckCircle2 className="w-3 h-3 mr-0.5" /> Read</>
-                                ) : (
-                                  <><Clock className="w-3 h-3 mr-0.5" /> Sent</>
-                                )}
-                              </span>
-                            )}
-                          </div>
+                          </p>
                         </div>
                       </div>
                     ))}
                 </div>
-                <form onSubmit={handleSendMessage} className="p-4 border-t border-slate-100 bg-white">
+                <form onSubmit={handleSendMessage} className="p-4 border-t border-slate-100">
                   <div className="flex gap-2">
-                    <input
-                      required
-                      type="text"
-                      value={newMessage.content}
-                      onChange={e => setNewMessage({...newMessage, content: e.target.value})}
-                      placeholder="Type your message..."
-                      className="flex-1 px-4 py-2 rounded-xl border border-slate-200 outline-none focus:ring-2 focus:ring-indigo-500"
-                    />
-                    <button type="submit" className="p-2 bg-indigo-600 text-white rounded-xl hover:bg-indigo-700 transition-all">
-                      <Send className="w-5 h-5" />
-                    </button>
+                    <input required type="text" value={newMessage.content} onChange={e => setNewMessage({ ...newMessage, content: e.target.value })}
+                      placeholder="Type your message..." className="flex-1 px-4 py-2 rounded-xl border border-slate-200 outline-none focus:ring-2 focus:ring-indigo-500 text-sm" />
+                    <button type="submit" className="p-2.5 bg-indigo-600 text-white rounded-xl hover:bg-indigo-700 transition-all"><Send className="w-4 h-4" /></button>
                   </div>
                 </form>
               </>
             ) : (
               <div className="flex-1 flex flex-col items-center justify-center p-12 text-center">
-                <div className="w-20 h-20 bg-indigo-50 rounded-full flex items-center justify-center mb-6">
-                  <MessageSquare className="w-10 h-10 text-indigo-600" />
+                <div className="w-16 h-16 bg-indigo-50 rounded-full flex items-center justify-center mb-5">
+                  <MessageSquare className="w-8 h-8 text-indigo-600" />
                 </div>
-                <h3 className="text-xl font-bold text-slate-900 mb-2">Communication Log</h3>
-                <p className="text-slate-500 max-w-xs">Select a conversation from the left or start a new one to communicate with the school staff.</p>
-                
-                <div className="mt-8 w-full max-w-sm">
-                  <label className="text-xs font-bold text-slate-400 uppercase block mb-2 text-left">New Recipient (Teacher Email)</label>
-                  <input
-                    type="email"
-                    placeholder="Enter teacher email..."
-                    onChange={e => setNewMessage({ ...newMessage, receiverId: e.target.value })}
-                    className="w-full px-4 py-3 rounded-xl border border-slate-200 outline-none focus:ring-2 focus:ring-indigo-500"
-                  />
+                <h3 className="text-lg font-bold text-slate-900 mb-2">Send a message</h3>
+                <p className="text-slate-500 text-sm max-w-xs mb-6">Contact your child's teacher or school administration.</p>
+                <div className="w-full max-w-xs">
+                  <input type="email" placeholder="Enter teacher or staff email..." onChange={e => setNewMessage({ ...newMessage, receiverId: e.target.value })}
+                    className="w-full px-4 py-3 rounded-xl border border-slate-200 outline-none focus:ring-2 focus:ring-indigo-500 text-sm" />
                 </div>
               </div>
             )}
           </div>
         </div>
       )}
-      {activeTab === 'finance' && (
-        <div className="space-y-6">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm">
-              <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1">Total Invoiced</p>
-              <h3 className="text-2xl font-bold text-slate-900">₦{invoices.reduce((sum, i) => sum + i.amount, 0).toLocaleString()}</h3>
+
+      {/* ── REPORT CARD ── */}
+      {activeTab === 'report_card' && selectedChild && (
+        <div className="space-y-6 max-w-3xl">
+          {/* Controls */}
+          <div className="flex flex-wrap items-center gap-4">
+            <div className="flex items-center gap-3">
+              <label className="text-sm font-bold text-slate-500">Term:</label>
+              <select value={reportCardTerm} onChange={e => setReportCardTerm(e.target.value)}
+                className="px-3 py-2 rounded-xl border border-slate-200 text-sm font-medium outline-none focus:ring-2 focus:ring-indigo-500">
+                {TERMS.map(t => <option key={t} value={t}>{t}</option>)}
+              </select>
             </div>
-            <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm">
-              <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1">Paid</p>
-              <h3 className="text-2xl font-bold text-emerald-600">₦{invoices.filter(i => i.status === 'paid').reduce((sum, i) => sum + i.amount, 0).toLocaleString()}</h3>
-            </div>
-            <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm">
-              <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1">Outstanding</p>
-              <h3 className="text-2xl font-bold text-amber-600">₦{invoices.filter(i => i.status !== 'paid').reduce((sum, i) => sum + i.amount, 0).toLocaleString()}</h3>
-            </div>
+            <span className="text-xs text-slate-400">{CURRENT_SESSION}</span>
+            <button
+              onClick={() => {
+                const orig = document.title;
+                document.title = `Report-Card-${selectedChild.studentName}-${reportCardTerm}`;
+                window.print();
+                document.title = orig;
+              }}
+              className="ml-auto flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white font-bold rounded-xl hover:bg-indigo-700 transition-all text-sm print:hidden">
+              <Printer className="w-4 h-4" /> Print Report Card
+            </button>
           </div>
 
-          <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
-            <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
-              <h3 className="font-bold text-slate-900">Fee Invoices</h3>
-              <Receipt className="w-5 h-5 text-slate-400" />
+          {/* Report Card */}
+          <div id="report-card-parent" className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden print:shadow-none print:border-0">
+            {/* School header */}
+            <div className="bg-gradient-to-r from-indigo-700 to-violet-700 p-6 text-white text-center print:bg-indigo-700">
+              <div className="w-14 h-14 bg-white/20 rounded-2xl flex items-center justify-center mx-auto mb-3">
+                <Award className="w-8 h-8 text-white" />
+              </div>
+              <h2 className="text-xl font-black tracking-wide uppercase">Avenir School</h2>
+              <p className="text-indigo-200 text-xs font-medium mt-0.5">Student Report Card</p>
             </div>
-            <div className="overflow-x-auto">
-              <table className="w-full text-left">
-                <thead className="bg-slate-50 border-b border-slate-200">
-                  <tr>
-                    <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase">Description</th>
-                    <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase">Amount</th>
-                    <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase">Due Date</th>
-                    <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase">Status</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {invoices.length === 0 ? (
-                    <tr>
-                      <td colSpan={4} className="px-6 py-10 text-center text-slate-500">No invoices found for this student.</td>
+
+            {/* Student info band */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-0 border-b border-slate-200 divide-x divide-slate-100">
+              {[
+                { label: 'Student', value: selectedChild.studentName },
+                { label: 'Class', value: selectedChild.currentClass },
+                { label: 'Term', value: reportCardTerm },
+                { label: 'Session', value: CURRENT_SESSION },
+              ].map(item => (
+                <div key={item.label} className="px-4 py-3">
+                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-0.5">{item.label}</p>
+                  <p className="text-sm font-bold text-slate-900 truncate">{item.value}</p>
+                </div>
+              ))}
+            </div>
+
+            {/* Grades table */}
+            <div className="p-5">
+              {reportCardGrades.length === 0 ? (
+                <div className="py-12 text-center">
+                  <BookOpen className="w-10 h-10 text-slate-200 mx-auto mb-3" />
+                  <p className="text-slate-500 text-sm">No grades recorded for {reportCardTerm} yet.</p>
+                  <p className="text-xs text-slate-400 mt-1">Grades will appear here once your child's teacher has entered them.</p>
+                </div>
+              ) : (
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b-2 border-slate-200">
+                      <th className="text-left py-2 text-xs font-bold text-slate-500 uppercase">Subject</th>
+                      <th className="text-center py-2 text-xs font-bold text-slate-500 uppercase">CA /40</th>
+                      <th className="text-center py-2 text-xs font-bold text-slate-500 uppercase">Exam /60</th>
+                      <th className="text-center py-2 text-xs font-bold text-slate-500 uppercase">Total</th>
+                      <th className="text-center py-2 text-xs font-bold text-slate-500 uppercase">Grade</th>
+                      <th className="text-center py-2 text-xs font-bold text-slate-500 uppercase">Pos.</th>
+                      <th className="text-left py-2 text-xs font-bold text-slate-500 uppercase hidden sm:table-cell">Remark</th>
                     </tr>
-                  ) : (
-                    invoices.map(invoice => (
-                      <tr key={invoice.id}>
-                        <td className="px-6 py-4">
-                          <p className="text-sm font-bold text-slate-900">{invoice.description}</p>
-                          <p className="text-xs text-slate-500">{invoice.term} {invoice.session}</p>
-                        </td>
-                        <td className="px-6 py-4 text-sm font-medium">₦{invoice.amount.toLocaleString()}</td>
-                        <td className="px-6 py-4 text-sm text-slate-500">{invoice.dueDate}</td>
-                        <td className="px-6 py-4">
-                          <span className={`px-2 py-1 rounded-full text-[10px] font-bold uppercase ${
-                            invoice.status === 'paid' ? 'bg-emerald-50 text-emerald-700' :
-                            invoice.status === 'pending' ? 'bg-amber-50 text-amber-700' : 'bg-rose-50 text-rose-700'
-                          }`}>
-                            {invoice.status}
-                          </span>
-                        </td>
-                      </tr>
-                    ))
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {reportCardGrades.map(g => {
+                      const total = g.totalScore ?? (g.caScore + g.examScore);
+                      const gradeInfo = GRADE_COLORS[g.grade];
+                      return (
+                        <tr key={g.subject}>
+                          <td className="py-2.5 font-medium text-slate-800">{g.subject}</td>
+                          <td className="py-2.5 text-center text-slate-600">{g.caScore}</td>
+                          <td className="py-2.5 text-center text-slate-600">{g.examScore}</td>
+                          <td className="py-2.5 text-center font-bold text-slate-900">{total}</td>
+                          <td className="py-2.5 text-center">
+                            <span className={`px-2 py-0.5 rounded-lg text-xs font-bold ${gradeInfo || 'bg-slate-50 text-slate-700'}`}>{g.grade}</span>
+                          </td>
+                          <td className="py-2.5 text-center text-xs text-slate-500">
+                            {g.subjectPosition ? `#${g.subjectPosition}` : '—'}
+                          </td>
+                          <td className={`py-2.5 text-xs hidden sm:table-cell ${gradeInfo?.split(' ')[0] || 'text-slate-500'}`}>
+                            {g.grade === 'A1' ? 'Excellent' : g.grade === 'B2' || g.grade === 'B3' ? 'Very Good' : g.grade === 'C4' || g.grade === 'C5' || g.grade === 'C6' ? 'Credit' : g.grade === 'D7' || g.grade === 'E8' ? 'Pass' : 'Fail'}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                  <tfoot>
+                    <tr className="border-t-2 border-slate-200 bg-slate-50">
+                      <td colSpan={2} className="py-3 font-bold text-slate-700 text-sm pl-1">Overall Average</td>
+                      <td colSpan={2} className="py-3 text-center font-black text-indigo-700 text-lg">{reportCardAvg}%</td>
+                      <td colSpan={3} className="py-3 text-left pl-2 font-bold text-slate-700 text-sm">
+                        {calculateGrade(reportCardAvg)} — <span className="text-xs text-slate-500">{CURRENT_SESSION}</span>
+                      </td>
+                    </tr>
+                  </tfoot>
+                </table>
+              )}
+            </div>
+
+            {/* Psychomotor Skills */}
+            {reportCardSkills && (
+              <div className="px-5 pb-5">
+                <div className="border border-slate-200 rounded-xl overflow-hidden">
+                  <div className="bg-slate-50 px-4 py-2 border-b border-slate-200">
+                    <p className="text-xs font-bold text-slate-600 uppercase tracking-wide">Psychomotor / Affective Skills Assessment</p>
+                  </div>
+                  <div className="grid grid-cols-3 sm:grid-cols-6 divide-x divide-y sm:divide-y-0 divide-slate-100">
+                    {SKILL_LABELS.map(({ key, label }) => {
+                      const rating: SkillRating = reportCardSkills[key] ?? 'G';
+                      return (
+                        <div key={key} className="p-3 text-center">
+                          <p className="text-xs font-semibold text-slate-600 mb-1">{label}</p>
+                          <p className={`text-sm font-black ${rating === 'E' || rating === 'VG' ? 'text-emerald-600' : rating === 'P' ? 'text-rose-600' : 'text-slate-700'}`}>
+                            {rating}
+                          </p>
+                          <p className="text-[10px] text-slate-400">{SKILL_RATING_LABELS[rating]}</p>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <div className="px-4 py-2 border-t border-slate-100 bg-slate-50">
+                    <p className="text-[10px] text-slate-400">E = Excellent &nbsp;|&nbsp; VG = Very Good &nbsp;|&nbsp; G = Good &nbsp;|&nbsp; F = Fair &nbsp;|&nbsp; P = Poor</p>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Attendance summary on report card */}
+            {reportCardGrades.length > 0 && (
+              <div className="px-5 pb-5">
+                <div className="flex items-center gap-6 p-4 bg-slate-50 rounded-xl border border-slate-200">
+                  <div>
+                    <p className="text-[10px] font-bold text-slate-400 uppercase">Times Present</p>
+                    <p className="text-lg font-black text-emerald-600">{attendance.filter(a => a.status === 'present').length}</p>
+                  </div>
+                  <div>
+                    <p className="text-[10px] font-bold text-slate-400 uppercase">Times Absent</p>
+                    <p className="text-lg font-black text-rose-600">{attendance.filter(a => a.status === 'absent').length}</p>
+                  </div>
+                  <div>
+                    <p className="text-[10px] font-bold text-slate-400 uppercase">Attendance Rate</p>
+                    <p className={`text-lg font-black ${attendanceRate >= 75 ? 'text-emerald-600' : 'text-amber-600'}`}>{attendanceRate}%</p>
+                  </div>
+                  <div className="ml-auto text-right">
+                    <p className="text-[10px] font-bold text-slate-400 uppercase">Student ID</p>
+                    <p className="text-sm font-black text-slate-700 font-mono">{selectedChild.studentId}</p>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Footer note */}
+            <div className="px-5 pb-5">
+              <div className="p-3 bg-indigo-50 rounded-xl border border-indigo-100">
+                <p className="text-[10px] text-indigo-600 font-medium text-center">
+                  This is a computer-generated report. For questions, contact the school administration.
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── NOTIFICATIONS ── */}
+      {activeTab === 'notifications' && (
+        <div className="space-y-4 max-w-2xl">
+          {notifications.length === 0 ? (
+            <div className="text-center py-16 bg-slate-50 rounded-2xl border border-slate-100">
+              <Bell className="w-12 h-12 text-slate-200 mx-auto mb-4" />
+              <p className="text-slate-500">No notifications yet.</p>
+            </div>
+          ) : (
+            notifications.map(n => {
+              const typeColor = n.type === 'fee_due' ? 'amber' : n.type === 'exam' ? 'indigo' : n.type === 'attendance' ? 'rose' : 'slate';
+              return (
+                <motion.div key={n.id} layout initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
+                  className={`bg-white p-5 rounded-2xl border ${n.read ? 'border-slate-200' : 'border-indigo-200 shadow-md shadow-indigo-50'} shadow-sm flex items-start gap-4`}>
+                  <div className={`w-10 h-10 rounded-xl bg-${typeColor}-50 flex items-center justify-center shrink-0 mt-0.5`}>
+                    <Bell className={`w-5 h-5 text-${typeColor}-600`} />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 mb-1">
+                      <h4 className={`font-bold text-slate-900 text-sm ${!n.read ? 'text-indigo-900' : ''}`}>{n.title}</h4>
+                      {!n.read && <span className="w-2 h-2 bg-indigo-500 rounded-full shrink-0" />}
+                    </div>
+                    <p className="text-xs text-slate-500 leading-relaxed">{n.body}</p>
+                    <p className="text-[10px] text-slate-400 font-medium mt-2">
+                      {n.createdAt?.toDate ? n.createdAt.toDate().toLocaleDateString('en-GB') : ''}
+                    </p>
+                  </div>
+                  {!n.read && (
+                    <button onClick={() => markNotifRead(n.id!)} title="Mark as read"
+                      className="p-1.5 text-slate-300 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-all">
+                      <X className="w-4 h-4" />
+                    </button>
                   )}
-                </tbody>
-              </table>
-            </div>
-          </div>
-          
-          <div className="bg-amber-50 border border-amber-200 p-4 rounded-2xl flex items-start">
-            <AlertCircle className="w-5 h-5 text-amber-600 mr-3 mt-0.5" />
-            <div>
-              <p className="text-sm font-bold text-amber-900">Payment Instructions</p>
-              <p className="text-xs text-amber-700 mt-1">Please make all fee payments to the school's bank account and submit the receipt to the bursary office for verification. Online payment integration is coming soon.</p>
-            </div>
-          </div>
+                </motion.div>
+              );
+            })
+          )}
         </div>
       )}
     </div>

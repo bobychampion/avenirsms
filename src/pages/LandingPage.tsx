@@ -8,14 +8,20 @@ import {
   Award, BarChart3, Bell, MessageSquare, Clock, CreditCard, Briefcase,
   Map, CheckCircle2, ArrowRight, Star, Shield, Zap, Globe, Phone,
   Mail, X, ChevronDown, ChevronUp, Sparkles, UserCheck, TrendingUp,
-  CheckCircle, Key, Layers, Database, Activity, Menu, ExternalLink
+  CheckCircle, Key, Layers, Database, Activity, Menu, ExternalLink,
+  Compass, Github, Target,
 } from 'lucide-react';
 
 // ─── Data ─────────────────────────────────────────────────────────────────────
 
+/** Sister product: adaptive career discovery for JSS & SSS (Vite + React; live on Vercel). */
+const AVENIR_CAREER_URL = 'https://avenir-hazel.vercel.app/';
+const AVENIR_CAREER_REPO = 'https://github.com/bobychampion/avenir';
+
 const NAV_LINKS = [
   { label: 'Features', href: '#features' },
   { label: 'Modules', href: '#modules' },
+  { label: 'Career Discovery', href: '#avenir-career' },
   { label: 'Pricing', href: '#pricing' },
   { label: 'About', href: '#about' },
   { label: 'Contact', href: '#contact' },
@@ -163,6 +169,7 @@ const PLANS = [
       'Unlimited Staff & Teachers',
       'Unlimited Students',
       'Everything in Professional',
+      'Avenir Career Discovery — complimentary access for students, parents & guidance (see below)',
       'Multi-campus Support',
       'Custom Branding / Logo',
       'Advanced Analytics & Reports',
@@ -208,6 +215,10 @@ const FAQS = [
   {
     q: 'Can I import existing student data?',
     a: 'Yes. The Professional and College plans include a Bulk CSV Import tool that lets you upload hundreds of student records at once with our provided template.',
+  },
+  {
+    q: 'What is Avenir Career Discovery?',
+    a: 'It is a separate Avenir product focused on adaptive career discovery for JSS and SSS students — assessments, trait-based insights, and career clusters, with portals for students, parents, teachers, and counselors. College plan schools receive complimentary access for their community at avenir-hazel.vercel.app.',
   },
 ];
 
@@ -902,6 +913,111 @@ export default function LandingPage() {
         </div>
       </section>
 
+      {/* ─── AVENIR CAREER DISCOVERY (sister product — College plan perk) ─── */}
+      <section id="avenir-career" className="py-24 bg-gradient-to-br from-teal-950 via-slate-900 to-emerald-950 relative overflow-hidden">
+        <div className="absolute inset-0 pointer-events-none">
+          <div className="absolute top-1/4 right-0 w-96 h-96 bg-teal-500/15 rounded-full blur-3xl" />
+          <div className="absolute bottom-0 left-1/4 w-80 h-80 bg-emerald-500/15 rounded-full blur-3xl" />
+        </div>
+        <div className="relative z-10 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="grid lg:grid-cols-2 gap-14 lg:gap-16 items-center">
+            <motion.div initial={{ opacity: 0, x: -20 }} whileInView={{ opacity: 1, x: 0 }} viewport={{ once: true }}>
+              <div className="inline-flex flex-wrap items-center gap-2 mb-5">
+                <span className="inline-flex items-center gap-1.5 bg-amber-500/20 border border-amber-400/40 text-amber-200 text-xs font-bold px-3 py-1.5 rounded-full">
+                  College plan · Included free
+                </span>
+                <span className="inline-flex items-center gap-1.5 bg-white/10 border border-white/15 text-teal-100 text-xs font-semibold px-3 py-1.5 rounded-full">
+                  <Compass className="w-3.5 h-3.5" /> Sister product
+                </span>
+              </div>
+              <h2 className="text-3xl sm:text-4xl font-extrabold text-white mb-4 leading-tight">
+                Avenir Career Discovery for JSS &amp; SSS
+              </h2>
+              <p className="text-teal-100/75 text-lg mb-6 leading-relaxed">
+                Beyond running the school: help learners explore who they are and where they could thrive.{' '}
+                <strong className="text-white font-semibold">Avenir Career Discovery</strong> is an adaptive career discovery experience — onboarding, branched assessments, trait dimensions, and career clusters — with dedicated paths for{' '}
+                <strong className="text-white font-semibold">students</strong>,{' '}
+                <strong className="text-white font-semibold">parents</strong>,{' '}
+                <strong className="text-white font-semibold">teachers</strong>, and{' '}
+                <strong className="text-white font-semibold">counselors</strong>. Schools on our{' '}
+                <strong className="text-amber-200 font-semibold">College</strong> plan receive this for their community at no extra charge.
+              </p>
+              <ul className="space-y-3 mb-8">
+                {[
+                  { icon: Target, text: 'Adaptive questions and branching paths tuned for JSS and SSS levels' },
+                  { icon: BarChart3, text: 'Results framed around traits and career clusters — not a single “label”' },
+                  { icon: Users, text: 'Parent portal with report codes; teacher views; counselor read-only insights' },
+                  { icon: Globe, text: 'Cloud-hosted web app — share one link with your school community' },
+                ].map((row, i) => (
+                  <li key={i} className="flex items-start gap-3 text-sm text-teal-50/90">
+                    <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-white/10 border border-white/10">
+                      <row.icon className="w-4 h-4 text-teal-300" />
+                    </span>
+                    <span className="pt-1.5 leading-relaxed">{row.text}</span>
+                  </li>
+                ))}
+              </ul>
+              <div className="flex flex-col sm:flex-row flex-wrap gap-3">
+                <a
+                  href={AVENIR_CAREER_URL}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center justify-center gap-2 bg-teal-500 hover:bg-teal-400 text-slate-950 font-bold px-6 py-3.5 rounded-xl text-sm transition-colors shadow-lg shadow-teal-900/30"
+                >
+                  Open Career Discovery <ExternalLink className="w-4 h-4" />
+                </a>
+                <a
+                  href={AVENIR_CAREER_REPO}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center justify-center gap-2 bg-white/10 hover:bg-white/15 border border-white/20 text-white font-semibold px-6 py-3.5 rounded-xl text-sm transition-colors"
+                >
+                  <Github className="w-4 h-4" /> Source on GitHub
+                </a>
+              </div>
+              <p className="mt-5 text-xs text-teal-200/50">
+                Production app:{' '}
+                <span className="text-teal-200/80 font-mono break-all">{AVENIR_CAREER_URL.replace(/^https:\/\//, '')}</span>
+                {' · '}Stack aligns with the open repo (Vite, React, TypeScript; optional Supabase for sync).
+              </p>
+            </motion.div>
+            <motion.div initial={{ opacity: 0, x: 20 }} whileInView={{ opacity: 1, x: 0 }} viewport={{ once: true }}>
+              <div className="rounded-2xl border border-white/10 bg-white/5 backdrop-blur-sm p-6 sm:p-8 shadow-2xl">
+                <div className="flex items-center gap-3 mb-6">
+                  <div className="h-12 w-12 rounded-xl bg-gradient-to-br from-teal-400 to-emerald-600 flex items-center justify-center shadow-lg">
+                    <Compass className="w-6 h-6 text-white" />
+                  </div>
+                  <div>
+                    <p className="text-white font-bold text-lg">How your community uses it</p>
+                    <p className="text-teal-200/60 text-xs">Same platform, roles for everyone</p>
+                  </div>
+                </div>
+                <div className="space-y-4">
+                  {[
+                    { role: 'Students', path: '/student', detail: 'Onboarding → adaptive assessment → personalised cluster results' },
+                    { role: 'Parents', path: '/parent', detail: 'Access results with a report code or browse shared reports' },
+                    { role: 'Teachers', path: '/teacher', detail: 'See report lists and support classroom guidance conversations' },
+                    { role: 'Schools / Counselors', path: '/counselor · /admin', detail: 'Counselor insights; admin tools for content and publishing (per product design)' },
+                  ].map((row, i) => (
+                    <div key={i} className="rounded-xl border border-white/10 bg-slate-950/40 px-4 py-3">
+                      <p className="text-teal-300 text-xs font-bold uppercase tracking-wide">{row.role}</p>
+                      <p className="text-white/90 text-sm font-semibold mt-0.5 font-mono">{row.path}</p>
+                      <p className="text-teal-100/55 text-xs mt-1 leading-relaxed">{row.detail}</p>
+                    </div>
+                  ))}
+                </div>
+                <div className="mt-6 pt-5 border-t border-white/10 flex items-start gap-2">
+                  <Sparkles className="w-4 h-4 text-amber-300 shrink-0 mt-0.5" />
+                  <p className="text-xs text-teal-100/70 leading-relaxed">
+                    <strong className="text-amber-200">College plan schools:</strong> we bundle complimentary access so you can offer career discovery alongside Avenir SIS — request a demo to confirm onboarding for your institution.
+                  </p>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        </div>
+      </section>
+
       {/* ─── HOW IT WORKS ─── */}
       <section className="py-24 bg-white">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -1151,8 +1267,16 @@ export default function LandingPage() {
               <p className="text-xs font-bold uppercase tracking-widest text-slate-500 mb-4">Product</p>
               <ul className="space-y-2 text-sm">
                 {['Features', 'Modules', 'Pricing', 'AI Tools', 'Request Demo'].map(l => (
-                  <li key={l}><button onClick={() => scrollTo(l.toLowerCase().replace(' ', '-'))} className="text-slate-400 hover:text-white transition-colors">{l}</button></li>
+                  <li key={l}><button type="button" onClick={() => scrollTo(l.toLowerCase().replace(' ', '-'))} className="text-slate-400 hover:text-white transition-colors">{l}</button></li>
                 ))}
+                <li>
+                  <button type="button" onClick={() => scrollTo('avenir-career')} className="text-slate-400 hover:text-white transition-colors">Career Discovery</button>
+                </li>
+                <li>
+                  <a href={AVENIR_CAREER_URL} target="_blank" rel="noopener noreferrer" className="text-slate-400 hover:text-white transition-colors inline-flex items-center gap-1">
+                    Open Avenir Career <ExternalLink className="w-3 h-3" />
+                  </a>
+                </li>
               </ul>
             </div>
             <div>

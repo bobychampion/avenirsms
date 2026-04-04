@@ -1,5 +1,7 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
+import { useAuth } from '../components/FirebaseProvider';
+import { getPostAuthHomePath } from '../utils/postAuthRedirect';
 import { db } from '../firebase';
 import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
 import { motion, AnimatePresence } from 'motion/react';
@@ -546,10 +548,16 @@ function FAQItem({ q, a }: { q: string; a: string }) {
 
 export default function LandingPage() {
   const navigate = useNavigate();
+  const { user, profile, loading: authLoading, isAdmin } = useAuth();
   const [demoOpen, setDemoOpen] = useState(false);
   const [yearlyBilling, setYearlyBilling] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [scrolled, setScrolled] = useState(false);
+
+  useEffect(() => {
+    if (!user || authLoading) return;
+    navigate(getPostAuthHomePath(isAdmin, profile), { replace: true });
+  }, [user, profile, authLoading, isAdmin, navigate]);
 
   useEffect(() => {
     const onScroll = () => setScrolled(window.scrollY > 20);

@@ -6,7 +6,7 @@ import {
   collection, query, onSnapshot, where, addDoc, serverTimestamp,
   orderBy, updateDoc, doc, deleteDoc, getDocs, writeBatch
 } from 'firebase/firestore';
-import { Student, Assignment, Message, SUBJECTS, TERMS, CURRENT_SESSION, Grade, calculateGrade, StudentSkills, SKILL_LABELS, SkillRating, StudentSkillRecord } from '../types';
+import { Student, Assignment, Message, SUBJECTS, TERMS, CURRENT_SESSION, SCHOOL_CLASSES, Grade, calculateGrade, StudentSkills, SKILL_LABELS, SkillRating, StudentSkillRecord } from '../types';
 import { batchUpsertAttendance } from '../services/firestoreService';
 import { generateLessonNotes, generateExamQuestions } from '../services/geminiService';
 import { motion, AnimatePresence } from 'motion/react';

@@ -27,32 +27,43 @@ export function FirebaseProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
-      setUser(currentUser);
-      if (currentUser) {
-        // Fetch or create profile
-        const profileRef = doc(db, 'users', currentUser.uid);
-        try {
-          const profileSnap = await getDoc(profileRef);
-          if (profileSnap.exists()) {
-            setProfile(profileSnap.data() as UserProfile);
-          } else {
-            // Create default profile
-            const newProfile: UserProfile = {
-              uid: currentUser.uid,
-              email: currentUser.email || '',
-              role: (currentUser.email === 'jabpa87@gmail.com' || currentUser.email === 'bobychampion87@gmail.com') ? 'admin' : 'applicant',
-              displayName: currentUser.displayName || 'New User'
-            };
-            await setDoc(profileRef, newProfile);
-            setProfile(newProfile);
-          }
-        } catch (error) {
-          handleFirestoreError(error, OperationType.GET, `users/${currentUser.uid}`);
-        }
-      } else {
+      if (!currentUser) {
+        setUser(null);
         setProfile(null);
+        setLoading(false);
+        return;
       }
-      setLoading(false);
+
+      setUser(currentUser);
+      setProfile(null);
+      setLoading(true);
+
+      const profileRef = doc(db, 'users', currentUser.uid);
+      try {
+        const profileSnap = await getDoc(profileRef);
+        if (profileSnap.exists()) {
+          setProfile(profileSnap.data() as UserProfile);
+        } else {
+          const newProfile: UserProfile = {
+            uid: currentUser.uid,
+            email: currentUser.email || '',
+            role: (currentUser.email === 'jabpa87@gmail.com' || currentUser.email === 'bobychampion87@gmail.com') ? 'admin' : 'applicant',
+            displayName: currentUser.displayName || 'New User'
+          };
+          await setDoc(profileRef, newProfile);
+          setProfile(newProfile);
+        }
+      } catch (error) {
+        console.error('Failed to load user profile:', error);
+        try {
+          handleFirestoreError(error, OperationType.GET, `users/${currentUser.uid}`);
+        } catch {
+          /* handleFirestoreError rethrows after logging */
+        }
+        setProfile(null);
+      } finally {
+        setLoading(false);
+      }
     });
 
     return () => unsubscribe();

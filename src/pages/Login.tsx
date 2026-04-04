@@ -1,11 +1,12 @@
 import React, { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../components/FirebaseProvider';
+import { getPostAuthHomePath } from '../utils/postAuthRedirect';
 import { motion } from 'motion/react';
 import { ShieldCheck, Mail, Lock, ArrowRight, ShieldAlert, User } from 'lucide-react';
 
 export default function Login() {
-  const { loginWithEmail, registerWithEmail, authError, clearError, user } = useAuth();
+  const { loginWithEmail, registerWithEmail, authError, clearError, user, profile, loading: authLoading, isAdmin } = useAuth();
   const [isRegistering, setIsRegistering] = useState(false);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -14,10 +15,9 @@ export default function Login() {
   const navigate = useNavigate();
 
   React.useEffect(() => {
-    if (user) {
-      navigate('/');
-    }
-  }, [user, navigate]);
+    if (!user || authLoading) return;
+    navigate(getPostAuthHomePath(isAdmin, profile), { replace: true });
+  }, [user, profile, authLoading, isAdmin, navigate]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();

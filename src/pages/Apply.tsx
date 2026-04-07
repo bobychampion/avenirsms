@@ -21,7 +21,7 @@ export default function Apply() {
     dob: '',
     gender: 'male',
     nin: '',
-    classApplyingFor: 'Primary 1',
+    classApplyingFor: '',
     previousSchool: '',
     waecNecoNumber: '',
     status: 'pending',
@@ -48,17 +48,15 @@ export default function Apply() {
       if (!formData.applicantName) newErrors.applicantName = 'Name is required';
       if (!formData.dob) newErrors.dob = 'Date of birth is required';
       if (!formData.nin || formData.nin.length !== 11) newErrors.nin = 'NIN must be 11 digits';
-      
-      // Age check
-      if (formData.dob) {
-        const age = differenceInYears(new Date(), parseISO(formData.dob));
-        if (formData.classApplyingFor?.startsWith('Primary') && age < NIGERIAN_REGULATIONS.minAgePrimary1) {
-          newErrors.dob = `Minimum age for Primary school is ${NIGERIAN_REGULATIONS.minAgePrimary1} years.`;
-        }
-      }
     }
     if (step === 2) {
       if (!formData.classApplyingFor) newErrors.classApplyingFor = 'Target class is required';
+      if (formData.dob && formData.classApplyingFor) {
+        const age = differenceInYears(new Date(), parseISO(formData.dob));
+        if (formData.classApplyingFor.startsWith('Primary') && age < NIGERIAN_REGULATIONS.minAgePrimary1) {
+          newErrors.dob = `Minimum age for Primary school is ${NIGERIAN_REGULATIONS.minAgePrimary1} years.`;
+        }
+      }
       if (formData.classApplyingFor?.startsWith('SSS') && !formData.waecNecoNumber) {
         newErrors.waecNecoNumber = 'WAEC/NECO number is required for SSS admission';
       }
@@ -225,12 +223,18 @@ export default function Apply() {
                   <div className="space-y-2">
                     <label className="text-sm font-semibold text-slate-700">Class Applying For</label>
                     <select 
-                      className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition-all"
+                      className={`w-full px-4 py-3 rounded-xl border focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition-all ${errors.classApplyingFor ? 'border-rose-300 ring-1 ring-rose-200' : 'border-slate-200'}`}
                       value={formData.classApplyingFor}
                       onChange={e => setFormData({...formData, classApplyingFor: e.target.value})}
                     >
+                      <option value="">Select class…</option>
                       {SCHOOL_CLASSES.map(c => <option key={c} value={c}>{c}</option>)}
                     </select>
+                    {errors.classApplyingFor && (
+                      <p className="text-sm text-rose-600 flex items-center gap-1">
+                        <AlertTriangle className="w-4 h-4 shrink-0" />{errors.classApplyingFor}
+                      </p>
+                    )}
                   </div>
                   <FormField 
                     label="Previous School Attended" 

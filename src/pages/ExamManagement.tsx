@@ -4,7 +4,7 @@ import { collection, query, onSnapshot, addDoc, updateDoc, deleteDoc, doc, serve
 import { ExamSeating, Student, SUBJECTS } from '../types';
 import { AnimatePresence, motion } from 'motion/react';
 import { GraduationCap, Plus, Printer, Trash2, X, Search, Edit2, Users, Calendar } from 'lucide-react';
-import { useSchool } from '../components/SchoolContext';
+import { useClassSelectOptions } from '../components/SchoolContext';
 
 interface Exam {
   id?: string;
@@ -19,7 +19,7 @@ interface Exam {
 }
 
 export default function ExamManagement() {
-  const { classNames } = useSchool();
+  const classSelectOptions = useClassSelectOptions();
   const [exams, setExams] = useState<Exam[]>([]);
   const [seatings, setSeatings] = useState<ExamSeating[]>([]);
   const [students, setStudents] = useState<Student[]>([]);
@@ -233,7 +233,7 @@ export default function ExamManagement() {
                     <label className="text-xs font-bold text-slate-500 uppercase tracking-wide block mb-1">Class</label>
                     <select value={examForm.class} onChange={e => setExamForm(p => ({ ...p, class: e.target.value }))}
                       className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none bg-white text-sm">
-                      {classNames.map(c => <option key={c}>{c}</option>)}
+                      {classSelectOptions.map(o => <option key={o.key} value={o.value}>{o.label}</option>)}
                     </select>
                   </div>
                 </div>

@@ -3,7 +3,7 @@ import { GoogleGenAI } from "@google/genai";
 function getAI() {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
-    throw new Error("Gemini API key is missing. Please check your AI Studio settings.");
+    throw new Error("Gemini API key is missing. Set GEMINI_API_KEY in your environment (.env).");
   }
   return new GoogleGenAI({ apiKey });
 }

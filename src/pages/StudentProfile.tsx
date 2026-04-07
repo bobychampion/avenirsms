@@ -12,6 +12,7 @@ import {
   Sparkles, TrendingUp, TrendingDown, Minus, AlertTriangle,
   CreditCard, Printer, X, CheckCircle2, ChevronRight
 } from 'lucide-react';
+import { DOCUMENT_TITLE_DEFAULT } from '../constants/appMeta';
 
 interface AIInsight {
   overallRemark: string;
@@ -669,10 +670,9 @@ export default function StudentProfile() {
                   </button>
                   <button
                     onClick={() => {
-                      const orig = document.title;
                       document.title = `ID-Card-${student.studentName}`;
                       window.print();
-                      document.title = orig;
+                      document.title = DOCUMENT_TITLE_DEFAULT;
                     }}
                     className="flex-1 py-2.5 bg-indigo-600 text-white font-bold rounded-xl text-sm hover:bg-indigo-700 transition-all flex items-center justify-center gap-2">
                     <Printer className="w-4 h-4" /> Print Card

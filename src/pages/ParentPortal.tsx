@@ -14,6 +14,7 @@ import {
   User, Award, Activity, X, BarChart2, FileText, Printer, CreditCard
 } from 'lucide-react';
 import PaystackButton from '../components/PaystackPayment';
+import { DOCUMENT_TITLE_DEFAULT } from '../constants/appMeta';
 
 const GRADE_COLORS: Record<string, string> = {
   A1: 'text-emerald-700 bg-emerald-50', B2: 'text-emerald-600 bg-emerald-50',
@@ -570,10 +571,9 @@ export default function ParentPortal() {
             <span className="text-xs text-slate-400">{CURRENT_SESSION}</span>
             <button
               onClick={() => {
-                const orig = document.title;
                 document.title = `Report-Card-${selectedChild.studentName}-${reportCardTerm}`;
                 window.print();
-                document.title = orig;
+                document.title = DOCUMENT_TITLE_DEFAULT;
               }}
               className="ml-auto flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white font-bold rounded-xl hover:bg-indigo-700 transition-all text-sm print:hidden">
               <Printer className="w-4 h-4" /> Print Report Card

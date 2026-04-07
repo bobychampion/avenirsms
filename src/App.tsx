@@ -1,5 +1,6 @@
-import React from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import React, { useEffect } from 'react';
+import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from 'react-router-dom';
+import { DOCUMENT_TITLE_DEFAULT } from './constants/appMeta';
 import { FirebaseProvider, useAuth } from './components/FirebaseProvider';
 import ErrorBoundary from './components/ErrorBoundary';
 import { AppToaster } from './components/Toast';
@@ -70,8 +71,19 @@ function ProtectedRoute({
   return <>{children}</>;
 }
 
+/** Keeps the browser tab title correct (overrides stale deploys / defaults like “AI Studio”). */
+function SyncDocumentTitle() {
+  const { pathname } = useLocation();
+  useEffect(() => {
+    document.title = DOCUMENT_TITLE_DEFAULT;
+  }, [pathname]);
+  return null;
+}
+
 function AppContent() {
   return (
+    <>
+      <SyncDocumentTitle />
     <Routes>
       {/* ── Standalone promotional landing page (no Layout wrapper) ── */}
       <Route path="/" element={<LandingPage />} />
@@ -116,6 +128,7 @@ function AppContent() {
       {/* Calendar (all roles) */}
       <Route path="/calendar" element={<Layout><ProtectedRoute><SchoolCalendar /></ProtectedRoute></Layout>} />
     </Routes>
+    </>
   );
 }
 

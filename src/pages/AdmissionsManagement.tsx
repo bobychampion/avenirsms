@@ -15,6 +15,7 @@ import {
   FileText, BarChart3, RefreshCw, Send, ShieldCheck
 } from 'lucide-react';
 import { Application, ApplicationStatus, Student, Guardian, SCHOOL_CLASSES, CURRENT_SESSION, formatDate } from '../types';
+import { stripUndefined } from '../utils/firestoreSanitize';
 import { differenceInYears, parseISO } from 'date-fns';
 import { useAuth } from '../components/FirebaseProvider';
 
@@ -109,12 +110,14 @@ function DirectAdmitModal({
     if (step === 1) {
       if (!form.studentName.trim()) return 'Student name is required.';
       if (!form.dob) return 'Date of birth is required.';
-      if (!form.classApplyingFor) return 'Please select a class.';
       if (!form.gender) return 'Gender is required.';
     }
     if (step === 2) {
       if (!form.g1Name.trim()) return 'Primary guardian name is required.';
       if (!form.g1Phone.trim()) return 'Primary guardian phone is required.';
+    }
+    if (step === 3) {
+      if (!form.classApplyingFor?.trim()) return 'Please select a class.';
     }
     return null;
   };
@@ -126,6 +129,10 @@ function DirectAdmitModal({
   };
 
   const handleSubmit = async () => {
+    if (!form.classApplyingFor?.trim()) {
+      toast.error('Please select a class (go back to step 3).');
+      return;
+    }
     setSaving(true);
     try {
       const batch = writeBatch(db);
@@ -191,7 +198,7 @@ function DirectAdmitModal({
         nationality: form.nationality,
         admissionStatus: 'active',
       };
-      batch.set(studentRef, studentData);
+      batch.set(studentRef, stripUndefined(studentData as Record<string, unknown>) as Omit<Student, 'id'>);
 
       // 5. Guardian doc
       batch.set(guardianRef, {

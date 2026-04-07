@@ -8,7 +8,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import toast from 'react-hot-toast';
 import { ConfirmDialog } from '../components/Toast';
 import { generateFeeReminderDraft } from '../services/geminiService';
-import { useSchool } from '../components/SchoolContext';
+import { useClassSelectOptions } from '../components/SchoolContext';
 import { 
   DollarSign, Receipt, TrendingUp, TrendingDown, Plus, 
   Search, Filter, Loader2, Download, PieChart, 
@@ -16,10 +16,11 @@ import {
   Sparkles, X, Copy, RefreshCw, Layers
 } from 'lucide-react';
 import { PieChart as RePieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend, BarChart, Bar, XAxis, YAxis, CartesianGrid } from 'recharts';
+import { DOCUMENT_TITLE_DEFAULT } from '../constants/appMeta';
 
 export default function FinancialManagement() {
   const { profile } = useAuth();
-  const { classNames } = useSchool();
+  const classSelectOptions = useClassSelectOptions();
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [payments, setPayments] = useState<FeePayment[]>([]);
   const [expenses, setExpenses] = useState<Expense[]>([]);
@@ -735,10 +736,9 @@ export default function FinancialManagement() {
                   </button>
                   <button
                     onClick={() => {
-                      const original = document.title;
                       document.title = `Receipt-${receiptInvoice.studentName}-${receiptInvoice.term}`;
                       window.print();
-                      document.title = original;
+                      document.title = DOCUMENT_TITLE_DEFAULT;
                     }}
                     className="flex-1 py-2.5 bg-indigo-600 text-white font-bold rounded-xl text-sm hover:bg-indigo-700 transition-all flex items-center justify-center gap-2">
                     <Printer className="w-4 h-4" /> Print Receipt
@@ -801,7 +801,7 @@ export default function FinancialManagement() {
                       onChange={e => setScheduleForm(p => ({ ...p, targetClass: e.target.value }))}
                       required className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm bg-white">
                       <option value="">Select class…</option>
-                      {classNames.map(c => <option key={c} value={c}>{c}</option>)}
+                      {classSelectOptions.map(o => <option key={o.key} value={o.value}>{o.label}</option>)}
                     </select>
                   </div>
                   <div className="grid grid-cols-2 gap-4">

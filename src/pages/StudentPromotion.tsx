@@ -9,7 +9,7 @@ import { Student, CURRENT_SESSION } from '../types';
 import { motion, AnimatePresence } from 'motion/react';
 import toast from 'react-hot-toast';
 import { ConfirmDialog } from '../components/Toast';
-import { useSchool } from '../components/SchoolContext';
+import { useSchool, useClassSelectOptions } from '../components/SchoolContext';
 import {
   GraduationCap, ArrowRight, RotateCcw, ChevronDown,
   Users, CheckCircle2, XCircle, AlertTriangle, History
@@ -52,6 +52,7 @@ function getNextSession(session: string): string {
 
 export default function StudentPromotion() {
   const { classNames } = useSchool();
+  const classSelectOptions = useClassSelectOptions();
   const [selectedClass, setSelectedClass] = useState('');
   const [students, setStudents] = useState<Student[]>([]);
   const [decisions, setDecisions] = useState<Record<string, Decision>>({});
@@ -230,7 +231,7 @@ export default function StudentPromotion() {
                 <label className="text-xs font-bold text-slate-500 uppercase tracking-wide block mb-1.5">Source Class</label>
                 <select value={selectedClass} onChange={e => setSelectedClass(e.target.value)}
                   className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm">
-                  {classNames.map(c => <option key={c}>{c}</option>)}
+                  {classSelectOptions.map(o => <option key={o.key} value={o.value}>{o.label}</option>)}
                 </select>
               </div>
               <div className="flex-1 min-w-[180px] bg-slate-50 rounded-xl border border-slate-200 px-4 py-2.5">

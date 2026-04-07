@@ -4,7 +4,7 @@ import { collection, query, where, getDocs } from 'firebase/firestore';
 import { Student, Grade, calculateGrade, CURRENT_SESSION, formatDate, StudentSkillRecord, StudentSkills, SKILL_LABELS, SKILL_RATING_LABELS, SkillRating } from '../types';
 import { generateReportSummary } from '../services/geminiService';
 import toast from 'react-hot-toast';
-import { useSchool } from '../components/SchoolContext';
+import { useClassSelectOptions } from '../components/SchoolContext';
 import { FileText, Printer, Sparkles, ChevronDown, Users } from 'lucide-react';
 
 const DEFAULT_SKILLS: StudentSkills = {
@@ -35,7 +35,7 @@ const GRADE_MAP: Record<string, { label: string; color: string }> = {
 };
 
 export default function ReportCards() {
-  const { classNames } = useSchool();
+  const classSelectOptions = useClassSelectOptions();
   const [selectedClass, setSelectedClass] = useState('');
   const [selectedTerm, setSelectedTerm] = useState<'1st Term' | '2nd Term' | '3rd Term'>('1st Term');
   const [session] = useState(CURRENT_SESSION);
@@ -118,7 +118,7 @@ export default function ReportCards() {
             <label className="text-xs font-bold text-slate-500 uppercase tracking-wide block mb-1.5">Class</label>
             <select value={selectedClass} onChange={e => setSelectedClass(e.target.value)}
               className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none bg-white text-sm">
-              {classNames.map(c => <option key={c} value={c}>{c}</option>)}
+              {classSelectOptions.map(o => <option key={o.key} value={o.value}>{o.label}</option>)}
             </select>
           </div>
           <div className="flex-1 min-w-[140px]">

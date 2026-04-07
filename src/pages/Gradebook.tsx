@@ -7,7 +7,7 @@ import { suggestGradingComment } from '../services/geminiService';
 import { motion } from 'motion/react';
 import toast from 'react-hot-toast';
 import { Save, Loader2, BookOpen, ArrowLeft, Sparkles, CheckCircle } from 'lucide-react';
-import { useSchool } from '../components/SchoolContext';
+import { useClassSelectOptions } from '../components/SchoolContext';
 
 const GRADE_COLORS: Record<string, string> = {
   A1: 'bg-emerald-50 text-emerald-700 border-emerald-200',
@@ -22,7 +22,7 @@ const GRADE_COLORS: Record<string, string> = {
 };
 
 export default function Gradebook() {
-  const { classNames } = useSchool();
+  const classSelectOptions = useClassSelectOptions();
   const [students, setStudents] = useState<Student[]>([]);
   const [grades, setGrades] = useState<Record<string, Grade>>({});
   const [loading, setLoading] = useState(true);
@@ -142,15 +142,15 @@ export default function Gradebook() {
       <div className="bg-white rounded-2xl border border-slate-200 p-5 mb-6 shadow-sm">
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
           {[
-            { label: 'Class', value: selectedClass, onChange: setSelectedClass, options: classNames.map(c => ({ v: c, l: c })) },
-            { label: 'Subject', value: selectedSubject, onChange: setSelectedSubject, options: SUBJECTS.map(s => ({ v: s, l: s })) },
-            { label: 'Term', value: selectedTerm, onChange: (v: any) => setSelectedTerm(v), options: [{ v: '1st Term', l: '1st Term' }, { v: '2nd Term', l: '2nd Term' }, { v: '3rd Term', l: '3rd Term' }] },
+            { label: 'Class', value: selectedClass, onChange: setSelectedClass, options: classSelectOptions.map(o => ({ k: o.key, v: o.value, l: o.label })) },
+            { label: 'Subject', value: selectedSubject, onChange: setSelectedSubject, options: SUBJECTS.map((s, i) => ({ k: `subj-${i}`, v: s, l: s })) },
+            { label: 'Term', value: selectedTerm, onChange: (v: any) => setSelectedTerm(v), options: [{ k: 't1', v: '1st Term', l: '1st Term' }, { k: 't2', v: '2nd Term', l: '2nd Term' }, { k: 't3', v: '3rd Term', l: '3rd Term' }] },
           ].map(f => (
             <div key={f.label}>
               <label className="text-xs font-bold text-slate-500 uppercase tracking-wide block mb-1.5">{f.label}</label>
               <select value={f.value} onChange={e => f.onChange(e.target.value as any)}
                 className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none bg-white text-sm font-medium">
-                {f.options.map(o => <option key={o.v} value={o.v}>{o.l}</option>)}
+                {f.options.map(o => <option key={o.k} value={o.v}>{o.l}</option>)}
               </select>
             </div>
           ))}

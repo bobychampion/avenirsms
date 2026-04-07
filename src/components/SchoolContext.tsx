@@ -84,3 +84,23 @@ export function SchoolProvider({ children }: { children: React.ReactNode }) {
 export function useSchool() {
   return useContext(SchoolContext);
 }
+
+/**
+ * Options for class <select>s — keys use Firestore class doc ids so duplicate names
+ * (e.g. two "JSS 1A" rows) do not produce duplicate React keys.
+ */
+export function useClassSelectOptions(): { key: string; value: string; label: string }[] {
+  const { classes, classNames } = useContext(SchoolContext);
+  if (classes.length > 0) {
+    return classes.map((c, i) => ({
+      key: c.id || `class-fallback-${i}`,
+      value: c.name,
+      label: `${c.name} (${c.level})`,
+    }));
+  }
+  return classNames.map((name, i) => ({
+    key: `preset-${i}-${name}`,
+    value: name,
+    label: name,
+  }));
+}

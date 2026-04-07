@@ -24,7 +24,7 @@ export default function AttendancePage() {
   const { user } = useAuth();
   const [selectedClass, setSelectedClass] = useState('');
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
-  const [classes, setClasses] = useState<string[]>([]);
+  const [classRows, setClassRows] = useState<{ id: string; name: string }[]>([]);
   const [students, setStudents] = useState<Student[]>([]);
   const [attendanceRows, setAttendanceRows] = useState<AttendanceRow[]>([]);
   const [saving, setSaving] = useState(false);
@@ -39,8 +39,7 @@ export default function AttendancePage() {
   useEffect(() => {
     const q = query(collection(db, 'classes'), orderBy('name', 'asc'));
     const unsub = onSnapshot(q, snap => {
-      const names = snap.docs.map(d => d.data().name as string);
-      setClasses(names);
+      setClassRows(snap.docs.map(d => ({ id: d.id, name: (d.data().name as string) || '' })));
     });
     return () => unsub();
   }, []);
@@ -212,7 +211,7 @@ export default function AttendancePage() {
               className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none bg-white text-sm"
             >
               <option value="">Select class...</option>
-              {classes.map(c => <option key={c} value={c}>{c}</option>)}
+              {classRows.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
             </select>
           </div>
           <div className="flex-1 min-w-[160px]">

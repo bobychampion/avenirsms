@@ -4,12 +4,12 @@ import { collection, query, onSnapshot, doc, setDoc, serverTimestamp } from 'fir
 import { Timetable, TimetablePeriod, DAYS_OF_WEEK, SUBJECTS, UserProfile, CURRENT_SESSION } from '../types';
 import { AnimatePresence, motion } from 'motion/react';
 import { Clock, Plus, X, Save, AlertTriangle, CheckCircle } from 'lucide-react';
-import { useSchool } from '../components/SchoolContext';
+import { useClassSelectOptions } from '../components/SchoolContext';
 
 const TIMES = ['07:00', '07:40', '08:20', '09:00', '09:40', '10:20', '11:00', '11:40', '12:20', '13:00', '14:00', '14:40', '15:20'];
 
 export default function TimetableManagement() {
-  const { classNames } = useSchool();
+  const classSelectOptions = useClassSelectOptions();
   const [timetables, setTimetables] = useState<Timetable[]>([]);
   const [teachers, setTeachers] = useState<UserProfile[]>([]);
   const [selectedClass, setSelectedClass] = useState('');
@@ -125,7 +125,7 @@ export default function TimetableManagement() {
             <label className="text-xs font-bold text-slate-500 uppercase tracking-wide block mb-1.5">Class</label>
             <select value={selectedClass} onChange={e => setSelectedClass(e.target.value)}
               className="px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none bg-white text-sm">
-              {classNames.map(c => <option key={c}>{c}</option>)}
+              {classSelectOptions.map(o => <option key={o.key} value={o.value}>{o.label}</option>)}
             </select>
           </div>
           <div>

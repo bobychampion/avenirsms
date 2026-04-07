@@ -6,6 +6,7 @@ import {
   collection, query, where, getDocs, writeBatch
 } from 'firebase/firestore';
 import { Application, ApplicationStatus, NIGERIAN_REGULATIONS, Student, SCHOOL_CLASSES, Guardian, formatDate } from '../types';
+import { stripUndefined } from '../utils/firestoreSanitize';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   ArrowLeft, CheckCircle, XCircle, Clock, ShieldCheck,
@@ -276,7 +277,7 @@ export default function ApplicationDetail() {
             guardian2Email: guardianForm.g2Email || undefined,
             siblingIds: siblingIds.length ? siblingIds : undefined,
           };
-          batch.set(studentRef, newStudent);
+          batch.set(studentRef, stripUndefined(newStudent as Record<string, unknown>) as Omit<Student, 'id'>);
 
           // Create Guardian document
           if (guardianForm.g1Name) {

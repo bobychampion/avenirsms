@@ -1,27 +1,37 @@
 import React, { useState, useEffect } from 'react';
 import { db, handleFirestoreError, OperationType } from '../firebase';
 import { collection, query, onSnapshot, doc, setDoc, serverTimestamp } from 'firebase/firestore';
-import { Timetable, TimetablePeriod, DAYS_OF_WEEK, SUBJECTS, UserProfile, CURRENT_SESSION } from '../types';
+import { Timetable, TimetablePeriod, DAYS_OF_WEEK, UserProfile } from '../types';
 import { AnimatePresence, motion } from 'motion/react';
 import { Clock, Plus, X, Save, AlertTriangle, CheckCircle } from 'lucide-react';
-import { useClassSelectOptions } from '../components/SchoolContext';
-
-const TIMES = ['07:00', '07:40', '08:20', '09:00', '09:40', '10:20', '11:00', '11:40', '12:20', '13:00', '14:00', '14:40', '15:20'];
+import { useClassSelectOptions, useSchool } from '../components/SchoolContext';
 
 export default function TimetableManagement() {
   const classSelectOptions = useClassSelectOptions();
+  const { subjects, periodTimes, currentSession } = useSchool();
+
   const [timetables, setTimetables] = useState<Timetable[]>([]);
   const [teachers, setTeachers] = useState<UserProfile[]>([]);
   const [selectedClass, setSelectedClass] = useState('');
   const [selectedTerm, setSelectedTerm] = useState<'1st Term' | '2nd Term' | '3rd Term'>('1st Term');
-  const [session] = useState(CURRENT_SESSION);
   const [timetable, setTimetable] = useState<Timetable | null>(null);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [conflicts, setConflicts] = useState<string[]>([]);
   const [isAddModal, setIsAddModal] = useState(false);
   const [addTarget, setAddTarget] = useState<{ day: string } | null>(null);
-  const [periodForm, setPeriodForm] = useState<TimetablePeriod>({ subject: SUBJECTS[0], startTime: '08:00', endTime: '09:00', teacher: '' });
+
+  // Period form — uses free-text time input
+  const [periodForm, setPeriodForm] = useState<TimetablePeriod>({
+    subject: subjects[0] || '',
+    startTime: '',
+    endTime: '',
+    teacher: '',
+  });
+  const [customStart, setCustomStart] = useState('');
+  const [customEnd, setCustomEnd] = useState('');
+  const [useCustomStart, setUseCustomStart] = useState(false);
+  const [useCustomEnd, setUseCustomEnd] = useState(false);
 
   useEffect(() => {
     const unsub = onSnapshot(collection(db, 'timetables'), snap => {
@@ -35,17 +45,24 @@ export default function TimetableManagement() {
 
   // Load timetable for selected class+term+session
   useEffect(() => {
-    const existing = timetables.find(t => t.class === selectedClass && t.term === selectedTerm && t.session === session);
+    const existing = timetables.find(t => t.class === selectedClass && t.term === selectedTerm && t.session === currentSession);
     if (existing) {
       setTimetable(existing);
     } else {
       setTimetable({
-        class: selectedClass, term: selectedTerm, session,
+        class: selectedClass, term: selectedTerm, session: currentSession,
         schedule: { Monday: [], Tuesday: [], Wednesday: [], Thursday: [], Friday: [] },
         updatedAt: null,
       });
     }
-  }, [timetables, selectedClass, selectedTerm, session]);
+  }, [timetables, selectedClass, selectedTerm, currentSession]);
+
+  // Keep periodForm subject in sync if subjects list changes
+  useEffect(() => {
+    if (subjects.length > 0 && !subjects.includes(periodForm.subject)) {
+      setPeriodForm(p => ({ ...p, subject: subjects[0] }));
+    }
+  }, [subjects]);
 
   const detectConflicts = (tt: Timetable): string[] => {
     const teacherSlots: Record<string, string[]> = {};
@@ -64,20 +81,30 @@ export default function TimetableManagement() {
     return [...new Set(issues)];
   };
 
+  const resolveTime = (val: string, custom: string, useCustom: boolean) =>
+    useCustom ? custom.trim() : val;
+
   const addPeriod = () => {
     if (!timetable || !addTarget) return;
+    const startTime = resolveTime(periodForm.startTime, customStart, useCustomStart);
+    const endTime = resolveTime(periodForm.endTime, customEnd, useCustomEnd);
+    if (!startTime || !endTime) return;
+    const newPeriod: TimetablePeriod = { ...periodForm, startTime, endTime };
     const updated: Timetable = {
       ...timetable,
       schedule: {
         ...timetable.schedule,
-        [addTarget.day]: [...(timetable.schedule[addTarget.day as keyof typeof timetable.schedule] || []), { ...periodForm }],
+        [addTarget.day]: [...(timetable.schedule[addTarget.day as keyof typeof timetable.schedule] || []), newPeriod],
       },
     };
     const c = detectConflicts(updated);
     setConflicts(c);
     setTimetable(updated);
     setIsAddModal(false);
-    setPeriodForm({ subject: SUBJECTS[0], startTime: '08:00', endTime: '09:00', teacher: '' });
+    // Reset form
+    setPeriodForm({ subject: subjects[0] || '', startTime: '', endTime: '', teacher: '' });
+    setCustomStart(''); setCustomEnd('');
+    setUseCustomStart(false); setUseCustomEnd(false);
   };
 
   const removePeriod = (day: string, idx: number) => {
@@ -96,17 +123,73 @@ export default function TimetableManagement() {
   const saveTimetable = async () => {
     if (!timetable) return;
     setSaving(true);
-    const docId = `${selectedClass}_${selectedTerm}_${session}`.replace(/[\s/]/g, '_');
-    await setDoc(doc(db, 'timetables', docId), { ...timetable, updatedAt: serverTimestamp() }).catch(e => handleFirestoreError(e, OperationType.WRITE, 'timetables'));
+    const docId = `${selectedClass}_${selectedTerm}_${currentSession}`.replace(/[\s/]/g, '_');
+    await setDoc(doc(db, 'timetables', docId), { ...timetable, updatedAt: serverTimestamp() })
+      .catch(e => handleFirestoreError(e, OperationType.WRITE, 'timetables'));
     setSaving(false);
     setSaved(true);
     setTimeout(() => setSaved(false), 3000);
   };
 
-  const SUBJECT_COLORS = ['bg-indigo-100 text-indigo-700 border-indigo-200', 'bg-emerald-100 text-emerald-700 border-emerald-200', 'bg-amber-100 text-amber-700 border-amber-200', 'bg-rose-100 text-rose-700 border-rose-200', 'bg-purple-100 text-purple-700 border-purple-200', 'bg-cyan-100 text-cyan-700 border-cyan-200'];
+  const SUBJECT_COLORS = [
+    'bg-indigo-100 text-indigo-700 border-indigo-200',
+    'bg-emerald-100 text-emerald-700 border-emerald-200',
+    'bg-amber-100 text-amber-700 border-amber-200',
+    'bg-rose-100 text-rose-700 border-rose-200',
+    'bg-purple-100 text-purple-700 border-purple-200',
+    'bg-cyan-100 text-cyan-700 border-cyan-200'
+  ];
   const subjectColorMap: Record<string, string> = {};
   let colorIdx = 0;
-  timetable && DAYS_OF_WEEK.forEach(day => (timetable.schedule[day] || []).forEach(p => { if (!subjectColorMap[p.subject]) subjectColorMap[p.subject] = SUBJECT_COLORS[colorIdx++ % SUBJECT_COLORS.length]; }));
+  timetable && DAYS_OF_WEEK.forEach(day =>
+    (timetable.schedule[day] || []).forEach(p => {
+      if (!subjectColorMap[p.subject]) subjectColorMap[p.subject] = SUBJECT_COLORS[colorIdx++ % SUBJECT_COLORS.length];
+    })
+  );
+
+  // Time select/input hybrid
+  const TimeInput = ({
+    label, value, onChange, custom, onCustomChange, useCustom, onToggleCustom
+  }: {
+    label: string;
+    value: string;
+    onChange: (v: string) => void;
+    custom: string;
+    onCustomChange: (v: string) => void;
+    useCustom: boolean;
+    onToggleCustom: (v: boolean) => void;
+  }) => (
+    <div>
+      <label className="text-xs font-bold text-slate-500 uppercase tracking-wide block mb-1">{label}</label>
+      {useCustom ? (
+        <div className="flex gap-1">
+          <input
+            value={custom}
+            onChange={e => onCustomChange(e.target.value)}
+            placeholder="HH:MM"
+            className="flex-1 px-3 py-2.5 rounded-xl border border-indigo-300 focus:ring-2 focus:ring-indigo-500 outline-none text-sm font-mono"
+          />
+          <button onClick={() => { onToggleCustom(false); onChange(''); }}
+            className="px-2 py-1 text-xs text-slate-500 hover:text-slate-700 border border-slate-200 rounded-lg">
+            ↩
+          </button>
+        </div>
+      ) : (
+        <div className="flex gap-1">
+          <select value={value} onChange={e => onChange(e.target.value)}
+            className="flex-1 px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none bg-white text-sm">
+            <option value="">— select —</option>
+            {periodTimes.map(t => <option key={t}>{t}</option>)}
+          </select>
+          <button onClick={() => onToggleCustom(true)}
+            title="Type custom time"
+            className="px-2 py-1 text-xs text-indigo-600 hover:bg-indigo-50 border border-indigo-200 rounded-lg">
+            ✎
+          </button>
+        </div>
+      )}
+    </div>
+  );
 
   return (
     <div className="p-6 lg:p-8">
@@ -125,6 +208,7 @@ export default function TimetableManagement() {
             <label className="text-xs font-bold text-slate-500 uppercase tracking-wide block mb-1.5">Class</label>
             <select value={selectedClass} onChange={e => setSelectedClass(e.target.value)}
               className="px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none bg-white text-sm">
+              <option value="">Select class…</option>
               {classSelectOptions.map(o => <option key={o.key} value={o.value}>{o.label}</option>)}
             </select>
           </div>
@@ -134,6 +218,9 @@ export default function TimetableManagement() {
               className="px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none bg-white text-sm">
               <option>1st Term</option><option>2nd Term</option><option>3rd Term</option>
             </select>
+          </div>
+          <div className="text-xs text-slate-400 font-mono bg-slate-50 px-3 py-2 rounded-lg border border-slate-100">
+            Session: {currentSession}
           </div>
           <button onClick={saveTimetable} disabled={saving || conflicts.length > 0}
             className="flex items-center gap-2 px-5 py-2.5 bg-indigo-600 text-white font-bold rounded-xl hover:bg-indigo-700 transition-all text-sm shadow-sm disabled:opacity-60 ml-auto">
@@ -215,31 +302,37 @@ export default function TimetableManagement() {
               className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6">
               <div className="flex items-center justify-between mb-5">
                 <h2 className="font-bold text-slate-900">Add Period — {addTarget?.day}</h2>
-                <button onClick={() => setIsAddModal(false)} className="p-1.5 hover:bg-slate-100 rounded-lg"><X className="w-4 h-4" /></button>
+                <button onClick={() => setIsAddModal(false)} className="p-1.5 hover:bg-slate-100 rounded-lg">
+                  <X className="w-4 h-4" />
+                </button>
               </div>
               <div className="space-y-4">
                 <div>
                   <label className="text-xs font-bold text-slate-500 uppercase tracking-wide block mb-1">Subject</label>
                   <select value={periodForm.subject} onChange={e => setPeriodForm(p => ({ ...p, subject: e.target.value }))}
                     className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none bg-white text-sm">
-                    {SUBJECTS.map(s => <option key={s}>{s}</option>)}
+                    {subjects.map(s => <option key={s}>{s}</option>)}
                   </select>
                 </div>
                 <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="text-xs font-bold text-slate-500 uppercase tracking-wide block mb-1">Start Time</label>
-                    <select value={periodForm.startTime} onChange={e => setPeriodForm(p => ({ ...p, startTime: e.target.value }))}
-                      className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none bg-white text-sm">
-                      {TIMES.map(t => <option key={t}>{t}</option>)}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="text-xs font-bold text-slate-500 uppercase tracking-wide block mb-1">End Time</label>
-                    <select value={periodForm.endTime} onChange={e => setPeriodForm(p => ({ ...p, endTime: e.target.value }))}
-                      className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none bg-white text-sm">
-                      {TIMES.map(t => <option key={t}>{t}</option>)}
-                    </select>
-                  </div>
+                  <TimeInput
+                    label="Start Time"
+                    value={periodForm.startTime}
+                    onChange={v => setPeriodForm(p => ({ ...p, startTime: v }))}
+                    custom={customStart}
+                    onCustomChange={setCustomStart}
+                    useCustom={useCustomStart}
+                    onToggleCustom={setUseCustomStart}
+                  />
+                  <TimeInput
+                    label="End Time"
+                    value={periodForm.endTime}
+                    onChange={v => setPeriodForm(p => ({ ...p, endTime: v }))}
+                    custom={customEnd}
+                    onCustomChange={setCustomEnd}
+                    useCustom={useCustomEnd}
+                    onToggleCustom={setUseCustomEnd}
+                  />
                 </div>
                 <div>
                   <label className="text-xs font-bold text-slate-500 uppercase tracking-wide block mb-1">Teacher (optional)</label>
@@ -252,7 +345,11 @@ export default function TimetableManagement() {
               </div>
               <div className="flex justify-end gap-2 mt-6">
                 <button onClick={() => setIsAddModal(false)} className="px-4 py-2 text-sm text-slate-600 hover:bg-slate-100 rounded-xl">Cancel</button>
-                <button onClick={addPeriod} className="px-5 py-2 bg-indigo-600 text-white font-bold rounded-xl hover:bg-indigo-700 text-sm">Add Period</button>
+                <button onClick={addPeriod}
+                  disabled={!resolveTime(periodForm.startTime, customStart, useCustomStart) || !resolveTime(periodForm.endTime, customEnd, useCustomEnd)}
+                  className="px-5 py-2 bg-indigo-600 text-white font-bold rounded-xl hover:bg-indigo-700 text-sm disabled:opacity-50">
+                  Add Period
+                </button>
               </div>
             </motion.div>
           </motion.div>

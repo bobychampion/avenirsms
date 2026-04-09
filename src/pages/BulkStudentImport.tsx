@@ -1,7 +1,8 @@
 import React, { useState, useRef } from 'react';
 import { db } from '../firebase';
 import { collection, addDoc, serverTimestamp, getDocs, query, where } from 'firebase/firestore';
-import { SCHOOL_CLASSES, Student } from '../types';
+import { Student } from '../types';
+import { generateStudentId } from '../services/firestoreService';
 import Papa from 'papaparse';
 import toast from 'react-hot-toast';
 import { motion, AnimatePresence } from 'motion/react';
@@ -35,18 +36,9 @@ interface ImportResult {
   studentId?: string;
 }
 
-function generateStudentId(): string {
-  const year = new Date().getFullYear().toString().slice(-2);
-  const rand = Math.floor(10000 + Math.random() * 90000).toString();
-  return `AVN${year}${rand}`;
-}
-
 function validateRow(row: CSVRow, idx: number): string | null {
   if (!row.studentName?.trim()) return `Row ${idx}: Student name is required`;
   if (!row.currentClass?.trim()) return `Row ${idx}: Class is required`;
-  if (!SCHOOL_CLASSES.includes(row.currentClass.trim())) {
-    return `Row ${idx}: Invalid class "${row.currentClass}". Must be one of: ${SCHOOL_CLASSES.join(', ')}`;
-  }
   if (!row.gender?.trim()) return `Row ${idx}: Gender is required`;
   if (!['male', 'female', 'other'].includes(row.gender.trim().toLowerCase())) {
     return `Row ${idx}: Gender must be male, female, or other`;
@@ -121,11 +113,11 @@ export default function BulkStudentImport() {
           }
         }
 
-        let newId = generateStudentId();
+        let newId = await generateStudentId();
         // Ensure uniqueness
         let idCheck = await getDocs(query(collection(db, 'students'), where('studentId', '==', newId)));
         while (!idCheck.empty) {
-          newId = generateStudentId();
+          newId = await generateStudentId();
           idCheck = await getDocs(query(collection(db, 'students'), where('studentId', '==', newId)));
         }
 

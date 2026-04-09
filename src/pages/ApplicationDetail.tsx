@@ -6,6 +6,7 @@ import {
   collection, query, where, getDocs, writeBatch
 } from 'firebase/firestore';
 import { Application, ApplicationStatus, NIGERIAN_REGULATIONS, Student, SCHOOL_CLASSES, Guardian, formatDate } from '../types';
+import { generateStudentId } from '../services/firestoreService';
 import { stripUndefined } from '../utils/firestoreSanitize';
 import { motion, AnimatePresence } from 'motion/react';
 import {
@@ -246,9 +247,7 @@ export default function ApplicationDetail() {
         const studentSnap = await getDocs(studentQuery);
 
         if (studentSnap.empty) {
-          const year = new Date().getFullYear();
-          const allStudents = await getDocs(collection(db, 'students'));
-          const studentId = `AVN-${year}-${String(allStudents.size + 1).padStart(3, '0')}`;
+          const studentId = await generateStudentId();
           const siblingIds = selectedSiblings.map(s => s.id!).filter(Boolean);
 
           const studentRef = doc(collection(db, 'students'));

@@ -1,22 +1,31 @@
 /**
  * SchoolContext.tsx
  *
- * Provides school-wide shared state (classes, subjects, current session/term)
- * fetched once on mount — no more repeated getDocs('classes') in every page.
+ * Provides school-wide shared state (classes, subjects, levels, period times,
+ * current session/term) fetched once on mount — no more repeated getDocs calls
+ * in every page.
  *
  * Usage:
- *   const { classes, subjects, currentSession, currentTerm } = useSchool();
+ *   const { classes, subjects, schoolLevels, periodTimes, currentSession, currentTerm } = useSchool();
  */
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { db } from '../firebase';
-import { collection, onSnapshot, orderBy, query } from 'firebase/firestore';
+import { collection, onSnapshot, orderBy, query, doc } from 'firebase/firestore';
 import { SchoolClass, SCHOOL_CLASSES, SUBJECTS, CURRENT_SESSION, TERMS } from '../types';
+import { SchoolSettings, defaultSettings } from '../pages/SchoolSettings';
+
+const DEFAULT_PERIOD_TIMES = [
+  '07:00', '07:40', '08:20', '09:00', '09:40', '10:20',
+  '11:00', '11:40', '12:20', '13:00', '14:00', '14:40', '15:20'
+];
 
 interface SchoolContextValue {
   classes: SchoolClass[];          // from Firestore /classes (dynamic)
   classNames: string[];            // derived string list for selects
-  subjects: string[];              // from SUBJECTS constant (static)
-  currentSession: string;
+  subjects: string[];              // merged: built-in SUBJECTS + school customSubjects
+  schoolLevels: string[];          // from school_settings (dynamic, fallback SCHOOL_CLASSES)
+  periodTimes: string[];           // from school_settings (dynamic, fallback DEFAULT_PERIOD_TIMES)
+  currentSession: string;          // from school_settings (dynamic, fallback CURRENT_SESSION)
   currentTerm: (typeof TERMS)[number];
   setCurrentTerm: (t: (typeof TERMS)[number]) => void;
   refreshClasses: () => void;
@@ -27,6 +36,8 @@ const SchoolContext = createContext<SchoolContextValue>({
   classes: [],
   classNames: SCHOOL_CLASSES,
   subjects: SUBJECTS,
+  schoolLevels: SCHOOL_CLASSES,
+  periodTimes: DEFAULT_PERIOD_TIMES,
   currentSession: CURRENT_SESSION,
   currentTerm: '1st Term',
   setCurrentTerm: () => {},
@@ -41,6 +52,32 @@ export function SchoolProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [tick, setTick] = useState(0);
 
+  // Dynamic settings from school_settings/main
+  const [schoolLevels, setSchoolLevels] = useState<string[]>([...SCHOOL_CLASSES]);
+  const [periodTimes, setPeriodTimes] = useState<string[]>([...DEFAULT_PERIOD_TIMES]);
+  const [customSubjects, setCustomSubjects] = useState<string[]>([]);
+  const [currentSession, setCurrentSession] = useState<string>(CURRENT_SESSION);
+
+  // Subscribe to school_settings/main for dynamic configuration
+  useEffect(() => {
+    const unsub = onSnapshot(
+      doc(db, 'school_settings', 'main'),
+      snap => {
+        if (snap.exists()) {
+          const data = { ...defaultSettings, ...snap.data() } as SchoolSettings;
+          if (data.schoolLevels?.length) setSchoolLevels(data.schoolLevels);
+          if (data.periodTimes?.length) setPeriodTimes(data.periodTimes);
+          if (data.customSubjects) setCustomSubjects(data.customSubjects);
+          if (data.currentSession) setCurrentSession(data.currentSession);
+          if (data.currentTerm) setCurrentTerm(data.currentTerm);
+        }
+      },
+      () => { /* silently fall back to defaults on error */ }
+    );
+    return () => unsub();
+  }, []);
+
+  // Subscribe to /classes collection
   useEffect(() => {
     setLoading(true);
     const unsub = onSnapshot(
@@ -65,12 +102,17 @@ export function SchoolProvider({ children }: { children: React.ReactNode }) {
     return () => unsub();
   }, [tick]);
 
+  // Merge built-in subjects with custom subjects (deduplicated)
+  const mergedSubjects = [...SUBJECTS, ...customSubjects.filter(s => !SUBJECTS.includes(s))];
+
   return (
     <SchoolContext.Provider value={{
       classes,
       classNames,
-      subjects: SUBJECTS,
-      currentSession: CURRENT_SESSION,
+      subjects: mergedSubjects,
+      schoolLevels,
+      periodTimes,
+      currentSession,
       currentTerm,
       setCurrentTerm,
       refreshClasses: () => setTick(t => t + 1),

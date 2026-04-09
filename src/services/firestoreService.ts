@@ -68,12 +68,40 @@ export async function getCollectionOnce<T>(
 
 export { where, orderBy, limit, writeBatch, serverTimestamp };
 
-/** Generate next student ID like AVN-2026-001 */
+/**
+ * Generate next student ID using the school's configured format.
+ * Reads prefix/format/padding from school_settings/main; falls back to STU-YEAR-SEQ.
+ *
+ * Formats:
+ *   PREFIX-YEAR-SEQ  → KIS-2026-001
+ *   PREFIXYEARSEQ    → KIS2026001
+ *   PREFIX-SEQ       → KIS-001
+ */
 export async function generateStudentId(): Promise<string> {
   const year = new Date().getFullYear();
+
+  // Fetch school settings for prefix/format/padding
+  let prefix = 'STU';
+  let format: 'PREFIX-YEAR-SEQ' | 'PREFIXYEARSEQ' | 'PREFIX-SEQ' = 'PREFIX-YEAR-SEQ';
+  let padding = 3;
+  try {
+    const settingsSnap = await getDoc(doc(db, 'school_settings', 'main'));
+    if (settingsSnap.exists()) {
+      const data = settingsSnap.data();
+      if (data.studentIdPrefix) prefix = data.studentIdPrefix;
+      if (data.studentIdFormat) format = data.studentIdFormat;
+      if (data.studentIdPadding) padding = Number(data.studentIdPadding);
+    }
+  } catch { /* use defaults */ }
+
   const snap = await getDocs(collection(db, 'students'));
-  const count = snap.size + 1;
-  return `AVN-${year}-${String(count).padStart(3, '0')}`;
+  const seq = String(snap.size + 1).padStart(padding, '0');
+
+  switch (format) {
+    case 'PREFIXYEARSEQ': return `${prefix}${year}${seq}`;
+    case 'PREFIX-SEQ':    return `${prefix}-${seq}`;
+    default:              return `${prefix}-${year}-${seq}`;
+  }
 }
 
 /** Bulk upsert attendance records for a whole class */

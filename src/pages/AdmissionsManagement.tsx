@@ -5,6 +5,7 @@ import {
   collection, onSnapshot, addDoc, updateDoc, doc,
   serverTimestamp, query, orderBy, getDocs, where, writeBatch
 } from 'firebase/firestore';
+import { generateStudentId } from '../services/firestoreService';
 import { motion, AnimatePresence } from 'motion/react';
 import toast from 'react-hot-toast';
 import {
@@ -138,9 +139,7 @@ function DirectAdmitModal({
       const batch = writeBatch(db);
 
       // 1. Generate student ID
-      const allStudents = await getDocs(collection(db, 'students'));
-      const year = new Date().getFullYear();
-      const studentId = `AVN-${year}-${String(allStudents.size + 1).padStart(3, '0')}`;
+      const studentId = await generateStudentId();
 
       // 2. Create application record (for audit trail)
       const appRef = doc(collection(db, 'applications'));

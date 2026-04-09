@@ -2,7 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { db, handleFirestoreError, OperationType } from '../firebase';
 import { collection, query, onSnapshot, addDoc, updateDoc, doc, deleteDoc, where, getDocs } from 'firebase/firestore';
-import { SchoolClass, ClassSubject, SCHOOL_CLASSES, SUBJECTS, UserProfile } from '../types';
+import { SchoolClass, ClassSubject, SUBJECTS, UserProfile } from '../types';
+import { useSchool } from '../components/SchoolContext';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   Plus, Trash2, Edit2, Users, BookOpen, UserCheck, 
@@ -12,6 +13,7 @@ import {
 
 export default function ClassManagement() {
   const navigate = useNavigate();
+  const { schoolLevels } = useSchool();
   const [classes, setClasses] = useState<SchoolClass[]>([]);
   const [teachers, setTeachers] = useState<UserProfile[]>([]);
   const [classSubjects, setClassSubjects] = useState<ClassSubject[]>([]);
@@ -23,7 +25,7 @@ export default function ClassManagement() {
   
   const [formData, setFormData] = useState<Partial<SchoolClass>>({
     name: '',
-    level: SCHOOL_CLASSES[0],
+    level: '',
     academicSession: '2025/2026',
     formTutorId: ''
   });
@@ -281,7 +283,7 @@ export default function ClassManagement() {
                         onChange={e => setFormData({ ...formData, level: e.target.value })}
                         className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none transition-all bg-white"
                       >
-                        {SCHOOL_CLASSES.map(lvl => (
+                        {schoolLevels.map(lvl => (
                           <option key={lvl} value={lvl}>{lvl}</option>
                         ))}
                       </select>

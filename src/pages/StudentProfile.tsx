@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { db, handleFirestoreError, OperationType } from '../firebase';
 import { doc, onSnapshot, updateDoc, serverTimestamp, collection, query, where, getDocs } from 'firebase/firestore';
@@ -6,11 +6,13 @@ import { Student, SCHOOL_CLASSES, SchoolClass, Grade, CURRENT_SESSION, TERMS } f
 import { motion, AnimatePresence } from 'motion/react';
 import toast from 'react-hot-toast';
 import { generateStudentInsights } from '../services/geminiService';
+import { useSchool } from '../components/SchoolContext';
+import { uploadToCloudinary } from '../utils/cloudinaryUpload';
 import { 
   ArrowLeft, User, Phone, Mail, GraduationCap, Calendar, Hash, 
   ShieldCheck, Database, Save, Loader2, Heart, Users, BookOpen,
   Sparkles, TrendingUp, TrendingDown, Minus, AlertTriangle,
-  CreditCard, Printer, X, CheckCircle2, ChevronRight
+  CreditCard, Printer, X, CheckCircle2, ChevronRight, Camera
 } from 'lucide-react';
 import { DOCUMENT_TITLE_DEFAULT } from '../constants/appMeta';
 
@@ -26,11 +28,14 @@ interface AIInsight {
 export default function StudentProfile() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const { cloudinaryConfig, currentSession } = useSchool();
   const [student, setStudent] = useState<Student | null>(null);
   const [classes, setClasses] = useState<SchoolClass[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [formData, setFormData] = useState<Partial<Student>>({});
+  const [uploadingPhoto, setUploadingPhoto] = useState(false);
+  const photoInputRef = useRef<HTMLInputElement>(null);
 
   // AI Insights
   const [aiInsight, setAiInsight] = useState<AIInsight | null>(null);
@@ -84,8 +89,25 @@ export default function StudentProfile() {
     }
   };
 
+  const handlePhotoUpload = async (file: File) => {
+    if (!cloudinaryConfig.cloudName || !cloudinaryConfig.uploadPreset) {
+      toast.error('Configure Cloudinary in School Settings → Media & Uploads first.');
+      return;
+    }
+    setUploadingPhoto(true);
+    const tid = toast.loading('Uploading photo…');
+    try {
+      const url = await uploadToCloudinary(file, cloudinaryConfig.cloudName, cloudinaryConfig.uploadPreset);
+      setFormData(prev => ({ ...prev, photoUrl: url }));
+      toast.success('Photo uploaded!', { id: tid });
+    } catch (e: any) {
+      toast.error(e.message || 'Upload failed', { id: tid });
+    } finally {
+      setUploadingPhoto(false);
+    }
+  };
+
   const handleGenerateInsights = async () => {
-    if (!student) return;
     setAiLoading(true);
     setShowInsightModal(true);
     setAiInsight(null);
@@ -96,7 +118,7 @@ export default function StudentProfile() {
         collection(db, 'grades'),
         where('studentId', '==', student.id),
         where('term', '==', insightTerm),
-        where('session', '==', CURRENT_SESSION)
+        where('session', '==', currentSession)
       ));
       const grades = gradesSnap.docs.map(d => {
         const g = d.data() as Grade;
@@ -168,8 +190,28 @@ export default function StudentProfile() {
 
       <div className="flex flex-col md:flex-row md:items-center justify-between mb-10 gap-4">
         <div className="flex items-center">
-          <div className="w-20 h-20 rounded-3xl bg-indigo-600 flex items-center justify-center text-white font-bold text-3xl mr-6 shadow-xl shadow-indigo-100">
-            {student.studentName.charAt(0)}
+          <div className="relative w-20 h-20 rounded-3xl overflow-hidden mr-6 shadow-xl shadow-indigo-100 flex-shrink-0">
+            {formData.photoUrl ? (
+              <img src={formData.photoUrl} alt={student.studentName} className="w-full h-full object-cover" />
+            ) : (
+              <div className="w-full h-full bg-indigo-600 flex items-center justify-center text-white font-bold text-3xl">
+                {student.studentName.charAt(0)}
+              </div>
+            )}
+            {/* Photo upload overlay */}
+            <button
+              type="button"
+              onClick={() => photoInputRef.current?.click()}
+              disabled={uploadingPhoto}
+              className="absolute inset-0 bg-black/40 opacity-0 hover:opacity-100 transition-opacity flex items-center justify-center"
+              title="Change photo"
+            >
+              {uploadingPhoto
+                ? <div className="w-5 h-5 border-2 border-white/40 border-t-white rounded-full animate-spin" />
+                : <Camera className="w-5 h-5 text-white" />}
+            </button>
+            <input ref={photoInputRef} type="file" accept="image/*" className="hidden"
+              onChange={e => { const f = e.target.files?.[0]; if (f) handlePhotoUpload(f); }} />
           </div>
           <div>
             <h1 className="text-3xl font-bold text-slate-900 tracking-tight">{student.studentName}</h1>
@@ -619,10 +661,16 @@ export default function StudentProfile() {
                     </div>
                   </div>
 
-                  {/* Photo placeholder + name */}
+                  {/* Photo or initial */}
                   <div className="flex items-center gap-4 mb-4">
-                    <div className="w-16 h-20 bg-white/20 rounded-xl flex items-center justify-center text-3xl font-black border-2 border-white/30">
-                      {student.studentName.charAt(0)}
+                    <div className="w-16 h-20 bg-white/20 rounded-xl overflow-hidden border-2 border-white/30 flex-shrink-0">
+                      {student.photoUrl ? (
+                        <img src={student.photoUrl} alt={student.studentName} className="w-full h-full object-cover" />
+                      ) : (
+                        <div className="w-full h-full flex items-center justify-center text-3xl font-black text-white">
+                          {student.studentName.charAt(0)}
+                        </div>
+                      )}
                     </div>
                     <div className="flex-1 min-w-0">
                       <p className="font-black text-base leading-tight">{student.studentName}</p>
@@ -639,7 +687,7 @@ export default function StudentProfile() {
                     </div>
                     <div className="bg-white/10 rounded-xl p-2.5">
                       <p className="text-[9px] font-bold text-indigo-300 uppercase tracking-wider">Session</p>
-                      <p className="text-xs font-black mt-0.5">{CURRENT_SESSION}</p>
+                      <p className="text-xs font-black mt-0.5">{currentSession}</p>
                     </div>
                     <div className="bg-white/10 rounded-xl p-2.5">
                       <p className="text-[9px] font-bold text-indigo-300 uppercase tracking-wider">Guardian</p>

@@ -13,7 +13,8 @@ import {
   Clock, Filter, Download, Users, TrendingUp, UserPlus,
   BookOpen, ChevronRight, X, Save, Loader2, AlertTriangle,
   Phone, Mail, MapPin, Heart, School, User, Link2, Baby,
-  FileText, BarChart3, RefreshCw, Send, ShieldCheck
+  FileText, BarChart3, RefreshCw, Send, ShieldCheck,
+  ChevronLeft
 } from 'lucide-react';
 import { Application, ApplicationStatus, Student, Guardian, SCHOOL_CLASSES, CURRENT_SESSION, formatDate } from '../types';
 import { stripUndefined } from '../utils/firestoreSanitize';
@@ -519,9 +520,26 @@ function DirectAdmitModal({
                           </button>
                         </span>
                       ))}
-                    </div>
-                  </div>
-                )}
+            </div>
+            {Math.ceil(filtered.length / ADM_PAGE_SIZE) > 1 && (
+              <div className="flex items-center justify-between px-5 py-4 border-t border-slate-100">
+                <p className="text-xs text-slate-500">
+                  Page {appPage + 1} of {Math.ceil(filtered.length / ADM_PAGE_SIZE)} &nbsp;·&nbsp; {filtered.length} applications
+                </p>
+                <div className="flex gap-2">
+                  <button disabled={appPage === 0} onClick={() => setAppPage(p => p - 1)}
+                    className="flex items-center gap-1 px-3 py-1.5 text-xs font-bold rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
+                    <ChevronLeft className="w-3.5 h-3.5" /> Previous
+                  </button>
+                  <button disabled={appPage >= Math.ceil(filtered.length / ADM_PAGE_SIZE) - 1} onClick={() => setAppPage(p => p + 1)}
+                    className="flex items-center gap-1 px-3 py-1.5 text-xs font-bold rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
+                    Next <ChevronRight className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
               </div>
             </div>
           )}
@@ -589,6 +607,8 @@ function ReviewRow({ icon, label, value }: { icon: React.ReactNode; label: strin
 
 // ─── Main Admissions Management Page ─────────────────────────────────────────
 
+const ADM_PAGE_SIZE = 20;
+
 type TabType = 'pipeline' | 'all' | 'stats';
 
 export default function AdmissionsManagement() {
@@ -602,6 +622,7 @@ export default function AdmissionsManagement() {
   const [activeTab, setActiveTab] = useState<TabType>('pipeline');
   const [showDirectAdmit, setShowDirectAdmit] = useState(false);
   const [refresh, setRefresh] = useState(0);
+  const [appPage, setAppPage] = useState(0);
 
   useEffect(() => {
     setLoading(true);
@@ -637,6 +658,9 @@ export default function AdmissionsManagement() {
       return matchSearch && matchStatus && matchClass;
     });
   }, [applications, search, statusFilter, classFilter]);
+
+  // Reset page when filters change
+  useEffect(() => { setAppPage(0); }, [search, statusFilter, classFilter]);
 
   // Export CSV
   const exportCSV = () => {
@@ -820,7 +844,7 @@ export default function AdmissionsManagement() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {filtered.map(app => (
+                  {filtered.slice(appPage * ADM_PAGE_SIZE, (appPage + 1) * ADM_PAGE_SIZE).map(app => (
                     <tr key={app.id} className="hover:bg-slate-50 transition-colors group">
                       <td className="px-5 py-4">
                         <div className="flex items-center gap-3">

@@ -1,12 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { db, handleFirestoreError, OperationType } from '../firebase';
 import { useAuth } from '../components/FirebaseProvider';
 import {
   collection, query, onSnapshot, where, addDoc, serverTimestamp,
   orderBy, updateDoc, doc, deleteDoc, getDocs, writeBatch
 } from 'firebase/firestore';
-import { Student, Assignment, Message, SUBJECTS, TERMS, CURRENT_SESSION, SCHOOL_CLASSES, Grade, calculateGrade, StudentSkills, SKILL_LABELS, SkillRating, StudentSkillRecord } from '../types';
+import { Student, Assignment, Message, SUBJECTS, TERMS, Grade, calculateGrade, StudentSkills, SKILL_LABELS, SkillRating, StudentSkillRecord } from '../types';
 import { batchUpsertAttendance } from '../services/firestoreService';
 import { generateLessonNotes, generateExamQuestions } from '../services/geminiService';
 import { motion, AnimatePresence } from 'motion/react';
@@ -32,12 +32,34 @@ interface AttendanceRow {
 export default function TeacherPortal() {
   const { user, profile } = useAuth();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const { classNames, subjects, currentSession, gradingSystem, customGradingScale, terms } = useSchool();
+
+  // Derived helpers (safe fallbacks)
+  const allClasses = classNames.length > 0 ? classNames : ['—'];
+  const allSubjects = subjects.length > 0 ? subjects : SUBJECTS;
+
   const [students, setStudents] = useState<Student[]>([]);
   const [assignments, setAssignments] = useState<Assignment[]>([]);
   const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<TabType>('students');
-  const [selectedClass, setSelectedClass] = useState(SCHOOL_CLASSES[0]);
+
+  // Derive activeTab from URL query param
+  const tabFromUrl = (searchParams.get('tab') as TabType) || 'students';
+  const [activeTab, setActiveTab] = useState<TabType>(tabFromUrl);
+
+  // Keep activeTab in sync with URL changes (e.g. sidebar navigation)
+  useEffect(() => {
+    const t = (searchParams.get('tab') as TabType) || 'students';
+    setActiveTab(t);
+  }, [searchParams]);
+
+  const navigateTab = (tab: TabType) => {
+    setActiveTab(tab);
+    setSearchParams({ tab });
+  };
+
+  const [selectedClass, setSelectedClass] = useState(allClasses[0]);
   const [assignmentSearch, setAssignmentSearch] = useState('');
   const [editingAssignment, setEditingAssignment] = useState<Assignment | null>(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState<string | null>(null);
@@ -50,7 +72,7 @@ export default function TeacherPortal() {
 
   // New Assignment Form
   const [newAssignment, setNewAssignment] = useState({
-    title: '', description: '', subject: SUBJECTS[0], class: SCHOOL_CLASSES[0], dueDate: ''
+    title: '', description: '', subject: allSubjects[0], class: allClasses[0], dueDate: ''
   });
 
   // New Message Form
@@ -58,24 +80,24 @@ export default function TeacherPortal() {
 
   // AI Tools state
   const [aiTool, setAiTool] = useState<'lesson' | 'questions'>('lesson');
-  const [aiSubject, setAiSubject] = useState(SUBJECTS[0]);
+  const [aiSubject, setAiSubject] = useState(allSubjects[0]);
   const [aiTopic, setAiTopic] = useState('');
-  const [aiLevel, setAiLevel] = useState(SCHOOL_CLASSES[6]);
+  const [aiLevel, setAiLevel] = useState(allClasses[Math.min(6, allClasses.length - 1)]);
   const [aiQuestionCount, setAiQuestionCount] = useState(10);
   const [aiLoading, setAiLoading] = useState(false);
   const [aiOutput, setAiOutput] = useState('');
 
   // Gradebook state
-  const [gradeSubject, setGradeSubject] = useState(SUBJECTS[0]);
-  const [gradeTerm, setGradeTerm] = useState<string>(TERMS[0]);
-  const [gradeSession, setGradeSession] = useState(CURRENT_SESSION);
+  const [gradeSubject, setGradeSubject] = useState(allSubjects[0]);
+  const [gradeTerm, setGradeTerm] = useState<string>(terms[0] ?? TERMS[0]);
+  const [gradeSession, setGradeSession] = useState(currentSession);
   const [grades, setGrades] = useState<Record<string, Grade>>({});
   const [savingGrades, setSavingGrades] = useState(false);
   const [gradeSavedIds, setGradeSavedIds] = useState<Set<string>>(new Set());
 
   // Skills state
-  const [skillsTerm, setSkillsTerm] = useState<string>(TERMS[0]);
-  const [skillsSession, setSkillsSession] = useState(CURRENT_SESSION);
+  const [skillsTerm, setSkillsTerm] = useState<string>(terms[0] ?? TERMS[0]);
+  const [skillsSession, setSkillsSession] = useState(currentSession);
   const [skills, setSkills] = useState<Record<string, StudentSkills>>({});
   const [savingSkills, setSavingSkills] = useState(false);
 
@@ -249,7 +271,7 @@ export default function TeacherPortal() {
       const g = { ...prev[studentId] };
       g[field] = Math.min(field === 'caScore' ? 40 : 60, Math.max(0, val));
       g.totalScore = g.caScore + g.examScore;
-      g.grade = calculateGrade(g.totalScore);
+      g.grade = calculateGrade(g.totalScore, gradingSystem, customGradingScale);
       return { ...prev, [studentId]: g };
     });
   };
@@ -337,7 +359,7 @@ export default function TeacherPortal() {
         ...newAssignment, teacherId: user.uid, createdAt: serverTimestamp()
       });
     }
-    setNewAssignment({ title: '', description: '', subject: SUBJECTS[0], class: SCHOOL_CLASSES[0], dueDate: '' });
+    setNewAssignment({ title: '', description: '', subject: allSubjects[0], class: allClasses[0], dueDate: '' });
   };
 
   const handleDeleteAssignment = async (id: string) => {
@@ -425,7 +447,7 @@ export default function TeacherPortal() {
         ].map(card => (
           <button
             key={card.tab}
-            onClick={() => setActiveTab(card.tab)}
+            onClick={() => navigateTab(card.tab)}
             className={`bg-white p-5 rounded-2xl border border-slate-200 shadow-sm hover:shadow-md hover:-translate-y-0.5 transition-all text-left group`}
           >
             <div className={`w-10 h-10 rounded-xl bg-${card.color}-50 flex items-center justify-center mb-3`}>
@@ -442,7 +464,7 @@ export default function TeacherPortal() {
         {tabs.map(({ id, label, Icon }) => (
           <button
             key={id}
-            onClick={() => setActiveTab(id)}
+            onClick={() => navigateTab(id)}
             className={`px-4 py-2 rounded-lg text-sm font-bold transition-all flex items-center gap-2 ${
               activeTab === id ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'
             }`}
@@ -470,7 +492,7 @@ export default function TeacherPortal() {
               onChange={e => setSelectedClass(e.target.value)}
               className="px-4 py-2 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none bg-white font-medium text-sm"
             >
-              {SCHOOL_CLASSES.map(c => <option key={c} value={c}>{c}</option>)}
+              {allClasses.map(c => <option key={c} value={c}>{c}</option>)}
             </select>
             <span className="text-sm text-slate-400 font-medium">{students.length} students</span>
           </div>
@@ -491,7 +513,7 @@ export default function TeacherPortal() {
                   <p><span className="text-slate-400 text-xs font-bold uppercase">Contact:</span> {student.guardianEmail || 'Not set'}</p>
                 </div>
                 <button
-                  onClick={() => { setActiveTab('messages'); setNewMessage({ receiverId: student.guardianEmail || '', content: '' }); }}
+                  onClick={() => { navigateTab('messages'); setNewMessage({ receiverId: student.guardianEmail || '', content: '' }); }}
                   className="w-full py-2 bg-indigo-50 text-indigo-600 font-bold rounded-xl hover:bg-indigo-100 transition-colors text-xs"
                 >
                   Message Parent
@@ -528,7 +550,7 @@ export default function TeacherPortal() {
                     onChange={e => setSelectedClass(e.target.value)}
                     className="px-3 py-2 rounded-xl border border-slate-200 text-sm font-medium outline-none focus:ring-2 focus:ring-indigo-500"
                   >
-                    {SCHOOL_CLASSES.map(c => <option key={c} value={c}>{c}</option>)}
+                    {allClasses.map(c => <option key={c} value={c}>{c}</option>)}
                   </select>
                 </div>
                 <input
@@ -631,16 +653,16 @@ export default function TeacherPortal() {
                 <Filter className="w-4 h-4 text-slate-400" />
                 <select value={selectedClass} onChange={e => setSelectedClass(e.target.value)}
                   className="px-3 py-2 rounded-xl border border-slate-200 text-sm font-medium outline-none focus:ring-2 focus:ring-indigo-500">
-                  {SCHOOL_CLASSES.map(c => <option key={c}>{c}</option>)}
+                  {allClasses.map(c => <option key={c}>{c}</option>)}
                 </select>
               </div>
               <select value={gradeSubject} onChange={e => setGradeSubject(e.target.value)}
                 className="px-3 py-2 rounded-xl border border-slate-200 text-sm font-medium outline-none focus:ring-2 focus:ring-indigo-500">
-                {SUBJECTS.map(s => <option key={s}>{s}</option>)}
+                {allSubjects.map(s => <option key={s}>{s}</option>)}
               </select>
               <select value={gradeTerm} onChange={e => setGradeTerm(e.target.value)}
                 className="px-3 py-2 rounded-xl border border-slate-200 text-sm font-medium outline-none focus:ring-2 focus:ring-indigo-500">
-                {TERMS.map(t => <option key={t}>{t}</option>)}
+                {terms.map(t => <option key={t}>{t}</option>)}
               </select>
               <input value={gradeSession} onChange={e => setGradeSession(e.target.value)}
                 className="px-3 py-2 rounded-xl border border-slate-200 text-sm font-medium outline-none focus:ring-2 focus:ring-indigo-500 w-32" placeholder="Session" />
@@ -721,12 +743,12 @@ export default function TeacherPortal() {
                 <Filter className="w-4 h-4 text-slate-400" />
                 <select value={selectedClass} onChange={e => setSelectedClass(e.target.value)}
                   className="px-3 py-2 rounded-xl border border-slate-200 text-sm font-medium outline-none focus:ring-2 focus:ring-indigo-500">
-                  {SCHOOL_CLASSES.map(c => <option key={c}>{c}</option>)}
+                  {allClasses.map(c => <option key={c}>{c}</option>)}
                 </select>
               </div>
               <select value={skillsTerm} onChange={e => setSkillsTerm(e.target.value)}
                 className="px-3 py-2 rounded-xl border border-slate-200 text-sm font-medium outline-none focus:ring-2 focus:ring-indigo-500">
-                {TERMS.map(t => <option key={t}>{t}</option>)}
+                {terms.map(t => <option key={t}>{t}</option>)}
               </select>
               <input value={skillsSession} onChange={e => setSkillsSession(e.target.value)}
                 className="px-3 py-2 rounded-xl border border-slate-200 text-sm font-medium outline-none w-32" placeholder="Session" />
@@ -797,7 +819,7 @@ export default function TeacherPortal() {
                   {editingAssignment ? 'Edit Assignment' : 'New Assignment'}
                 </h3>
                 {editingAssignment && (
-                  <button type="button" onClick={() => { setEditingAssignment(null); setNewAssignment({ title: '', description: '', subject: SUBJECTS[0], class: SCHOOL_CLASSES[0], dueDate: '' }); }}>
+                  <button type="button" onClick={() => { setEditingAssignment(null); setNewAssignment({ title: '', description: '', subject: allSubjects[0], class: allClasses[0], dueDate: '' }); }}>
                     <X className="w-4 h-4 text-slate-400 hover:text-slate-600" />
                   </button>
                 )}
@@ -827,7 +849,7 @@ export default function TeacherPortal() {
                 <label className="text-xs font-bold text-slate-400 uppercase">Class</label>
                 <select value={newAssignment.class} onChange={e => setNewAssignment({ ...newAssignment, class: e.target.value })}
                   className="w-full px-4 py-2 rounded-xl border border-slate-200 outline-none text-sm">
-                  {SCHOOL_CLASSES.map(c => <option key={c} value={c}>{c}</option>)}
+                  {allClasses.map(c => <option key={c} value={c}>{c}</option>)}
                 </select>
               </div>
               <div className="space-y-1">
@@ -1001,7 +1023,7 @@ export default function TeacherPortal() {
                 <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block mb-1.5">Subject</label>
                 <select value={aiSubject} onChange={e => setAiSubject(e.target.value)}
                   className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-violet-500 outline-none text-sm">
-                  {SUBJECTS.map(s => <option key={s}>{s}</option>)}
+                  {allSubjects.map(s => <option key={s}>{s}</option>)}
                 </select>
               </div>
 
@@ -1009,7 +1031,7 @@ export default function TeacherPortal() {
                 <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block mb-1.5">Class Level</label>
                 <select value={aiLevel} onChange={e => setAiLevel(e.target.value)}
                   className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-violet-500 outline-none text-sm">
-                  {SCHOOL_CLASSES.map(c => <option key={c}>{c}</option>)}
+                  {allClasses.map(c => <option key={c}>{c}</option>)}
                 </select>
               </div>
 

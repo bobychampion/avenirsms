@@ -145,9 +145,32 @@ export async function getAttendanceSummary(studentId: string) {
   return { total, present, absent, late, rate };
 }
 
-/** Calculate Nigerian payroll deductions */
-export function computePayroll(basicSalary: number, allowances: number) {
+/**
+ * Calculate payroll deductions.
+ *
+ * @param basicSalary   - Basic monthly salary
+ * @param allowances    - Monthly allowances
+ * @param taxModel      - 'nigeria_paye' | 'flat_rate' | 'none'  (default: 'nigeria_paye')
+ * @param taxFlatRate   - Flat rate percentage (0–100), used when taxModel === 'flat_rate'
+ */
+export function computePayroll(
+  basicSalary: number,
+  allowances: number,
+  taxModel: 'nigeria_paye' | 'flat_rate' | 'none' = 'nigeria_paye',
+  taxFlatRate = 0
+) {
   const grossPay = basicSalary + allowances;
+
+  if (taxModel === 'none') {
+    return { grossPay, pension: 0, paye: 0, netPay: grossPay };
+  }
+
+  if (taxModel === 'flat_rate') {
+    const paye = Math.round(grossPay * Math.min(Math.max(taxFlatRate, 0), 100) / 100);
+    return { grossPay, pension: 0, paye, netPay: grossPay - paye };
+  }
+
+  // Default: Nigerian PAYE + 8% pension
   const pension = Math.round(basicSalary * 0.08);
   const annualGross = grossPay * 12;
   const personalRelief = 200000 + 0.01 * annualGross;

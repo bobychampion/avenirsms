@@ -13,7 +13,7 @@ import {
 
 export default function ClassManagement() {
   const navigate = useNavigate();
-  const { schoolLevels } = useSchool();
+  const { schoolLevels, currentSession, subjects: schoolSubjects } = useSchool();
   const [classes, setClasses] = useState<SchoolClass[]>([]);
   const [teachers, setTeachers] = useState<UserProfile[]>([]);
   const [classSubjects, setClassSubjects] = useState<ClassSubject[]>([]);
@@ -26,12 +26,12 @@ export default function ClassManagement() {
   const [formData, setFormData] = useState<Partial<SchoolClass>>({
     name: '',
     level: '',
-    academicSession: '2025/2026',
+    academicSession: currentSession,
     formTutorId: ''
   });
 
   const [subjectFormData, setSubjectFormData] = useState<Partial<ClassSubject>>({
-    subjectName: SUBJECTS[0],
+    subjectName: schoolSubjects[0] ?? SUBJECTS[0],
     teacherId: ''
   });
   const [editingSubject, setEditingSubject] = useState<ClassSubject | null>(null);
@@ -76,7 +76,7 @@ export default function ClassManagement() {
       }
       setIsModalOpen(false);
       setEditingClass(null);
-      setFormData({ name: '', level: SCHOOL_CLASSES[0], academicSession: '2025/2026', formTutorId: '' });
+      setFormData({ name: '', level: schoolLevels[0] ?? '', academicSession: currentSession, formTutorId: '' });
     } catch (error) {
       handleFirestoreError(error, OperationType.WRITE, 'classes');
     }
@@ -110,7 +110,7 @@ export default function ClassManagement() {
           await addDoc(collection(db, 'class_subjects'), data);
         }
       }
-      setSubjectFormData({ subjectName: SUBJECTS[0], teacherId: '' });
+      setSubjectFormData({ subjectName: schoolSubjects[0] ?? SUBJECTS[0], teacherId: '' });
     } catch (error) {
       handleFirestoreError(error, OperationType.WRITE, 'class_subjects');
     }
@@ -143,7 +143,7 @@ export default function ClassManagement() {
         <button
           onClick={() => {
             setEditingClass(null);
-            setFormData({ name: '', level: SCHOOL_CLASSES[0], academicSession: '2025/2026', formTutorId: '' });
+            setFormData({ name: '', level: schoolLevels[0] ?? '', academicSession: currentSession, formTutorId: '' });
             setIsModalOpen(true);
           }}
           className="inline-flex items-center px-6 py-3 bg-indigo-600 text-white font-bold rounded-xl hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-100"
@@ -381,7 +381,7 @@ export default function ClassManagement() {
                           onChange={e => setSubjectFormData({ ...subjectFormData, subjectName: e.target.value })}
                           className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none transition-all bg-white disabled:bg-slate-50 disabled:text-slate-500"
                         >
-                          {SUBJECTS.map(s => (
+                          {schoolSubjects.map(s => (
                             <option key={s} value={s}>{s}</option>
                           ))}
                         </select>
@@ -405,7 +405,7 @@ export default function ClassManagement() {
                             type="button"
                             onClick={() => {
                               setEditingSubject(null);
-                              setSubjectFormData({ subjectName: SUBJECTS[0], teacherId: '' });
+                              setSubjectFormData({ subjectName: schoolSubjects[0] ?? SUBJECTS[0], teacherId: '' });
                             }}
                             className="flex-1 px-6 py-3 bg-slate-100 text-slate-600 font-bold rounded-xl hover:bg-slate-200 transition-all"
                           >

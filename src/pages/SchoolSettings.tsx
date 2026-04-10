@@ -1,13 +1,15 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { db } from '../firebase';
 import { doc, getDoc, setDoc, serverTimestamp, collection, getDocs, writeBatch } from 'firebase/firestore';
 import { motion } from 'motion/react';
 import toast from 'react-hot-toast';
 import {
   Settings, Save, School, Calendar, Lock, Phone, Loader2,
-  Hash, Layers, BookOpen, Clock, Plus, X, Trash2, AlertTriangle
+  Hash, Layers, BookOpen, Clock, Plus, X, Trash2, AlertTriangle,
+  Globe, DollarSign, Image as ImageIcon, Award, ChevronUp, ChevronDown,
+  Upload, Eye, EyeOff
 } from 'lucide-react';
-import { SCHOOL_CLASSES, SUBJECTS, TERMS } from '../types';
+import { SCHOOL_CLASSES, SUBJECTS, TERMS, GradingSystem, CustomGradeScale } from '../types';
 
 export interface SchoolSettings {
   schoolName: string;
@@ -28,6 +30,22 @@ export interface SchoolSettings {
   schoolLevels: string[];
   customSubjects: string[];
   periodTimes: string[];
+  // Internationalisation
+  country: string;           // ISO 3166-1 alpha-2, e.g. 'NG', 'SI', 'US'
+  timezone: string;          // IANA tz string, e.g. 'Africa/Lagos', 'Europe/Ljubljana'
+  locale: string;            // BCP 47, e.g. 'en-NG', 'sl-SI', 'en-US'
+  currency: string;          // ISO 4217, e.g. 'NGN', 'EUR', 'USD'
+  phoneCountryCode: string;  // e.g. '+234', '+386', '+1'
+  // Academic configuration
+  gradingSystem: GradingSystem;
+  customGradingScale: CustomGradeScale[];
+  termStructure: '3-term' | '2-semester' | '4-quarter';
+  // Finance & Payroll
+  taxModel: 'nigeria_paye' | 'flat_rate' | 'none';
+  taxFlatRate: number;       // percentage, used when taxModel === 'flat_rate'
+  // Media / Cloudinary
+  cloudinaryCloudName: string;
+  cloudinaryUploadPreset: string;
   updatedAt?: any;
 }
 
@@ -40,7 +58,7 @@ const DEFAULT_PERIOD_TIMES = [
 ];
 
 export const defaultSettings: SchoolSettings = {
-  schoolName: 'Avenir Secondary School',
+  schoolName: 'Avenir International School',
   address: '',
   phone: '',
   email: '',
@@ -56,6 +74,22 @@ export const defaultSettings: SchoolSettings = {
   schoolLevels: [...SCHOOL_CLASSES],
   customSubjects: [],
   periodTimes: [...DEFAULT_PERIOD_TIMES],
+  // Internationalisation
+  country: '',
+  timezone: '',
+  locale: 'en',
+  currency: 'USD',
+  phoneCountryCode: '',
+  // Academic
+  gradingSystem: 'percentage',
+  customGradingScale: [],
+  termStructure: '3-term',
+  // Finance
+  taxModel: 'none',
+  taxFlatRate: 0,
+  // Media
+  cloudinaryCloudName: '',
+  cloudinaryUploadPreset: '',
 };
 
 export function useSchoolSettings() {
@@ -129,6 +163,128 @@ function TagListEditor({
   );
 }
 
+// ─── Orderable Level Editor ────────────────────────────────────────────────────
+function OrderableLevelEditor({
+  items, onReorder, onAdd, onRemove
+}: {
+  items: string[];
+  onReorder: (items: string[]) => void;
+  onAdd: (v: string) => void;
+  onRemove: (i: number) => void;
+}) {
+  const [input, setInput] = useState('');
+  const [err, setErr] = useState('');
+  const moveUp = (i: number) => {
+    if (i === 0) return;
+    const next = [...items]; [next[i - 1], next[i]] = [next[i], next[i - 1]]; onReorder(next);
+  };
+  const moveDown = (i: number) => {
+    if (i === items.length - 1) return;
+    const next = [...items]; [next[i], next[i + 1]] = [next[i + 1], next[i]]; onReorder(next);
+  };
+  const handleAdd = () => {
+    const val = input.trim();
+    if (!val) return;
+    if (items.includes(val)) { setErr('Already exists'); return; }
+    onAdd(val); setInput(''); setErr('');
+  };
+  return (
+    <div>
+      <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">
+        Grade / Year Levels <span className="text-slate-400 font-normal normal-case">(order = promotion sequence)</span>
+      </label>
+      <div className="space-y-1.5 mb-3 max-h-64 overflow-y-auto pr-1">
+        {items.map((item, i) => (
+          <div key={i} className="flex items-center gap-2 bg-indigo-50 border border-indigo-100 rounded-xl px-3 py-1.5">
+            <span className="flex-1 text-xs font-semibold text-indigo-700">{item}</span>
+            <button onClick={() => moveUp(i)} disabled={i === 0} className="p-1 text-indigo-400 hover:text-indigo-700 disabled:opacity-25"><ChevronUp className="w-3.5 h-3.5" /></button>
+            <button onClick={() => moveDown(i)} disabled={i === items.length - 1} className="p-1 text-indigo-400 hover:text-indigo-700 disabled:opacity-25"><ChevronDown className="w-3.5 h-3.5" /></button>
+            <button onClick={() => onRemove(i)} className="p-1 text-slate-400 hover:text-red-500 ml-1"><X className="w-3.5 h-3.5" /></button>
+          </div>
+        ))}
+        {items.length === 0 && <span className="text-xs text-slate-400 italic">No levels yet</span>}
+      </div>
+      <div className="flex gap-2">
+        <input value={input} onChange={e => { setInput(e.target.value); setErr(''); }} onKeyDown={e => e.key === 'Enter' && handleAdd()}
+          placeholder="e.g. Year 7, Grade 10, Form 3"
+          className="flex-1 px-3 py-2 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm" />
+        <button onClick={handleAdd} className="flex items-center gap-1.5 px-4 py-2 bg-indigo-600 text-white text-sm font-semibold rounded-xl hover:bg-indigo-700 transition-colors">
+          <Plus className="w-3.5 h-3.5" /> Add
+        </button>
+      </div>
+      {err && <p className="text-xs text-red-500 mt-1">{err}</p>}
+    </div>
+  );
+}
+
+// ─── Custom Grade Scale Editor ────────────────────────────────────────────────
+function CustomGradeScaleEditor({ scale, onChange }: { scale: CustomGradeScale[]; onChange: (s: CustomGradeScale[]) => void }) {
+  const [row, setRow] = useState<CustomGradeScale>({ min: 0, max: 100, grade: '', label: '' });
+  const add = () => {
+    if (!row.grade.trim()) return;
+    onChange([...scale, { ...row }]);
+    setRow({ min: 0, max: 100, grade: '', label: '' });
+  };
+  return (
+    <div>
+      <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">Custom Grade Scale</label>
+      <div className="space-y-1.5 mb-3">
+        {scale.map((s, i) => (
+          <div key={i} className="flex items-center gap-2 text-xs bg-slate-50 border border-slate-100 rounded-xl px-3 py-1.5">
+            <span className="font-bold text-indigo-700 w-10">{s.grade}</span>
+            <span className="text-slate-500">{s.min}–{s.max}</span>
+            <span className="flex-1 text-slate-600">{s.label}</span>
+            <button onClick={() => onChange(scale.filter((_, idx) => idx !== i))} className="text-slate-400 hover:text-red-500"><X className="w-3 h-3" /></button>
+          </div>
+        ))}
+        {scale.length === 0 && <span className="text-xs text-slate-400 italic">No grades defined</span>}
+      </div>
+      <div className="grid grid-cols-5 gap-2">
+        <input type="number" placeholder="Min" value={row.min} onChange={e => setRow({ ...row, min: Number(e.target.value) })} className="px-2 py-2 rounded-xl border border-slate-200 text-xs outline-none focus:ring-2 focus:ring-indigo-500" />
+        <input type="number" placeholder="Max" value={row.max} onChange={e => setRow({ ...row, max: Number(e.target.value) })} className="px-2 py-2 rounded-xl border border-slate-200 text-xs outline-none focus:ring-2 focus:ring-indigo-500" />
+        <input placeholder="Grade" value={row.grade} onChange={e => setRow({ ...row, grade: e.target.value })} className="px-2 py-2 rounded-xl border border-slate-200 text-xs outline-none focus:ring-2 focus:ring-indigo-500" />
+        <input placeholder="Label" value={row.label} onChange={e => setRow({ ...row, label: e.target.value })} className="px-2 py-2 rounded-xl border border-slate-200 text-xs outline-none focus:ring-2 focus:ring-indigo-500" />
+        <button onClick={add} className="flex items-center justify-center gap-1 bg-indigo-600 text-white text-xs font-bold rounded-xl hover:bg-indigo-700 transition-colors"><Plus className="w-3.5 h-3.5" /></button>
+      </div>
+    </div>
+  );
+}
+
+// ─── Cloudinary Logo Upload ───────────────────────────────────────────────────
+function CloudinaryLogoUpload({ cloudName, uploadPreset, onUploaded }: { cloudName: string; uploadPreset: string; onUploaded: (url: string) => void }) {
+  const [uploading, setUploading] = useState(false);
+  const ref = useRef<HTMLInputElement>(null);
+  const handleFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploading(true);
+    const tid = toast.loading('Uploading logo…');
+    try {
+      const fd = new FormData();
+      fd.append('file', file);
+      fd.append('upload_preset', uploadPreset);
+      const res = await fetch(`https://api.cloudinary.com/v1_1/${cloudName}/image/upload`, { method: 'POST', body: fd });
+      const data = await res.json();
+      if (data.secure_url) { onUploaded(data.secure_url); toast.success('Logo uploaded!', { id: tid }); }
+      else throw new Error(data.error?.message || 'Upload failed');
+    } catch (err: any) {
+      toast.error('Upload error: ' + err.message, { id: tid });
+    } finally {
+      setUploading(false);
+    }
+  };
+  return (
+    <div className="flex items-center gap-3">
+      <input type="file" accept="image/*" ref={ref} onChange={handleFile} className="hidden" />
+      <button type="button" onClick={() => ref.current?.click()} disabled={uploading}
+        className="flex items-center gap-2 px-4 py-2 bg-indigo-50 text-indigo-700 border border-indigo-200 text-xs font-bold rounded-xl hover:bg-indigo-100 transition-colors disabled:opacity-50">
+        {uploading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Upload className="w-3.5 h-3.5" />}
+        Upload Logo via Cloudinary
+      </button>
+    </div>
+  );
+}
+
 // ─── ID Preview helper ────────────────────────────────────────────────────────
 function previewStudentId(prefix: string, format: SchoolSettings['studentIdFormat'], padding: number): string {
   const year = new Date().getFullYear();
@@ -144,6 +300,7 @@ export default function SchoolSettingsPage() {
   const [form, setForm] = useState<SchoolSettings>(defaultSettings);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [showPreset, setShowPreset] = useState(false);
 
   useEffect(() => {
     getDoc(doc(db, SETTINGS_DOC, SETTINGS_ID)).then(snap => {
@@ -156,10 +313,7 @@ export default function SchoolSettingsPage() {
     setSaving(true);
     const tid = toast.loading('Saving settings…');
     try {
-      await setDoc(doc(db, SETTINGS_DOC, SETTINGS_ID), {
-        ...form,
-        updatedAt: serverTimestamp(),
-      });
+      await setDoc(doc(db, SETTINGS_DOC, SETTINGS_ID), { ...form, updatedAt: serverTimestamp() });
       toast.success('Settings saved!', { id: tid });
     } catch (e: any) {
       toast.error('Failed to save: ' + (e.message || 'Unknown'), { id: tid });
@@ -192,12 +346,13 @@ export default function SchoolSettingsPage() {
           School Settings
         </h1>
         <p className="text-slate-500 mt-1 text-sm">
-          Configure your school identity, academic settings, and customise student IDs, levels, subjects, and timetable periods.
+          Configure school identity, regional settings, academic configuration, media uploads, and integrations.
         </p>
       </div>
 
       <div className="space-y-6">
-        {/* Identity */}
+
+        {/* ── School Identity */}
         <section className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
           <h2 className="font-bold text-slate-800 text-sm flex items-center gap-2 mb-5">
             <School className="w-4 h-4 text-indigo-600" /> School Identity
@@ -205,71 +360,100 @@ export default function SchoolSettingsPage() {
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div className="sm:col-span-2">
               <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">School Name *</label>
-              <input value={form.schoolName} onChange={e => field('schoolName', e.target.value)}
-                placeholder="e.g. Avenir Secondary School"
+              <input value={form.schoolName} onChange={e => field('schoolName', e.target.value)} placeholder="e.g. Avenir International School"
                 className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm" />
             </div>
             <div>
-              <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">Principal's Name</label>
-              <input value={form.principalName || ''} onChange={e => field('principalName', e.target.value)}
-                placeholder="e.g. Mr. A. Adeyemi"
+              <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">Principal / Head Teacher</label>
+              <input value={form.principalName || ''} onChange={e => field('principalName', e.target.value)} placeholder="e.g. Dr. Jana Kovač"
                 className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm" />
             </div>
             <div>
               <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">School Motto</label>
-              <input value={form.motto || ''} onChange={e => field('motto', e.target.value)}
-                placeholder="e.g. Excellence in Education"
+              <input value={form.motto || ''} onChange={e => field('motto', e.target.value)} placeholder="e.g. Excellence in Education"
                 className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm" />
-            </div>
-            <div className="sm:col-span-2">
-              <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">School Logo URL</label>
-              <input value={form.logoUrl} onChange={e => field('logoUrl', e.target.value)}
-                placeholder="https://… (paste a URL to your school logo)"
-                className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm" />
-              {form.logoUrl && (
-                <img src={form.logoUrl} alt="School logo preview" className="mt-2 h-14 w-14 object-contain rounded-lg border border-slate-200" />
-              )}
             </div>
           </div>
         </section>
 
-        {/* Contact */}
+        {/* ── Contact & Location */}
         <section className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
           <h2 className="font-bold text-slate-800 text-sm flex items-center gap-2 mb-5">
-            <Phone className="w-4 h-4 text-indigo-600" /> Contact Information
+            <Phone className="w-4 h-4 text-indigo-600" /> Contact & Location
           </h2>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">Phone</label>
-              <input value={form.phone} onChange={e => field('phone', e.target.value)}
-                placeholder="e.g. +1 234 567 8900"
+              <input value={form.phone} onChange={e => field('phone', e.target.value)} placeholder="e.g. +386 1 234 5678"
                 className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm" />
             </div>
             <div>
               <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">Email</label>
-              <input type="email" value={form.email} onChange={e => field('email', e.target.value)}
-                placeholder="school@example.com"
+              <input type="email" value={form.email} onChange={e => field('email', e.target.value)} placeholder="school@example.com"
                 className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm" />
             </div>
             <div className="sm:col-span-2">
               <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">Address</label>
-              <textarea value={form.address} onChange={e => field('address', e.target.value)}
-                rows={2} placeholder="Full school address"
+              <textarea value={form.address} onChange={e => field('address', e.target.value)} rows={2} placeholder="Full school address"
                 className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm resize-none" />
             </div>
           </div>
         </section>
 
-        {/* Academic Period */}
+        {/* ── Internationalisation */}
+        <section className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
+          <h2 className="font-bold text-slate-800 text-sm flex items-center gap-2 mb-1">
+            <Globe className="w-4 h-4 text-indigo-600" /> Internationalisation
+          </h2>
+          <p className="text-xs text-slate-500 mb-5">
+            Configure country, timezone, locale, and currency. These control date/number formatting, phone validation, and payroll calculations across the system.
+          </p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">Country <span className="font-normal text-slate-400">(ISO 3166-1, e.g. SI, NG, US)</span></label>
+              <input value={form.country} onChange={e => field('country', e.target.value.toUpperCase().slice(0, 2))} placeholder="e.g. SI" maxLength={2}
+                className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm font-mono uppercase" />
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">Timezone <span className="font-normal text-slate-400">(IANA, e.g. Europe/Ljubljana)</span></label>
+              <input value={form.timezone} onChange={e => field('timezone', e.target.value)} placeholder="e.g. Europe/Ljubljana"
+                className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm font-mono" />
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">Locale <span className="font-normal text-slate-400">(BCP 47, e.g. sl-SI)</span></label>
+              <input value={form.locale} onChange={e => field('locale', e.target.value)} placeholder="e.g. sl-SI, en-NG, en-US"
+                className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm font-mono" />
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">Currency <span className="font-normal text-slate-400">(ISO 4217, e.g. EUR)</span></label>
+              <input value={form.currency} onChange={e => field('currency', e.target.value.toUpperCase().slice(0, 3))} placeholder="e.g. EUR, NGN, USD" maxLength={3}
+                className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm font-mono uppercase" />
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">Phone Country Code</label>
+              <input value={form.phoneCountryCode} onChange={e => field('phoneCountryCode', e.target.value)} placeholder="e.g. +386, +234, +1"
+                className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm font-mono" />
+            </div>
+          </div>
+          {form.locale && (
+            <div className="mt-4 p-3 bg-slate-50 rounded-xl border border-slate-100 text-xs text-slate-600">
+              <strong>Formatting preview: </strong>
+              {(() => { try { return new Intl.NumberFormat(form.locale, { style: 'currency', currency: form.currency || 'USD' }).format(12500); } catch { return `${form.currency || '?'} 12,500.00`; } })()}
+              {' · '}
+              {(() => { try { return new Date().toLocaleDateString(form.locale, { dateStyle: 'full' }); } catch { return new Date().toLocaleDateString(); } })()}
+            </div>
+          )}
+        </section>
+
+        {/* ── Academic Period */}
         <section className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
           <h2 className="font-bold text-slate-800 text-sm flex items-center gap-2 mb-5">
             <Calendar className="w-4 h-4 text-indigo-600" /> Academic Period
           </h2>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <div>
-              <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">Current Session</label>
-              <input value={form.currentSession} onChange={e => field('currentSession', e.target.value)}
-                placeholder="e.g. 2025/2026"
+              <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">Current Session / Year</label>
+              <input value={form.currentSession} onChange={e => field('currentSession', e.target.value)} placeholder="e.g. 2025/2026"
                 className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm font-mono" />
             </div>
             <div>
@@ -279,27 +463,77 @@ export default function SchoolSettingsPage() {
                 {TERMS.map(t => <option key={t}>{t}</option>)}
               </select>
             </div>
+            <div>
+              <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">Term Structure</label>
+              <select value={form.termStructure || '3-term'} onChange={e => field('termStructure', e.target.value)}
+                className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm">
+                <option value="3-term">3-Term (UK / Africa)</option>
+                <option value="2-semester">2-Semester (EU / US Universities)</option>
+                <option value="4-quarter">4-Quarter (US K-12)</option>
+              </select>
+            </div>
           </div>
         </section>
 
-        {/* Student ID Format */}
+        {/* ── Academic Configuration */}
+        <section className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
+          <h2 className="font-bold text-slate-800 text-sm flex items-center gap-2 mb-1">
+            <Award className="w-4 h-4 text-indigo-600" /> Academic Configuration
+          </h2>
+          <p className="text-xs text-slate-500 mb-5">Grading system, academic levels, custom subjects, and timetable periods.</p>
+
+          <div className="mb-6">
+            <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">Grading System</label>
+            <select value={form.gradingSystem} onChange={e => field('gradingSystem', e.target.value as GradingSystem)}
+              className="w-full sm:w-72 px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm">
+              <option value="waec">WAEC / NECO (A1–F9) — Nigerian</option>
+              <option value="percentage">Percentage (A+, A, B, C, D, F)</option>
+              <option value="gpa4">GPA 4.0 — US / International</option>
+              <option value="ib">IB Scale (1–7) — International Baccalaureate</option>
+              <option value="custom">Custom Scale</option>
+            </select>
+            {form.gradingSystem === 'custom' && (
+              <div className="mt-4">
+                <CustomGradeScaleEditor scale={form.customGradingScale} onChange={s => field('customGradingScale', s)} />
+              </div>
+            )}
+          </div>
+
+          <div className="mb-6">
+            <OrderableLevelEditor
+              items={form.schoolLevels}
+              onReorder={levels => field('schoolLevels', levels)}
+              onAdd={v => field('schoolLevels', [...form.schoolLevels, v])}
+              onRemove={i => field('schoolLevels', form.schoolLevels.filter((_, idx) => idx !== i))}
+            />
+          </div>
+
+          <div className="mb-6">
+            <TagListEditor label="Additional / Custom Subjects" items={form.customSubjects} placeholder="e.g. Slovenian Language, IB Theory of Knowledge"
+              onAdd={v => field('customSubjects', [...form.customSubjects, v])}
+              onRemove={i => field('customSubjects', form.customSubjects.filter((_, idx) => idx !== i))} />
+          </div>
+
+          <div>
+            <TagListEditor label="Timetable Period Times (HH:MM)" items={form.periodTimes} placeholder="e.g. 08:30"
+              validate={validateTime}
+              onAdd={v => field('periodTimes', [...form.periodTimes, v].sort())}
+              onRemove={i => field('periodTimes', form.periodTimes.filter((_, idx) => idx !== i))} />
+          </div>
+        </section>
+
+        {/* ── Student ID Format */}
         <section className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
           <h2 className="font-bold text-slate-800 text-sm flex items-center gap-2 mb-1">
             <Hash className="w-4 h-4 text-indigo-600" /> Student ID Format
           </h2>
-          <p className="text-xs text-slate-500 mb-5">
-            Define how student IDs are generated. Changes apply to new students only.
-          </p>
+          <p className="text-xs text-slate-500 mb-5">Define how student IDs are generated. Changes apply to new students only.</p>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">
             <div>
               <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">Prefix</label>
-              <input
-                value={form.studentIdPrefix}
-                onChange={e => field('studentIdPrefix', e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ''))}
-                placeholder="e.g. KIS"
-                maxLength={6}
-                className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm font-mono uppercase"
-              />
+              <input value={form.studentIdPrefix} onChange={e => field('studentIdPrefix', e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ''))}
+                placeholder="e.g. KIS" maxLength={6}
+                className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm font-mono uppercase" />
             </div>
             <div>
               <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">Format</label>
@@ -312,12 +546,9 @@ export default function SchoolSettingsPage() {
             </div>
             <div>
               <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">Sequence Digits</label>
-              <input
-                type="number" min={2} max={8}
-                value={form.studentIdPadding}
+              <input type="number" min={2} max={8} value={form.studentIdPadding}
                 onChange={e => field('studentIdPadding', Math.max(2, Math.min(8, Number(e.target.value))))}
-                className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm"
-              />
+                className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm" />
             </div>
           </div>
           <div className="flex items-center gap-3 p-3 bg-indigo-50 rounded-xl border border-indigo-100">
@@ -328,73 +559,84 @@ export default function SchoolSettingsPage() {
           </div>
         </section>
 
-        {/* Academic Levels */}
+        {/* ── Media & Uploads (Cloudinary) */}
         <section className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
           <h2 className="font-bold text-slate-800 text-sm flex items-center gap-2 mb-1">
-            <Layers className="w-4 h-4 text-indigo-600" /> Academic Levels
+            <ImageIcon className="w-4 h-4 text-indigo-600" /> Media & Uploads (Cloudinary)
           </h2>
           <p className="text-xs text-slate-500 mb-5">
-            Define the grade levels available at your school (e.g. Year 7, Grade 10, Form 3). Used when creating classes.
+            Configure Cloudinary for student photos, staff avatars, and school logo. Use an <strong>unsigned upload preset</strong>.
+            Get a free account at <a href="https://cloudinary.com" target="_blank" rel="noopener noreferrer" className="text-indigo-600 underline">cloudinary.com</a>.
           </p>
-          <TagListEditor
-            label="Grade / Year Levels"
-            items={form.schoolLevels}
-            placeholder="e.g. Year 7, Grade 10, Form 3"
-            onAdd={v => field('schoolLevels', [...form.schoolLevels, v])}
-            onRemove={i => field('schoolLevels', form.schoolLevels.filter((_, idx) => idx !== i))}
-          />
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
+            <div>
+              <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">Cloud Name</label>
+              <input value={form.cloudinaryCloudName} onChange={e => field('cloudinaryCloudName', e.target.value)} placeholder="e.g. my-school-cloud"
+                className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm font-mono" />
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">Upload Preset (unsigned)</label>
+              <div className="relative">
+                <input type={showPreset ? 'text' : 'password'} value={form.cloudinaryUploadPreset}
+                  onChange={e => field('cloudinaryUploadPreset', e.target.value)} placeholder="e.g. avenir_unsigned"
+                  className="w-full px-3 py-2.5 pr-10 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm font-mono" />
+                <button type="button" onClick={() => setShowPreset(!showPreset)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600">
+                  {showPreset ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
+              </div>
+            </div>
+          </div>
+          <div className="mb-4">
+            <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">School Logo URL</label>
+            <input value={form.logoUrl} onChange={e => field('logoUrl', e.target.value)} placeholder="Paste a URL or use the upload button below"
+              className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm" />
+            {form.logoUrl && <img src={form.logoUrl} alt="School logo" className="mt-2 h-14 w-14 object-contain rounded-lg border border-slate-200" />}
+          </div>
+          {form.cloudinaryCloudName && form.cloudinaryUploadPreset ? (
+            <CloudinaryLogoUpload cloudName={form.cloudinaryCloudName} uploadPreset={form.cloudinaryUploadPreset} onUploaded={url => field('logoUrl', url)} />
+          ) : (
+            <p className="text-xs text-amber-600 bg-amber-50 border border-amber-100 rounded-xl px-3 py-2">
+              Enter Cloud Name and Upload Preset above to enable direct image uploads.
+            </p>
+          )}
         </section>
 
-        {/* Subjects */}
+        {/* ── Finance & Payroll */}
         <section className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
           <h2 className="font-bold text-slate-800 text-sm flex items-center gap-2 mb-1">
-            <BookOpen className="w-4 h-4 text-indigo-600" /> Custom Subjects
+            <DollarSign className="w-4 h-4 text-indigo-600" /> Finance & Payroll
           </h2>
-          <p className="text-xs text-slate-500 mb-5">
-            Add subjects specific to your school. These are combined with the built-in subject list throughout the app.
-          </p>
-          <TagListEditor
-            label="Additional subjects"
-            items={form.customSubjects}
-            placeholder="e.g. Mandarin, IB Theory of Knowledge"
-            onAdd={v => field('customSubjects', [...form.customSubjects, v])}
-            onRemove={i => field('customSubjects', form.customSubjects.filter((_, idx) => idx !== i))}
-          />
+          <p className="text-xs text-slate-500 mb-5">Configure the tax / deduction model for staff payroll.</p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">Tax / Deduction Model</label>
+              <select value={form.taxModel} onChange={e => field('taxModel', e.target.value as SchoolSettings['taxModel'])}
+                className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm">
+                <option value="none">No Deductions</option>
+                <option value="flat_rate">Flat Rate (%)</option>
+                <option value="nigeria_paye">Nigeria PAYE (Graduated Brackets)</option>
+              </select>
+            </div>
+            {form.taxModel === 'flat_rate' && (
+              <div>
+                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">Tax Rate (%)</label>
+                <input type="number" min={0} max={50} value={form.taxFlatRate} onChange={e => field('taxFlatRate', Number(e.target.value))}
+                  className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm" />
+              </div>
+            )}
+          </div>
         </section>
 
-        {/* Period Times */}
-        <section className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
-          <h2 className="font-bold text-slate-800 text-sm flex items-center gap-2 mb-1">
-            <Clock className="w-4 h-4 text-indigo-600" /> Timetable Period Times
-          </h2>
-          <p className="text-xs text-slate-500 mb-5">
-            Define the time slots available when building timetables. Enter times manually in HH:MM format (24-hour).
-          </p>
-          <TagListEditor
-            label="Available time slots"
-            items={form.periodTimes}
-            placeholder="e.g. 08:30"
-            validate={validateTime}
-            onAdd={v => {
-              const sorted = [...form.periodTimes, v].sort();
-              field('periodTimes', sorted);
-            }}
-            onRemove={i => field('periodTimes', form.periodTimes.filter((_, idx) => idx !== i))}
-          />
-        </section>
-
-        {/* Exam Lock */}
+        {/* ── Exam Result Access */}
         <section className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
           <h2 className="font-bold text-slate-800 text-sm flex items-center gap-2 mb-2">
             <Lock className="w-4 h-4 text-indigo-600" /> Exam Result Access
           </h2>
-          <p className="text-xs text-slate-500 mb-4">
-            When exams are locked, students and parents must use a PIN to view results (like a scratch-card access system).
-          </p>
+          <p className="text-xs text-slate-500 mb-4">When locked, students and parents must use a PIN to view results.</p>
           <label className="flex items-center gap-3 cursor-pointer">
             <div className="relative">
-              <input type="checkbox" className="sr-only peer" checked={form.examLocked}
-                onChange={e => field('examLocked', e.target.checked)} />
+              <input type="checkbox" className="sr-only peer" checked={form.examLocked} onChange={e => field('examLocked', e.target.checked)} />
               <div className="w-11 h-6 bg-slate-200 peer-checked:bg-indigo-600 rounded-full transition-colors" />
               <div className="absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform peer-checked:translate-x-5" />
             </div>

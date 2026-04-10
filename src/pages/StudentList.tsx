@@ -4,7 +4,9 @@ import { db, handleFirestoreError, OperationType } from '../firebase';
 import { collection, query, onSnapshot, orderBy } from 'firebase/firestore';
 import { Student, SCHOOL_CLASSES, SchoolClass } from '../types';
 import { motion } from 'motion/react';
-import { Search, Filter, User, Phone, Mail, GraduationCap, Calendar, Hash, ArrowRight, ArrowLeft } from 'lucide-react';
+import { Search, Filter, User, Phone, Mail, GraduationCap, Calendar, Hash, ArrowRight, ArrowLeft, ChevronLeft, ChevronRight } from 'lucide-react';
+
+const PAGE_SIZE = 20;
 
 export default function StudentList() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -15,6 +17,7 @@ export default function StudentList() {
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [classFilter, setClassFilter] = useState(initialClass);
+  const [currentPage, setCurrentPage] = useState(0);
 
   useEffect(() => {
     const q = query(collection(db, 'students'), orderBy('enrolledAt', 'desc'));
@@ -42,7 +45,11 @@ export default function StudentList() {
       searchParams.set('class', classFilter);
     }
     setSearchParams(searchParams);
+    setCurrentPage(0); // reset page on filter change
   }, [classFilter]);
+
+  // Also reset on search change
+  useEffect(() => { setCurrentPage(0); }, [searchTerm]);
 
   const filteredStudents = students.filter(student => {
     const matchesSearch = 
@@ -104,8 +111,9 @@ export default function StudentList() {
           <p className="text-slate-500 font-medium">No students found matching your criteria.</p>
         </div>
       ) : (
+        <>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {filteredStudents.map((student) => (
+          {filteredStudents.slice(currentPage * PAGE_SIZE, (currentPage + 1) * PAGE_SIZE).map((student) => (
             <motion.div
               key={student.id}
               initial={{ opacity: 0, y: 20 }}
@@ -158,6 +166,25 @@ export default function StudentList() {
             </motion.div>
           ))}
         </div>
+        {/* Pagination */}
+        {Math.ceil(filteredStudents.length / PAGE_SIZE) > 1 && (
+          <div className="flex items-center justify-between mt-8 pt-4 border-t border-slate-200">
+            <p className="text-sm text-slate-500">
+              Page {currentPage + 1} of {Math.ceil(filteredStudents.length / PAGE_SIZE)} &nbsp;·&nbsp; {filteredStudents.length} students
+            </p>
+            <div className="flex gap-2">
+              <button disabled={currentPage === 0} onClick={() => setCurrentPage(p => p - 1)}
+                className="flex items-center gap-1 px-4 py-2 text-sm font-bold rounded-xl border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
+                <ChevronLeft className="w-4 h-4" /> Previous
+              </button>
+              <button disabled={currentPage >= Math.ceil(filteredStudents.length / PAGE_SIZE) - 1} onClick={() => setCurrentPage(p => p + 1)}
+                className="flex items-center gap-1 px-4 py-2 text-sm font-bold rounded-xl border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
+                Next <ChevronRight className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+        )}
+        </>
       )}
     </div>
   );

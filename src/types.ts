@@ -57,6 +57,7 @@ export interface Student {
   studentId: string;
   enrolledAt: any;
   applicationId: string;
+  photoUrl?: string;
   // Guardian / Parent linkage
   guardianName?: string;
   guardianPhone?: string;
@@ -284,6 +285,7 @@ export interface Staff {
   userId?: string;
   department?: string;
   qualification?: string;
+  photoUrl?: string;
 }
 
 export interface LeaveRequest {
@@ -348,16 +350,68 @@ export const SUBJECTS = [
   'Social Studies', 'Cultural & Creative Arts', 'Business Studies', 'History'
 ];
 
-export function calculateGrade(total: number): string {
-  if (total >= 75) return 'A1';
-  if (total >= 70) return 'B2';
-  if (total >= 65) return 'B3';
-  if (total >= 60) return 'C4';
-  if (total >= 55) return 'C5';
-  if (total >= 50) return 'C6';
-  if (total >= 45) return 'D7';
-  if (total >= 40) return 'E8';
-  return 'F9';
+export type GradingSystem = 'waec' | 'percentage' | 'gpa4' | 'ib' | 'custom';
+
+export interface CustomGradeScale {
+  min: number;
+  max: number;
+  grade: string;
+  label: string;
+}
+
+export function calculateGrade(
+  total: number,
+  gradingSystem: GradingSystem = 'waec',
+  customScale?: CustomGradeScale[]
+): string {
+  switch (gradingSystem) {
+    case 'waec':
+      if (total >= 75) return 'A1';
+      if (total >= 70) return 'B2';
+      if (total >= 65) return 'B3';
+      if (total >= 60) return 'C4';
+      if (total >= 55) return 'C5';
+      if (total >= 50) return 'C6';
+      if (total >= 45) return 'D7';
+      if (total >= 40) return 'E8';
+      return 'F9';
+    case 'percentage':
+      if (total >= 90) return 'A+';
+      if (total >= 80) return 'A';
+      if (total >= 70) return 'B';
+      if (total >= 60) return 'C';
+      if (total >= 50) return 'D';
+      return 'F';
+    case 'gpa4':
+      if (total >= 90) return 'A (4.0)';
+      if (total >= 80) return 'B (3.0)';
+      if (total >= 70) return 'C (2.0)';
+      if (total >= 60) return 'D (1.0)';
+      return 'F (0.0)';
+    case 'ib':
+      // IB grades 1-7 based on percentage
+      if (total >= 86) return '7';
+      if (total >= 72) return '6';
+      if (total >= 58) return '5';
+      if (total >= 44) return '4';
+      if (total >= 30) return '3';
+      if (total >= 16) return '2';
+      return '1';
+    case 'custom':
+      if (customScale && customScale.length > 0) {
+        const sorted = [...customScale].sort((a, b) => b.min - a.min);
+        const match = sorted.find(s => total >= s.min && total <= s.max);
+        if (match) return match.grade;
+      }
+      // fallback to percentage
+      if (total >= 50) return 'Pass';
+      return 'Fail';
+    default:
+      // Same as WAEC
+      if (total >= 75) return 'A1';
+      if (total >= 50) return 'C';
+      return 'F';
+  }
 }
 
 export function calculatePAYE(grossPay: number): number {
@@ -385,6 +439,8 @@ export function calculatePAYE(grossPay: number): number {
 }
 
 export const SCHOOL_CLASSES = [
+  'Kindergarten',
+  'Nursery 1', 'Nursery 2',
   'Primary 1', 'Primary 2', 'Primary 3', 'Primary 4', 'Primary 5', 'Primary 6',
   'JSS 1', 'JSS 2', 'JSS 3',
   'SSS 1', 'SSS 2', 'SSS 3'

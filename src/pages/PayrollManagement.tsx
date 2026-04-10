@@ -6,9 +6,12 @@ import { computePayroll } from '../services/firestoreService';
 import { generatePayrollSummary } from '../services/geminiService';
 import { motion, AnimatePresence } from 'motion/react';
 import { CreditCard, Printer, Sparkles, CheckCircle, RefreshCw, X } from 'lucide-react';
-import { formatNaira } from '../types';
+import { useSchool } from '../components/SchoolContext';
+import { formatCurrency } from '../utils/formatCurrency';
 
 export default function PayrollManagement() {
+  const { locale, currency, taxModel, taxFlatRate } = useSchool();
+  const fmt = (amount: number) => formatCurrency(amount, locale, currency);
   const [staff, setStaff] = useState<Staff[]>([]);
   const [payrolls, setPayrolls] = useState<Payroll[]>([]);
   const [selectedMonth, setSelectedMonth] = useState(new Date().toISOString().slice(0, 7));
@@ -38,7 +41,7 @@ export default function PayrollManagement() {
     await Promise.all(existing.docs.map(d => deleteDoc(d.ref)));
     // create new
     await Promise.all(staff.map(s => {
-      const computed = computePayroll(s.basicSalary || 0, s.allowances || 0);
+      const computed = computePayroll(s.basicSalary || 0, s.allowances || 0, taxModel, taxFlatRate);
       const record: Omit<Payroll, 'id'> = {
         staffId: s.id!,
         staffName: s.staffName,
@@ -135,7 +138,7 @@ export default function PayrollManagement() {
           ].map(card => (
             <div key={card.label} className="bg-white rounded-2xl border border-slate-200 p-4 shadow-sm">
               <p className="text-xs text-slate-500 font-medium mb-1">{card.label}</p>
-              <p className="text-lg font-bold text-slate-900">{formatNaira(card.value)}</p>
+              <p className="text-lg font-bold text-slate-900">{fmt(card.value)}</p>
             </div>
           ))}
         </div>
@@ -171,12 +174,12 @@ export default function PayrollManagement() {
                 {monthPayrolls.map(p => (
                   <tr key={p.id} className="hover:bg-slate-50 transition-colors">
                     <td className="px-5 py-3 font-medium text-slate-800">{p.staffName}</td>
-                    <td className="px-4 py-3 text-right text-slate-600">{formatNaira(p.basicSalary)}</td>
-                    <td className="px-4 py-3 text-right text-slate-600">{formatNaira(p.allowances)}</td>
-                    <td className="px-4 py-3 text-right font-semibold text-slate-800">{formatNaira(p.grossPay)}</td>
-                    <td className="px-4 py-3 text-right text-amber-600">{formatNaira(p.pension)}</td>
-                    <td className="px-4 py-3 text-right text-rose-600">{formatNaira(p.paye)}</td>
-                    <td className="px-4 py-3 text-right font-bold text-emerald-700">{formatNaira(p.netPay)}</td>
+                    <td className="px-4 py-3 text-right text-slate-600">{fmt(p.basicSalary)}</td>
+                    <td className="px-4 py-3 text-right text-slate-600">{fmt(p.allowances)}</td>
+                    <td className="px-4 py-3 text-right font-semibold text-slate-800">{fmt(p.grossPay)}</td>
+                    <td className="px-4 py-3 text-right text-amber-600">{fmt(p.pension)}</td>
+                    <td className="px-4 py-3 text-right text-rose-600">{fmt(p.paye)}</td>
+                    <td className="px-4 py-3 text-right font-bold text-emerald-700">{fmt(p.netPay)}</td>
                     <td className="px-4 py-3 text-center">
                       <span className={`px-2.5 py-1 text-[10px] font-bold rounded-full capitalize ${p.status === 'paid' ? 'bg-emerald-50 text-emerald-700' : p.status === 'approved' ? 'bg-blue-50 text-blue-700' : 'bg-slate-50 text-slate-600'}`}>{p.status}</span>
                     </td>
@@ -224,17 +227,17 @@ export default function PayrollManagement() {
                 <div className="space-y-2 text-sm">
                   <div className="flex justify-between"><span className="text-slate-500">Staff Name:</span><span className="font-bold text-slate-900">{printSlip.staffName}</span></div>
                   <div className="pt-2 mt-2 border-t border-slate-100 space-y-2">
-                    <div className="flex justify-between"><span className="text-slate-600">Basic Salary</span><span>{formatNaira(printSlip.basicSalary)}</span></div>
-                    <div className="flex justify-between"><span className="text-slate-600">Allowances</span><span>{formatNaira(printSlip.allowances)}</span></div>
-                    <div className="flex justify-between font-semibold border-t border-slate-100 pt-2"><span>Gross Pay</span><span>{formatNaira(printSlip.grossPay)}</span></div>
+                    <div className="flex justify-between"><span className="text-slate-600">Basic Salary</span><span>{fmt(printSlip.basicSalary)}</span></div>
+                    <div className="flex justify-between"><span className="text-slate-600">Allowances</span><span>{fmt(printSlip.allowances)}</span></div>
+                    <div className="flex justify-between font-semibold border-t border-slate-100 pt-2"><span>Gross Pay</span><span>{fmt(printSlip.grossPay)}</span></div>
                   </div>
                   <div className="pt-2 mt-1 border-t border-slate-100 space-y-2">
                     <p className="text-xs font-bold text-slate-400 uppercase tracking-wide">Deductions</p>
-                    <div className="flex justify-between text-rose-600"><span>Pension (8%)</span><span>-{formatNaira(printSlip.pension)}</span></div>
-                    <div className="flex justify-between text-rose-600"><span>PAYE Tax</span><span>-{formatNaira(printSlip.paye)}</span></div>
+                    <div className="flex justify-between text-rose-600"><span>Pension (8%)</span><span>-{fmt(printSlip.pension)}</span></div>
+                    <div className="flex justify-between text-rose-600"><span>PAYE Tax</span><span>-{fmt(printSlip.paye)}</span></div>
                   </div>
                   <div className="flex justify-between font-bold text-lg text-emerald-700 border-t-2 border-slate-200 pt-3 mt-2">
-                    <span>NET PAY</span><span>{formatNaira(printSlip.netPay)}</span>
+                    <span>NET PAY</span><span>{fmt(printSlip.netPay)}</span>
                   </div>
                 </div>
                 <p className="text-[10px] text-slate-400 text-center mt-4 pt-3 border-t border-slate-100">

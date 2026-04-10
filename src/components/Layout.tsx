@@ -19,23 +19,23 @@ const teacherNavGroups = [
   {
     label: 'Classroom',
     items: [
-      { to: '/teacher#students', label: 'My Students', icon: Users, exact: false },
-      { to: '/teacher#attendance', label: 'Attendance', icon: CheckSquare, exact: false },
-      { to: '/teacher#grades', label: 'Gradebook', icon: Award, exact: false },
-      { to: '/teacher#skills', label: 'Skills', icon: Star, exact: false },
-      { to: '/teacher#assignments', label: 'Assignments', icon: BookOpen, exact: false },
+      { to: '/teacher?tab=students', label: 'My Students', icon: Users, exact: false },
+      { to: '/teacher?tab=attendance', label: 'Attendance', icon: CheckSquare, exact: false },
+      { to: '/teacher?tab=grades', label: 'Gradebook', icon: Award, exact: false },
+      { to: '/teacher?tab=skills', label: 'Skills', icon: Star, exact: false },
+      { to: '/teacher?tab=assignments', label: 'Assignments', icon: BookOpen, exact: false },
     ],
   },
   {
     label: 'Communication',
     items: [
-      { to: '/teacher#messages', label: 'Messages', icon: MessageSquare, exact: false },
+      { to: '/teacher?tab=messages', label: 'Messages', icon: MessageSquare, exact: false },
     ],
   },
   {
     label: 'AI Tools',
     items: [
-      { to: '/teacher#ai_tools', label: 'AI Teaching Tools', icon: Sparkles, exact: false },
+      { to: '/teacher?tab=ai_tools', label: 'AI Teaching Tools', icon: Sparkles, exact: false },
     ],
   },
 ];
@@ -177,6 +177,7 @@ function AdminSidebar({ open, onClose }: { open: boolean; onClose: () => void })
 
 function TeacherSidebar({ open, onClose, displayName }: { open: boolean; onClose: () => void; displayName?: string }) {
   const location = useLocation();
+  const activeTab = new URLSearchParams(location.search).get('tab') || '';
 
   return (
     <>
@@ -228,10 +229,10 @@ function TeacherSidebar({ open, onClose, displayName }: { open: boolean; onClose
               </p>
               <ul className="space-y-1">
                 {group.items.map(item => {
-                  const basePath = item.to.split('#')[0];
+                  const tabParam = new URLSearchParams(item.to.split('?')[1] || '').get('tab');
                   const isActive = item.exact
-                    ? location.pathname === basePath
-                    : location.pathname === basePath;
+                    ? location.pathname === '/teacher' && !activeTab
+                    : tabParam ? activeTab === tabParam : location.pathname === item.to.split('?')[0];
                   return (
                     <li key={item.to}>
                       <Link
@@ -452,7 +453,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
                 <span className="text-lg font-bold text-slate-900">Avenir SIS</span>
               </div>
               <p className="text-slate-500 text-sm leading-relaxed">
-                Empowering Nigerian schools with smart, secure, and efficient management tools.
+                Empowering schools worldwide with smart, secure, and efficient management tools.
               </p>
             </div>
             <div>
@@ -466,13 +467,13 @@ export function Layout({ children }: { children: React.ReactNode }) {
               <h4 className="font-bold text-slate-900 mb-4">Support</h4>
               <p className="text-slate-500 text-sm">
                 Need help? Contact our support team at <br />
-                <span className="font-medium text-indigo-600">support@avenir-sis.ng</span>
+                <span className="font-medium text-indigo-600">support@avenir-sis.com</span>
               </p>
             </div>
           </div>
           <div className="pt-8 border-t border-slate-100 text-center">
-            <p className="text-slate-400 text-xs">
-              &copy; {new Date().getFullYear()} Avenir Smart School Management System. Built for Nigerian Excellence.
+              <p className="text-slate-400 text-xs">
+              &copy; {new Date().getFullYear()} Avenir Smart School Management System. Empowering Schools Globally.
             </p>
           </div>
         </div>

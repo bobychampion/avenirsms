@@ -8,7 +8,8 @@ import { motion, AnimatePresence } from 'motion/react';
 import toast from 'react-hot-toast';
 import { ConfirmDialog } from '../components/Toast';
 import { generateFeeReminderDraft } from '../services/geminiService';
-import { useClassSelectOptions } from '../components/SchoolContext';
+import { useClassSelectOptions, useSchool } from '../components/SchoolContext';
+import { formatCurrency } from '../utils/formatCurrency';
 import { 
   DollarSign, Receipt, TrendingUp, TrendingDown, Plus, 
   Search, Filter, Loader2, Download, PieChart, 
@@ -21,6 +22,8 @@ import { DOCUMENT_TITLE_DEFAULT } from '../constants/appMeta';
 export default function FinancialManagement() {
   const { profile } = useAuth();
   const classSelectOptions = useClassSelectOptions();
+  const { locale, currency } = useSchool();
+  const fmt = (amount: number) => formatCurrency(amount, locale, currency);
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [payments, setPayments] = useState<FeePayment[]>([]);
   const [expenses, setExpenses] = useState<Expense[]>([]);
@@ -302,7 +305,7 @@ export default function FinancialManagement() {
             </div>
             <span className="text-xs font-bold text-emerald-600 bg-emerald-50 px-2 py-1 rounded-full">Total Revenue</span>
           </div>
-          <h3 className="text-2xl font-bold text-slate-900">₦{totalRevenue.toLocaleString()}</h3>
+          <h3 className="text-2xl font-bold text-slate-900">{fmt(totalRevenue)}</h3>
           <p className="text-slate-400 text-xs mt-1">All time fee payments</p>
         </div>
         <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm">
@@ -312,7 +315,7 @@ export default function FinancialManagement() {
             </div>
             <span className="text-xs font-bold text-rose-600 bg-rose-50 px-2 py-1 rounded-full">Total Expenses</span>
           </div>
-          <h3 className="text-2xl font-bold text-slate-900">₦{totalExpenses.toLocaleString()}</h3>
+          <h3 className="text-2xl font-bold text-slate-900">{fmt(totalExpenses)}</h3>
           <p className="text-slate-400 text-xs mt-1">All time school spending</p>
         </div>
         <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm">
@@ -322,7 +325,7 @@ export default function FinancialManagement() {
             </div>
             <span className="text-xs font-bold text-amber-600 bg-amber-50 px-2 py-1 rounded-full">Outstanding</span>
           </div>
-          <h3 className="text-2xl font-bold text-slate-900">₦{outstandingFees.toLocaleString()}</h3>
+          <h3 className="text-2xl font-bold text-slate-900">{fmt(outstandingFees)}</h3>
           <p className="text-slate-400 text-xs mt-1">Unpaid student invoices</p>
         </div>
       </div>
@@ -371,7 +374,7 @@ export default function FinancialManagement() {
                       <p className="text-xs text-slate-500">{p.date}</p>
                     </div>
                   </div>
-                  <p className="text-sm font-bold text-emerald-600">+₦{p.amount.toLocaleString()}</p>
+                  <p className="text-sm font-bold text-emerald-600">+{fmt(p.amount)}</p>
                 </div>
               ))}
               {expenses.slice(0, 5).map(e => (
@@ -385,7 +388,7 @@ export default function FinancialManagement() {
                       <p className="text-xs text-slate-500">{e.date}</p>
                     </div>
                   </div>
-                  <p className="text-sm font-bold text-rose-600">-₦{e.amount.toLocaleString()}</p>
+                  <p className="text-sm font-bold text-rose-600">-{fmt(e.amount)}</p>
                 </div>
               ))}
             </div>
@@ -428,7 +431,7 @@ export default function FinancialManagement() {
                     <p className="text-sm font-bold text-slate-900">{invoice.studentName}</p>
                     <p className="text-xs text-slate-500">{invoice.term} {invoice.session}</p>
                   </td>
-                  <td className="px-6 py-4 text-sm font-medium">₦{invoice.amount.toLocaleString()}</td>
+                  <td className="px-6 py-4 text-sm font-medium">{fmt(invoice.amount)}</td>
                   <td className="px-6 py-4 text-sm text-slate-500">{invoice.dueDate}</td>
                   <td className="px-6 py-4">
                     <span className={`px-2 py-1 rounded-full text-[10px] font-bold uppercase ${
@@ -493,7 +496,7 @@ export default function FinancialManagement() {
               {payments.map(payment => (
                 <tr key={payment.id}>
                   <td className="px-6 py-4 text-sm font-medium">{payment.date}</td>
-                  <td className="px-6 py-4 text-sm font-bold text-emerald-600">₦{payment.amount.toLocaleString()}</td>
+                  <td className="px-6 py-4 text-sm font-bold text-emerald-600">{fmt(payment.amount)}</td>
                   <td className="px-6 py-4 text-sm text-slate-500 capitalize">{payment.paymentMethod.replace('_', ' ')}</td>
                   <td className="px-6 py-4 text-sm text-slate-500">{payment.reference || 'N/A'}</td>
                   <td className="px-6 py-4 text-sm text-slate-500">{payment.recordedBy}</td>
@@ -523,7 +526,7 @@ export default function FinancialManagement() {
                     <span className="px-2 py-1 bg-slate-100 rounded-lg text-[10px] font-bold text-slate-600 uppercase">{expense.category}</span>
                   </td>
                   <td className="px-6 py-4 text-sm text-slate-500">{expense.description}</td>
-                  <td className="px-6 py-4 text-sm font-bold text-rose-600">₦{expense.amount.toLocaleString()}</td>
+                  <td className="px-6 py-4 text-sm font-bold text-rose-600">{fmt(expense.amount)}</td>
                 </tr>
               ))}
             </tbody>
@@ -548,7 +551,7 @@ export default function FinancialManagement() {
                 </div>
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
-                    <label className="text-xs font-bold text-slate-400 uppercase">Amount (₦)</label>
+                    <label className="text-xs font-bold text-slate-400 uppercase">Amount</label>
                     <input required type="number" value={invoiceForm.amount} onChange={e => setInvoiceForm({...invoiceForm, amount: Number(e.target.value)})} className="w-full px-4 py-2 rounded-xl border border-slate-200 outline-none" />
                   </div>
                   <div className="space-y-2">
@@ -593,7 +596,7 @@ export default function FinancialManagement() {
               <h3 className="text-2xl font-bold text-slate-900 mb-6">Record Fee Payment</h3>
               <form onSubmit={handleRecordPayment} className="space-y-4">
                 <div className="space-y-2">
-                  <label className="text-xs font-bold text-slate-400 uppercase">Amount Paid (₦)</label>
+                  <label className="text-xs font-bold text-slate-400 uppercase">Amount Paid</label>
                   <input required type="number" value={paymentForm.amount} onChange={e => setPaymentForm({...paymentForm, amount: Number(e.target.value)})} className="w-full px-4 py-2 rounded-xl border border-slate-200 outline-none" />
                 </div>
                 <div className="space-y-2">
@@ -642,7 +645,7 @@ export default function FinancialManagement() {
                   </select>
                 </div>
                 <div className="space-y-2">
-                  <label className="text-xs font-bold text-slate-400 uppercase">Amount (₦)</label>
+                  <label className="text-xs font-bold text-slate-400 uppercase">Amount</label>
                   <input required type="number" value={expenseForm.amount} onChange={e => setExpenseForm({...expenseForm, amount: Number(e.target.value)})} className="w-full px-4 py-2 rounded-xl border border-slate-200 outline-none" />
                 </div>
                 <div className="space-y-2">
@@ -704,7 +707,7 @@ export default function FinancialManagement() {
                   {/* Amount highlight */}
                   <div className="mb-5 p-5 bg-gradient-to-br from-indigo-600 to-violet-600 rounded-2xl text-center">
                     <p className="text-indigo-200 text-xs font-bold uppercase tracking-widest mb-1">Amount Paid</p>
-                    <p className="text-4xl font-black text-white">₦{receiptInvoice.amount.toLocaleString()}</p>
+                    <p className="text-4xl font-black text-white">{fmt(receiptInvoice.amount)}</p>
                   </div>
 
                   {/* Details */}
@@ -783,7 +786,7 @@ export default function FinancialManagement() {
                   </div>
                   <div className="grid grid-cols-2 gap-4">
                     <div>
-                      <label className="text-xs font-bold text-slate-500 uppercase tracking-wide block mb-1.5">Amount (₦)</label>
+                      <label className="text-xs font-bold text-slate-500 uppercase tracking-wide block mb-1.5">Amount</label>
                       <input type="number" value={scheduleForm.amount || ''}
                         onChange={e => setScheduleForm(p => ({ ...p, amount: Number(e.target.value) }))}
                         required min={1} className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm" />
@@ -860,7 +863,7 @@ export default function FinancialManagement() {
                     </div>
                     <div>
                       <h2 className="text-lg font-black text-slate-900">AI Fee Reminder</h2>
-                      <p className="text-xs text-slate-400">{reminderInvoice.studentName} · ₦{reminderInvoice.amount.toLocaleString()}</p>
+                      <p className="text-xs text-slate-400">{reminderInvoice.studentName} · {fmt(reminderInvoice.amount)}</p>
                     </div>
                   </div>
                   <button onClick={() => { setReminderInvoice(null); setReminderDraft(''); }}

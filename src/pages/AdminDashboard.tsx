@@ -2,7 +2,9 @@ import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { db, handleFirestoreError, OperationType } from '../firebase';
 import { collection, query, onSnapshot, orderBy, getDocs, limit } from 'firebase/firestore';
-import { Application, ApplicationStatus, formatNaira } from '../types';
+import { Application, ApplicationStatus } from '../types';
+import { useSchool } from '../components/SchoolContext';
+import { formatCurrency } from '../utils/formatCurrency';
 import { useAuth } from '../components/FirebaseProvider';
 import { motion } from 'motion/react';
 import {
@@ -104,6 +106,8 @@ const CustomTooltip = ({ active, payload, label }: any) => {
 
 export default function AdminDashboard() {
   const { user } = useAuth();
+  const { locale, currency } = useSchool();
+  const fmt = (amount: number) => formatCurrency(amount, locale, currency);
 
   // ─── State ──────────────────────────────────────────────────────────────────
   const [applications, setApplications] = useState<Application[]>([]);
@@ -285,9 +289,9 @@ export default function AdminDashboard() {
       sub: `${pendingLeaves} leave pending`, trend: null,
     },
     {
-      label: 'Total Revenue', value: formatNaira(totalRevenue), icon: Wallet,
+      label: 'Total Revenue', value: fmt(totalRevenue), icon: Wallet,
       gradient: 'from-emerald-500 to-green-700', light: 'bg-emerald-50 text-emerald-600',
-      sub: `Net: ${formatNaira(netBalance)}`, trend: netBalance >= 0 ? 'up' : 'down',
+      sub: `Net: ${fmt(netBalance)}`, trend: netBalance >= 0 ? 'up' : 'down',
     },
     {
       label: 'Attendance Rate', value: `${attendanceRate}%`, icon: Activity,
@@ -300,7 +304,7 @@ export default function AdminDashboard() {
       sub: `${appStats.pending} pending review`, trend: null,
     },
     {
-      label: 'Total Expenses', value: formatNaira(totalExpenses), icon: ReceiptText,
+      label: 'Total Expenses', value: fmt(totalExpenses), icon: ReceiptText,
       gradient: 'from-rose-500 to-red-600', light: 'bg-rose-50 text-rose-600',
       sub: `${totalRevenue > 0 ? Math.round((totalExpenses / totalRevenue) * 100) : 0}% of revenue`, trend: null,
     },
@@ -664,9 +668,9 @@ export default function AdminDashboard() {
           {/* Finance KPIs */}
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
             {[
-              { label: 'Total Revenue', value: formatNaira(totalRevenue), icon: TrendingUp, color: 'from-emerald-500 to-green-600' },
-              { label: 'Total Expenses', value: formatNaira(totalExpenses), icon: TrendingDown, color: 'from-rose-500 to-red-600' },
-              { label: 'Net Balance', value: formatNaira(netBalance), icon: Wallet, color: netBalance >= 0 ? 'from-teal-500 to-cyan-600' : 'from-orange-500 to-red-500' },
+              { label: 'Total Revenue', value: fmt(totalRevenue), icon: TrendingUp, color: 'from-emerald-500 to-green-600' },
+              { label: 'Total Expenses', value: fmt(totalExpenses), icon: TrendingDown, color: 'from-rose-500 to-red-600' },
+              { label: 'Net Balance', value: fmt(netBalance), icon: Wallet, color: netBalance >= 0 ? 'from-teal-500 to-cyan-600' : 'from-orange-500 to-red-500' },
               { label: 'Expense Ratio', value: totalRevenue > 0 ? `${Math.round((totalExpenses / totalRevenue) * 100)}%` : '—', icon: Target, color: 'from-violet-500 to-purple-600' },
             ].map(kpi => (
               <div key={kpi.label} className="bg-white rounded-xl border border-slate-200 p-3.5 shadow-sm">
@@ -698,7 +702,7 @@ export default function AdminDashboard() {
                     <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
                     <XAxis dataKey="month" tick={{ fontSize: 10 }} />
                     <YAxis tick={{ fontSize: 10 }} width={40} tickFormatter={v => `₦${(v / 1000).toFixed(0)}k`} />
-                    <Tooltip content={<CustomTooltip />} formatter={(v: any) => formatNaira(v)} />
+                    <Tooltip content={<CustomTooltip />} formatter={(v: any) => fmt(v)} />
                     <Legend wrapperStyle={{ fontSize: 11 }} />
                     <Bar dataKey="revenue" fill="#10b981" radius={[3, 3, 0, 0]} name="Revenue" />
                     <Bar dataKey="expenses" fill="#ef4444" radius={[3, 3, 0, 0]} name="Expenses" />
@@ -726,21 +730,21 @@ export default function AdminDashboard() {
                         <Cell fill="#ef4444" />
                         <Cell fill="#10b981" />
                       </Pie>
-                      <Tooltip content={<CustomTooltip />} formatter={(v: any) => formatNaira(v)} />
+                      <Tooltip content={<CustomTooltip />} formatter={(v: any) => fmt(v)} />
                     </PieChart>
                   </ResponsiveContainer>
                   <div className="flex-1 space-y-3">
                     <div>
                       <p className="text-xs text-slate-500">Total Revenue</p>
-                      <p className="text-sm font-bold text-emerald-600">{formatNaira(totalRevenue)}</p>
+                      <p className="text-sm font-bold text-emerald-600">{fmt(totalRevenue)}</p>
                     </div>
                     <div>
                       <p className="text-xs text-slate-500">Total Expenses</p>
-                      <p className="text-sm font-bold text-rose-600">{formatNaira(totalExpenses)}</p>
+                      <p className="text-sm font-bold text-rose-600">{fmt(totalExpenses)}</p>
                     </div>
                     <div className="pt-2 border-t border-slate-100">
                       <p className="text-xs text-slate-500">Net Balance</p>
-                      <p className={`text-sm font-bold ${netBalance >= 0 ? 'text-teal-600' : 'text-red-600'}`}>{formatNaira(netBalance)}</p>
+                      <p className={`text-sm font-bold ${netBalance >= 0 ? 'text-teal-600' : 'text-red-600'}`}>{fmt(netBalance)}</p>
                     </div>
                   </div>
                 </div>

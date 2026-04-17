@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { db } from '../firebase';
-import { doc, getDoc, setDoc, serverTimestamp, collection, getDocs, writeBatch, onSnapshot, addDoc, deleteDoc, query } from 'firebase/firestore';
+import { doc, getDoc, setDoc, serverTimestamp, collection, getDocs, writeBatch, onSnapshot, addDoc, deleteDoc, query, where } from 'firebase/firestore';
 import { motion } from 'motion/react';
 import toast from 'react-hot-toast';
 import {
@@ -15,6 +15,7 @@ import { haversineDistance } from '../services/geofenceService';
 import { SCHOOL_CLASSES, SUBJECTS, TERMS, GradingSystem, CustomGradeScale, SubjectDefinition, UserProfile } from '../types';
 import { useUnsavedChanges } from '../hooks/useUnsavedChanges';
 import UnsavedChangesDialog from '../components/UnsavedChangesDialog';
+import { useSchool } from '../components/SchoolContext';
 
 export interface SchoolSettings {
   schoolName: string;
@@ -547,6 +548,7 @@ const TABS: { id: TabId; label: string; icon: React.ReactNode }[] = [
 ];
 
 export default function SchoolSettingsPage() {
+  const { schoolId } = useSchool();
   const [form, setForm] = useState<SchoolSettings>(defaultSettings);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -587,19 +589,20 @@ export default function SchoolSettingsPage() {
 
   // Subscribe to subjects collection and teachers
   useEffect(() => {
-    const unsubSubjects = onSnapshot(collection(db, 'subjects'), snap => {
+    if (!schoolId) return;
+    const unsubSubjects = onSnapshot(query(collection(db, 'subjects'), where('schoolId', '==', schoolId!)), snap => {
       setSubjectDefs(snap.docs.map(d => ({ id: d.id, ...d.data() } as SubjectDefinition)));
     });
-    const unsubTeachers = onSnapshot(query(collection(db, 'users')), snap => {
+    const unsubTeachers = onSnapshot(query(collection(db, 'users'), where('schoolId', '==', schoolId!)), snap => {
       setSubjectTeachers(
         snap.docs.map(d => ({ uid: d.id, ...d.data() } as UserProfile)).filter(u => u.role === 'teacher')
       );
     });
-    const unsubClasses = onSnapshot(collection(db, 'classes'), snap => {
+    const unsubClasses = onSnapshot(query(collection(db, 'classes'), where('schoolId', '==', schoolId!)), snap => {
       if (!snap.empty) setSubjectClassNames(snap.docs.map(d => (d.data() as any).name as string));
     });
     // Load geo-fence
-    const unsubFence = onSnapshot(doc(db, 'geofences', 'main'), snap => {
+    const unsubFence = onSnapshot(doc(db, 'geofences', schoolId ?? 'main'), snap => {
       if (snap.exists()) {
         const data = { id: snap.id, ...snap.data() } as GeoFence;
         setGeofence(data);
@@ -645,7 +648,7 @@ export default function SchoolSettingsPage() {
     setSavingGeofence(true);
     const tid = toast.loading('Saving geo-fence…');
     try {
-      await setDoc(doc(db, 'geofences', 'main'), {
+      await setDoc(doc(db, 'geofences', schoolId ?? 'main'), {
         lat, lng, radius, updatedAt: serverTimestamp(),
       });
       toast.success('Geo-fence saved!', { id: tid });
@@ -680,9 +683,9 @@ export default function SchoolSettingsPage() {
     setSavingSubject(true);
     try {
       if (editingSubject?.id) {
-        await setDoc(doc(db, 'subjects', editingSubject.id), { ...subjectForm, isBuiltIn: false });
+        await setDoc(doc(db, 'subjects', editingSubject.id), { ...subjectForm, isBuiltIn: false, schoolId: schoolId ?? 'main' });
       } else {
-        await addDoc(collection(db, 'subjects'), { ...subjectForm, isBuiltIn: false });
+        await addDoc(collection(db, 'subjects'), { ...subjectForm, isBuiltIn: false, schoolId: schoolId ?? 'main' });
       }
       setSubjectForm({ name: '', code: '', description: '', assignedClasses: [], level: 'All', isBuiltIn: false });
       setEditingSubject(null);

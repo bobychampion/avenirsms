@@ -10,6 +10,7 @@ import { Student, Attendance } from '../../types';
 import { CheckCircle2, XCircle, Clock, Save, Users, ChevronDown } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import toast from 'react-hot-toast';
+import { useSchoolId } from '../../hooks/useSchoolId';
 
 type AttStatus = 'present' | 'absent' | 'late';
 
@@ -28,6 +29,7 @@ const STATUS_CONFIG: Record<AttStatus, { label: string; color: string; icon: Rea
 
 export default function TeacherMobileAttendance() {
   const { user, profile } = useAuth();
+  const schoolId = useSchoolId();
   const today = new Date().toISOString().split('T')[0];
 
   const [students, setStudents] = useState<(Student & { id: string })[]>([]);
@@ -40,8 +42,9 @@ export default function TeacherMobileAttendance() {
 
   // Load all students once
   useEffect(() => {
+    if (!schoolId) return;
     const unsub = onSnapshot(
-      query(collection(db, 'students'), where('admissionStatus', '!=', 'withdrawn')),
+      query(collection(db, 'students'), where('schoolId', '==', schoolId!), where('admissionStatus', '!=', 'withdrawn')),
       snap => {
         const all = snap.docs.map(d => ({ id: d.id, ...d.data() } as Student & { id: string }));
         setStudents(all);
@@ -51,7 +54,7 @@ export default function TeacherMobileAttendance() {
       }
     );
     return () => unsub();
-  }, []);
+  }, [schoolId]);
 
   // Filter students by selected class
   useEffect(() => {
@@ -68,8 +71,9 @@ export default function TeacherMobileAttendance() {
   // Load existing attendance for selected class + date
   useEffect(() => {
     if (!selectedClass || !date) return;
+    if (!schoolId) return;
     const unsub = onSnapshot(
-      query(collection(db, 'attendance'), where('class', '==', selectedClass), where('date', '==', date)),
+      query(collection(db, 'attendance'), where('schoolId', '==', schoolId!), where('class', '==', selectedClass), where('date', '==', date)),
       snap => {
         const map: Record<string, AttStatus> = {};
         snap.docs.forEach(d => {

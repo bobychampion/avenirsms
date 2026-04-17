@@ -3,6 +3,7 @@ import { db } from '../firebase';
 import { collection, addDoc, serverTimestamp, getDocs, query, where } from 'firebase/firestore';
 import { Student } from '../types';
 import { generateStudentId } from '../services/firestoreService';
+import { useSchoolId } from '../hooks/useSchoolId';
 import Papa from 'papaparse';
 import toast from 'react-hot-toast';
 import { motion, AnimatePresence } from 'motion/react';
@@ -59,6 +60,7 @@ const TEMPLATE_SAMPLE = [
 ];
 
 export default function BulkStudentImport() {
+  const schoolId = useSchoolId();
   const [file, setFile] = useState<File | null>(null);
   const [preview, setPreview] = useState<CSVRow[]>([]);
   const [errors, setErrors] = useState<string[]>([]);
@@ -106,7 +108,7 @@ export default function BulkStudentImport() {
       try {
         // Check duplicate by email
         if (row.email?.trim()) {
-          const dup = await getDocs(query(collection(db, 'students'), where('email', '==', row.email.trim())));
+          const dup = await getDocs(query(collection(db, 'students'), where('schoolId', '==', schoolId!), where('email', '==', row.email.trim())));
           if (!dup.empty) {
             importResults.push({ row: i + 2, name: row.studentName, status: 'duplicate', message: 'Email already exists' });
             continue;
@@ -115,10 +117,10 @@ export default function BulkStudentImport() {
 
         let newId = await generateStudentId();
         // Ensure uniqueness
-        let idCheck = await getDocs(query(collection(db, 'students'), where('studentId', '==', newId)));
+        let idCheck = await getDocs(query(collection(db, 'students'), where('schoolId', '==', schoolId!), where('studentId', '==', newId)));
         while (!idCheck.empty) {
           newId = await generateStudentId();
-          idCheck = await getDocs(query(collection(db, 'students'), where('studentId', '==', newId)));
+          idCheck = await getDocs(query(collection(db, 'students'), where('schoolId', '==', schoolId!), where('studentId', '==', newId)));
         }
 
         const student: Omit<Student, 'id'> = {
@@ -140,6 +142,7 @@ export default function BulkStudentImport() {
           stateOfOrigin: row.stateOfOrigin?.trim() || '',
           bloodGroup: row.bloodGroup?.trim() || '',
           religion: row.religion?.trim() || '',
+          schoolId: schoolId ?? 'main',
         };
 
         await addDoc(collection(db, 'students'), student);

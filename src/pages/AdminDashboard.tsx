@@ -12,6 +12,7 @@ const showBrowserNotificationRaw = (title: string, body: string) =>
   showBrowserNotification({ category: 'check_in', title, body });
 import { Application, ApplicationStatus, GeoFence, TeacherCheckIn, Timetable, DAYS_OF_WEEK } from '../types';
 import { useSchool } from '../components/SchoolContext';
+import { useSchoolId } from '../hooks/useSchoolId';
 import { formatCurrency } from '../utils/formatCurrency';
 import { useAuth } from '../components/FirebaseProvider';
 import { motion } from 'motion/react';
@@ -208,6 +209,7 @@ function computeLiveClasses(
 export default function AdminDashboard() {
   const { user } = useAuth();
   const { locale, currency } = useSchool();
+  const schoolId = useSchoolId();
   const fmt = (amount: number) => formatCurrency(amount, locale, currency);
 
   // ─── State ──────────────────────────────────────────────────────────────────
@@ -261,8 +263,9 @@ export default function AdminDashboard() {
 
   // ─── Live Applications Listener ─────────────────────────────────────────────
   useEffect(() => {
+    if (!schoolId) return;
     const unsubApps = onSnapshot(
-      query(collection(db, 'applications'), orderBy('createdAt', 'desc')),
+      query(collection(db, 'applications'), where('schoolId', '==', schoolId!), orderBy('createdAt', 'desc')),
       snap => {
         setApplications(snap.docs.map(d => ({ id: d.id, ...d.data() } as Application)));
         setLoading(false);
@@ -274,6 +277,7 @@ export default function AdminDashboard() {
 
   // ─── Live Class Board Subscriptions ─────────────────────────────────────────
   useEffect(() => {
+    if (!schoolId) return;
     const today = new Date().toISOString().split('T')[0];
 
     const unsubFence = onSnapshot(
@@ -282,7 +286,7 @@ export default function AdminDashboard() {
     );
 
     const unsubCheckins = onSnapshot(
-      query(collection(db, 'attendance_checkins'), where('date', '==', today)),
+      query(collection(db, 'attendance_checkins'), where('schoolId', '==', schoolId!), where('date', '==', today)),
       snap => {
         // Update state for all docs
         setLiveCheckins(snap.docs.map(d => ({ id: d.id, ...d.data() } as TeacherCheckIn)));
@@ -302,19 +306,19 @@ export default function AdminDashboard() {
     );
 
     const unsubTimetables = onSnapshot(
-      collection(db, 'timetables'),
+      query(collection(db, 'timetables'), where('schoolId', '==', schoolId!)),
       snap => setTimetables(snap.docs.map(d => ({ id: d.id, ...d.data() } as Timetable))),
     );
 
     const unsubTeachers = onSnapshot(
-      query(collection(db, 'users'), where('role', '==', 'teacher')),
+      query(collection(db, 'users'), where('schoolId', '==', schoolId!), where('role', '==', 'teacher')),
       snap => setTeacherList(
         snap.docs.map(d => ({ uid: d.id, displayName: (d.data().displayName || d.data().email || 'Unknown') }))
       ),
     );
 
     const unsubStudentAtt = onSnapshot(
-      query(collection(db, 'attendance'), where('date', '==', today)),
+      query(collection(db, 'attendance'), where('schoolId', '==', schoolId!), where('date', '==', today)),
       snap => {
         const byClass: Record<string, { present: number; absent: number; late: number }> = {};
         snap.docs.forEach(d => {
@@ -359,17 +363,18 @@ export default function AdminDashboard() {
 
   // ─── Stats Fetch ────────────────────────────────────────────────────────────
   const fetchStats = async () => {
+    if (!schoolId) return;
     setStatsLoading(true);
     try {
       const [studentsSnap, staffSnap, paymentsSnap, expensesSnap, attendanceSnap, gradesSnap, leavesSnap] =
         await Promise.all([
-          getDocs(collection(db, 'students')),
-          getDocs(collection(db, 'staff')),
-          getDocs(query(collection(db, 'fee_payments'), limit(1000))),
-          getDocs(query(collection(db, 'expenses'), limit(500))),
-          getDocs(query(collection(db, 'attendance'), limit(2000))),
-          getDocs(query(collection(db, 'grades'), limit(2000))),
-          getDocs(collection(db, 'leave_requests')),
+          getDocs(query(collection(db, 'students'), where('schoolId', '==', schoolId!))),
+          getDocs(query(collection(db, 'staff'), where('schoolId', '==', schoolId!))),
+          getDocs(query(collection(db, 'fee_payments'), where('schoolId', '==', schoolId!), limit(1000))),
+          getDocs(query(collection(db, 'expenses'), where('schoolId', '==', schoolId!), limit(500))),
+          getDocs(query(collection(db, 'attendance'), where('schoolId', '==', schoolId!), limit(2000))),
+          getDocs(query(collection(db, 'grades'), where('schoolId', '==', schoolId!), limit(2000))),
+          getDocs(query(collection(db, 'leave_requests'), where('schoolId', '==', schoolId!))),
         ]);
 
       setStudentCount(studentsSnap.size);

@@ -7,9 +7,11 @@ import { generatePayrollSummary } from '../services/geminiService';
 import { motion, AnimatePresence } from 'motion/react';
 import { CreditCard, Printer, Sparkles, CheckCircle, RefreshCw, X } from 'lucide-react';
 import { useSchool } from '../components/SchoolContext';
+import { useSchoolId } from '../hooks/useSchoolId';
 import { formatCurrency } from '../utils/formatCurrency';
 
 export default function PayrollManagement() {
+  const schoolId = useSchoolId();
   const { locale, currency, taxModel, taxFlatRate } = useSchool();
   const fmt = (amount: number) => formatCurrency(amount, locale, currency);
   const [staff, setStaff] = useState<Staff[]>([]);
@@ -21,14 +23,15 @@ export default function PayrollManagement() {
   const [printSlip, setPrintSlip] = useState<Payroll | null>(null);
 
   useEffect(() => {
-    const unsub1 = onSnapshot(query(collection(db, 'staff'), orderBy('staffName')), snap => {
+    if (!schoolId) return;
+    const unsub1 = onSnapshot(query(collection(db, 'staff'), where('schoolId', '==', schoolId!), orderBy('staffName')), snap => {
       setStaff(snap.docs.map(d => ({ id: d.id, ...d.data() } as Staff)));
     });
-    const unsub2 = onSnapshot(query(collection(db, 'payroll'), orderBy('generatedAt', 'desc')), snap => {
+    const unsub2 = onSnapshot(query(collection(db, 'payroll'), where('schoolId', '==', schoolId!), orderBy('generatedAt', 'desc')), snap => {
       setPayrolls(snap.docs.map(d => ({ id: d.id, ...d.data() } as Payroll)));
     });
     return () => { unsub1(); unsub2(); };
-  }, []);
+  }, [schoolId]);
 
   const monthPayrolls = payrolls.filter(p => p.month === selectedMonth);
 
@@ -36,7 +39,7 @@ export default function PayrollManagement() {
     if (staff.length === 0) { alert('No staff records found.'); return; }
     setGenerating(true);
     // remove existing for this month
-    const existingQ = query(collection(db, 'payroll'), where('month', '==', selectedMonth));
+    const existingQ = query(collection(db, 'payroll'), where('schoolId', '==', schoolId!), where('month', '==', selectedMonth));
     const existing = await getDocs(existingQ);
     await Promise.all(existing.docs.map(d => deleteDoc(d.ref)));
     // create new
@@ -54,6 +57,7 @@ export default function PayrollManagement() {
         netPay: computed.netPay,
         status: 'draft',
         generatedAt: serverTimestamp(),
+        schoolId: schoolId ?? undefined,
       };
       return addDoc(collection(db, 'payroll'), record);
     }));

@@ -22,9 +22,11 @@ export interface Application {
 export interface UserProfile {
   uid: string;
   email: string;
-  role: 'admin' | 'applicant' | 'teacher' | 'parent' | 'School_admin' | 'accountant';
+  role: 'admin' | 'applicant' | 'teacher' | 'parent' | 'School_admin' | 'accountant' | 'super_admin';
   displayName: string;
   disabled?: boolean;
+  /** School this user belongs to. Undefined only for super_admin accounts. */
+  schoolId?: string;
   /** Firestore Student document IDs linked to this parent account */
   linkedStudentIds?: string[];
   /**
@@ -33,6 +35,24 @@ export interface UserProfile {
    * their children identified by name without an extra Firestore read.
    */
   linkedChildren?: { studentId: string; studentName: string; currentClass: string }[];
+}
+
+/** Platform-level school record (schools collection) */
+export interface School {
+  id?: string;
+  name: string;
+  adminEmail: string;
+  status: 'active' | 'suspended' | 'trial' | 'demo';
+  subscriptionPlan: 'free' | 'starter' | 'pro' | 'enterprise';
+  subscriptionExpiresAt?: any;
+  maxStudents: number;
+  maxStaff: number;
+  createdAt: any;
+  updatedAt?: any;
+  createdBy: string;
+  country: string;
+  timezone: string;
+  notes?: string;
 }
 
 export interface SchoolClass {

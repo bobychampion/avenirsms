@@ -1,9 +1,10 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, lazy, Suspense } from 'react';
 import { createBrowserRouter, RouterProvider, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { FirebaseProvider, useAuth } from './components/FirebaseProvider';
 import ErrorBoundary from './components/ErrorBoundary';
 import { AppToaster } from './components/Toast';
 import { SchoolProvider, useSchool } from './components/SchoolContext';
+import { SuperAdminProvider, useSuperAdmin } from './components/SuperAdminContext';
 import LandingPage from './pages/LandingPage';
 import Home from './pages/Home';
 import Apply from './pages/Apply';
@@ -42,30 +43,63 @@ import TeacherMobileAttendance from './pages/mobile/TeacherMobileAttendance';
 import ParentMobileHome from './pages/mobile/ParentMobileHome';
 import { Layout } from './components/Layout';
 
+// Super Admin pages — lazy-loaded (only needed by super_admin users)
+const SuperAdminDashboard = lazy(() => import('./pages/super-admin/SuperAdminDashboard'));
+const SchoolList = lazy(() => import('./pages/super-admin/SchoolList'));
+const SchoolOnboarding = lazy(() => import('./pages/super-admin/SchoolOnboarding'));
+const SchoolDetail = lazy(() => import('./pages/super-admin/SchoolDetail'));
+const DataMigration = lazy(() => import('./pages/DataMigration'));
+
 // Roles that have access to admin-level finance/payroll/analytics routes
 const FINANCE_ROLES = ['admin', 'School_admin', 'accountant'] as const;
+
+/** Shared loading spinner */
+const PageLoader = () => (
+  <div className="min-h-screen flex items-center justify-center bg-slate-50">
+    <div className="flex flex-col items-center gap-3">
+      <div className="w-10 h-10 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin" />
+      <p className="text-slate-600 text-sm">Loading...</p>
+    </div>
+  </div>
+);
 
 function ProtectedRoute({
   children,
   role,
   allowFinanceRoles,
+  superAdminOnly,
 }: {
   children: React.ReactNode;
-  role?: 'admin' | 'applicant' | 'teacher' | 'parent';
+  role?: 'admin' | 'applicant' | 'teacher' | 'parent' | 'super_admin';
   /** When true, accountant + admin + School_admin may access this route */
   allowFinanceRoles?: boolean;
+  /** When true, only super_admin can access this route */
+  superAdminOnly?: boolean;
 }) {
-  const { user, profile, loading, isAdmin } = useAuth();
+  const { user, profile, loading, isAdmin, isSuperAdmin } = useAuth();
+  const { activeSchoolId } = useSuperAdmin();
 
-  if (loading) return (
-    <div className="min-h-screen flex items-center justify-center bg-slate-50">
-      <div className="flex flex-col items-center gap-3">
-        <div className="w-10 h-10 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin" />
-        <p className="text-slate-600 text-sm">Loading...</p>
-      </div>
-    </div>
-  );
+  if (loading) return <PageLoader />;
   if (!user) return <Navigate to="/" />;
+
+  // Super-admin-only routes (migration tool, platform dashboard, school management)
+  if (superAdminOnly) {
+    if (!isSuperAdmin) return <Navigate to="/" />;
+    return <>{children}</>;
+  }
+
+  // Super admin trying to access school routes:
+  // - If they've entered a school context → allow through
+  // - Otherwise redirect to their platform dashboard
+  if (isSuperAdmin) {
+    if (role === 'admin' || allowFinanceRoles) {
+      if (!activeSchoolId) return <Navigate to="/super-admin" replace />;
+      return <>{children}</>;
+    }
+    // super_admin-specific route
+    if (role === 'super_admin') return <>{children}</>;
+    return <Navigate to="/super-admin" replace />;
+  }
 
   // Finance routes: allow admin, School_admin, and accountant
   if (allowFinanceRoles) {
@@ -93,7 +127,7 @@ function ProtectedRoute({
 
 /**
  * Keeps the browser tab title and favicon in sync with the school's
- * branding settings stored in Firestore (school_settings/main).
+ * branding settings stored in Firestore (school_settings/{schoolId}).
  */
 function ScrollToTop() {
   const { pathname } = useLocation();
@@ -132,61 +166,70 @@ function AppContent() {
     <>
       <ScrollToTop />
       <SyncDocumentTitle />
-    <Routes>
-      {/* ── Standalone promotional landing page (no Layout wrapper) ── */}
-      <Route path="/" element={<LandingPage />} />
+      <Suspense fallback={<PageLoader />}>
+        <Routes>
+          {/* ── Standalone promotional landing page (no Layout wrapper) ── */}
+          <Route path="/" element={<LandingPage />} />
 
-      {/* ── All app routes wrapped in Layout ── */}
-      <Route path="/home" element={<Layout><Home /></Layout>} />
-      <Route path="/login" element={<Layout><Login /></Layout>} />
+          {/* ── All app routes wrapped in Layout ── */}
+          <Route path="/home" element={<Layout><Home /></Layout>} />
+          <Route path="/login" element={<Layout><Login /></Layout>} />
 
-      {/* Applicant */}
-      <Route path="/apply" element={<Layout><ProtectedRoute role="applicant"><Apply /></ProtectedRoute></Layout>} />
+          {/* Applicant */}
+          <Route path="/apply" element={<Layout><ProtectedRoute role="applicant"><Apply /></ProtectedRoute></Layout>} />
 
-      {/* Admin routes */}
-      <Route path="/admin" element={<Layout><ProtectedRoute role="admin"><AdminDashboard /></ProtectedRoute></Layout>} />
-      <Route path="/admin/admissions" element={<Layout><ProtectedRoute role="admin"><AdmissionsManagement /></ProtectedRoute></Layout>} />
-      <Route path="/admin/students" element={<Layout><ProtectedRoute role="admin"><StudentList /></ProtectedRoute></Layout>} />
-      <Route path="/admin/students/:id" element={<Layout><ProtectedRoute role="admin"><StudentProfile /></ProtectedRoute></Layout>} />
-      <Route path="/admin/gradebook" element={<Layout><ProtectedRoute role="admin"><Gradebook /></ProtectedRoute></Layout>} />
-      <Route path="/admin/report-cards" element={<Layout><ProtectedRoute role="admin"><ReportCards /></ProtectedRoute></Layout>} />
-      <Route path="/admin/users" element={<Layout><ProtectedRoute role="admin"><UserManagement /></ProtectedRoute></Layout>} />
-      <Route path="/admin/exams" element={<Layout><ProtectedRoute role="admin"><ExamManagement /></ProtectedRoute></Layout>} />
-      <Route path="/admin/timetable" element={<Layout><ProtectedRoute role="admin"><TimetableManagement /></ProtectedRoute></Layout>} />
-      <Route path="/admin/application/:id" element={<Layout><ProtectedRoute role="admin"><ApplicationDetail /></ProtectedRoute></Layout>} />
-      <Route path="/admin/finance" element={<Layout><ProtectedRoute allowFinanceRoles><FinancialManagement /></ProtectedRoute></Layout>} />
-      <Route path="/admin/classes" element={<Layout><ProtectedRoute role="admin"><ClassManagement /></ProtectedRoute></Layout>} />
-      <Route path="/admin/attendance" element={<Layout><ProtectedRoute role="admin"><AttendancePage /></ProtectedRoute></Layout>} />
-      <Route path="/admin/staff" element={<Layout><ProtectedRoute role="admin"><StaffManagement /></ProtectedRoute></Layout>} />
-      <Route path="/admin/payroll" element={<Layout><ProtectedRoute allowFinanceRoles><PayrollManagement /></ProtectedRoute></Layout>} />
-      <Route path="/admin/analytics" element={<Layout><ProtectedRoute allowFinanceRoles><AnalyticsDashboard /></ProtectedRoute></Layout>} />
-      <Route path="/admin/curriculum" element={<Layout><ProtectedRoute role="admin"><CurriculumMapping /></ProtectedRoute></Layout>} />
-      <Route path="/admin/promotion" element={<Layout><ProtectedRoute role="admin"><StudentPromotion /></ProtectedRoute></Layout>} />
-      <Route path="/admin/pins" element={<Layout><ProtectedRoute role="admin"><PinManagement /></ProtectedRoute></Layout>} />
-      <Route path="/admin/settings" element={<Layout><ProtectedRoute role="admin"><SchoolSettingsPage /></ProtectedRoute></Layout>} />
-      <Route path="/admin/notifications" element={<Layout><ProtectedRoute role="admin"><NotificationsManagement /></ProtectedRoute></Layout>} />
-      <Route path="/admin/bulk-import" element={<Layout><ProtectedRoute role="admin"><BulkStudentImport /></ProtectedRoute></Layout>} />
-      <Route path="/admin/whatsapp" element={<Layout><ProtectedRoute role="admin"><WhatsAppNotifications /></ProtectedRoute></Layout>} />
-      <Route path="/admin/seed" element={<Layout><ProtectedRoute role="admin"><SeedData /></ProtectedRoute></Layout>} />
+          {/* ── Super Admin platform routes ── */}
+          <Route path="/super-admin" element={<Layout><ProtectedRoute superAdminOnly><SuperAdminDashboard /></ProtectedRoute></Layout>} />
+          <Route path="/super-admin/schools" element={<Layout><ProtectedRoute superAdminOnly><SchoolList /></ProtectedRoute></Layout>} />
+          <Route path="/super-admin/schools/new" element={<Layout><ProtectedRoute superAdminOnly><SchoolOnboarding /></ProtectedRoute></Layout>} />
+          <Route path="/super-admin/schools/:schoolId" element={<Layout><ProtectedRoute superAdminOnly><SchoolDetail /></ProtectedRoute></Layout>} />
 
-      {/* Onboarding Tutorial — accessible to admin, teacher, parent */}
-      <Route path="/onboarding" element={<Layout><ProtectedRoute><OnboardingTutorial /></ProtectedRoute></Layout>} />
+          {/* Admin routes */}
+          <Route path="/admin" element={<Layout><ProtectedRoute role="admin"><AdminDashboard /></ProtectedRoute></Layout>} />
+          <Route path="/admin/admissions" element={<Layout><ProtectedRoute role="admin"><AdmissionsManagement /></ProtectedRoute></Layout>} />
+          <Route path="/admin/students" element={<Layout><ProtectedRoute role="admin"><StudentList /></ProtectedRoute></Layout>} />
+          <Route path="/admin/students/:id" element={<Layout><ProtectedRoute role="admin"><StudentProfile /></ProtectedRoute></Layout>} />
+          <Route path="/admin/gradebook" element={<Layout><ProtectedRoute role="admin"><Gradebook /></ProtectedRoute></Layout>} />
+          <Route path="/admin/report-cards" element={<Layout><ProtectedRoute role="admin"><ReportCards /></ProtectedRoute></Layout>} />
+          <Route path="/admin/users" element={<Layout><ProtectedRoute role="admin"><UserManagement /></ProtectedRoute></Layout>} />
+          <Route path="/admin/exams" element={<Layout><ProtectedRoute role="admin"><ExamManagement /></ProtectedRoute></Layout>} />
+          <Route path="/admin/timetable" element={<Layout><ProtectedRoute role="admin"><TimetableManagement /></ProtectedRoute></Layout>} />
+          <Route path="/admin/application/:id" element={<Layout><ProtectedRoute role="admin"><ApplicationDetail /></ProtectedRoute></Layout>} />
+          <Route path="/admin/finance" element={<Layout><ProtectedRoute allowFinanceRoles><FinancialManagement /></ProtectedRoute></Layout>} />
+          <Route path="/admin/classes" element={<Layout><ProtectedRoute role="admin"><ClassManagement /></ProtectedRoute></Layout>} />
+          <Route path="/admin/attendance" element={<Layout><ProtectedRoute role="admin"><AttendancePage /></ProtectedRoute></Layout>} />
+          <Route path="/admin/staff" element={<Layout><ProtectedRoute role="admin"><StaffManagement /></ProtectedRoute></Layout>} />
+          <Route path="/admin/payroll" element={<Layout><ProtectedRoute allowFinanceRoles><PayrollManagement /></ProtectedRoute></Layout>} />
+          <Route path="/admin/analytics" element={<Layout><ProtectedRoute allowFinanceRoles><AnalyticsDashboard /></ProtectedRoute></Layout>} />
+          <Route path="/admin/curriculum" element={<Layout><ProtectedRoute role="admin"><CurriculumMapping /></ProtectedRoute></Layout>} />
+          <Route path="/admin/promotion" element={<Layout><ProtectedRoute role="admin"><StudentPromotion /></ProtectedRoute></Layout>} />
+          <Route path="/admin/pins" element={<Layout><ProtectedRoute role="admin"><PinManagement /></ProtectedRoute></Layout>} />
+          <Route path="/admin/settings" element={<Layout><ProtectedRoute role="admin"><SchoolSettingsPage /></ProtectedRoute></Layout>} />
+          <Route path="/admin/notifications" element={<Layout><ProtectedRoute role="admin"><NotificationsManagement /></ProtectedRoute></Layout>} />
+          <Route path="/admin/bulk-import" element={<Layout><ProtectedRoute role="admin"><BulkStudentImport /></ProtectedRoute></Layout>} />
+          <Route path="/admin/whatsapp" element={<Layout><ProtectedRoute role="admin"><WhatsAppNotifications /></ProtectedRoute></Layout>} />
+          <Route path="/admin/seed" element={<Layout><ProtectedRoute role="admin"><SeedData /></ProtectedRoute></Layout>} />
+          <Route path="/admin/migrate" element={<Layout><ProtectedRoute superAdminOnly><DataMigration /></ProtectedRoute></Layout>} />
 
-      {/* Portals */}
-      <Route path="/teacher" element={<Layout><ProtectedRoute role="teacher"><TeacherPortal /></ProtectedRoute></Layout>} />
-      <Route path="/parent" element={<Layout><ProtectedRoute role="parent"><ParentPortal /></ProtectedRoute></Layout>} />
+          {/* Onboarding Tutorial — accessible to admin, teacher, parent */}
+          <Route path="/onboarding" element={<Layout><ProtectedRoute><OnboardingTutorial /></ProtectedRoute></Layout>} />
 
-      {/* Calendar (all roles) */}
-      <Route path="/calendar" element={<Layout><ProtectedRoute><SchoolCalendar /></ProtectedRoute></Layout>} />
+          {/* Portals */}
+          <Route path="/teacher" element={<Layout><ProtectedRoute role="teacher"><TeacherPortal /></ProtectedRoute></Layout>} />
+          <Route path="/parent" element={<Layout><ProtectedRoute role="parent"><ParentPortal /></ProtectedRoute></Layout>} />
 
-      {/* CBT Exam Engine — standalone full-screen (no Layout) */}
-      <Route path="/cbt/:sessionId" element={<ProtectedRoute><CBTExamEngine /></ProtectedRoute>} />
+          {/* Calendar (all roles) */}
+          <Route path="/calendar" element={<Layout><ProtectedRoute><SchoolCalendar /></ProtectedRoute></Layout>} />
 
-      {/* ── Mobile PWA Quick-Action Pages (no Layout — MobileShell embedded) ── */}
-      <Route path="/mobile/admin" element={<ProtectedRoute role="admin"><AdminMobileDashboard /></ProtectedRoute>} />
-      <Route path="/mobile/teacher" element={<ProtectedRoute role="teacher"><TeacherMobileAttendance /></ProtectedRoute>} />
-      <Route path="/mobile/parent" element={<ProtectedRoute role="parent"><ParentMobileHome /></ProtectedRoute>} />
-    </Routes>
+          {/* CBT Exam Engine — standalone full-screen (no Layout) */}
+          <Route path="/cbt/:sessionId" element={<ProtectedRoute><CBTExamEngine /></ProtectedRoute>} />
+
+          {/* ── Mobile PWA Quick-Action Pages (no Layout — MobileShell embedded) ── */}
+          <Route path="/mobile/admin" element={<ProtectedRoute role="admin"><AdminMobileDashboard /></ProtectedRoute>} />
+          <Route path="/mobile/teacher" element={<ProtectedRoute role="teacher"><TeacherMobileAttendance /></ProtectedRoute>} />
+          <Route path="/mobile/parent" element={<ProtectedRoute role="parent"><ParentMobileHome /></ProtectedRoute>} />
+        </Routes>
+      </Suspense>
     </>
   );
 }
@@ -195,10 +238,12 @@ function AppShell() {
   return (
     <ErrorBoundary>
       <FirebaseProvider>
-        <SchoolProvider>
-          <AppToaster />
-          <AppContent />
-        </SchoolProvider>
+        <SuperAdminProvider>
+          <SchoolProvider>
+            <AppToaster />
+            <AppContent />
+          </SchoolProvider>
+        </SuperAdminProvider>
       </FirebaseProvider>
     </ErrorBoundary>
   );

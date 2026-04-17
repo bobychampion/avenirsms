@@ -1,12 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import { db, handleFirestoreError, OperationType } from '../firebase';
-import { collection, query, onSnapshot, doc, setDoc, serverTimestamp } from 'firebase/firestore';
+import { collection, query, onSnapshot, doc, setDoc, serverTimestamp, where } from 'firebase/firestore';
 import { Timetable, TimetablePeriod, DAYS_OF_WEEK, UserProfile } from '../types';
 import { AnimatePresence, motion } from 'motion/react';
 import { Clock, Plus, X, Save, AlertTriangle, CheckCircle } from 'lucide-react';
 import { useClassSelectOptions, useSchool } from '../components/SchoolContext';
+import { useSchoolId } from '../hooks/useSchoolId';
 
 export default function TimetableManagement() {
+  const schoolId = useSchoolId();
   const classSelectOptions = useClassSelectOptions();
   const { subjects, periodTimes, currentSession, getSubjectsForClass } = useSchool();
 
@@ -58,14 +60,15 @@ export default function TimetableManagement() {
   }, [periodForm.teacher, periodForm.startTime, customStart, useCustomStart, addTarget, timetable]);
 
   useEffect(() => {
-    const unsub = onSnapshot(collection(db, 'timetables'), snap => {
+    if (!schoolId) return;
+    const unsub = onSnapshot(query(collection(db, 'timetables'), where('schoolId', '==', schoolId!)), snap => {
       setTimetables(snap.docs.map(d => ({ id: d.id, ...d.data() } as Timetable)));
     });
     const unsubT = onSnapshot(query(collection(db, 'users')), snap => {
       setTeachers(snap.docs.map(d => ({ uid: d.id, ...d.data() } as UserProfile)).filter(u => u.role === 'teacher'));
     });
     return () => { unsub(); unsubT(); };
-  }, []);
+  }, [schoolId]);
 
   // Load timetable for selected class+term+session
   useEffect(() => {
@@ -145,7 +148,7 @@ export default function TimetableManagement() {
     if (!timetable) return;
     setSaving(true);
     const docId = `${selectedClass}_${selectedTerm}_${currentSession}`.replace(/[\s/]/g, '_');
-    await setDoc(doc(db, 'timetables', docId), { ...timetable, updatedAt: serverTimestamp() })
+    await setDoc(doc(db, 'timetables', docId), { ...timetable, updatedAt: serverTimestamp(), schoolId: schoolId ?? undefined })
       .catch(e => handleFirestoreError(e, OperationType.WRITE, 'timetables'));
     setSaving(false);
     setSaved(true);

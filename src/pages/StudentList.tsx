@@ -1,14 +1,16 @@
 import React, { useState, useEffect } from 'react';
 import { useSearchParams, Link } from 'react-router-dom';
 import { db, handleFirestoreError, OperationType } from '../firebase';
-import { collection, query, onSnapshot, orderBy } from 'firebase/firestore';
+import { collection, query, onSnapshot, orderBy, where } from 'firebase/firestore';
 import { Student, SCHOOL_CLASSES, SchoolClass } from '../types';
+import { useSchoolId } from '../hooks/useSchoolId';
 import { motion } from 'motion/react';
 import { Search, Filter, User, Phone, Mail, GraduationCap, Calendar, Hash, ArrowRight, ArrowLeft, ChevronLeft, ChevronRight } from 'lucide-react';
 
 const PAGE_SIZE = 20;
 
 export default function StudentList() {
+  const schoolId = useSchoolId();
   const [searchParams, setSearchParams] = useSearchParams();
   const initialClass = searchParams.get('class') || 'all';
   
@@ -20,14 +22,15 @@ export default function StudentList() {
   const [currentPage, setCurrentPage] = useState(0);
 
   useEffect(() => {
-    const q = query(collection(db, 'students'), orderBy('enrolledAt', 'desc'));
+    if (!schoolId) return;
+    const q = query(collection(db, 'students'), where('schoolId', '==', schoolId!), orderBy('enrolledAt', 'desc'));
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Student));
       setStudents(data);
       setLoading(false);
     }, (error) => handleFirestoreError(error, OperationType.LIST, 'students'));
 
-    const classesQuery = query(collection(db, 'classes'));
+    const classesQuery = query(collection(db, 'classes'), where('schoolId', '==', schoolId!));
     const unsubscribeClasses = onSnapshot(classesQuery, (snapshot) => {
       setClasses(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as SchoolClass)));
     });
@@ -36,7 +39,7 @@ export default function StudentList() {
       unsubscribe();
       unsubscribeClasses();
     };
-  }, []);
+  }, [schoolId]);
 
   useEffect(() => {
     if (classFilter === 'all') {

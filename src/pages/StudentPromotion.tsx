@@ -10,6 +10,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import toast from 'react-hot-toast';
 import { ConfirmDialog } from '../components/Toast';
 import { useSchool, useClassSelectOptions } from '../components/SchoolContext';
+import { useSchoolId } from '../hooks/useSchoolId';
 import {
   GraduationCap, ArrowRight, RotateCcw, ChevronDown,
   Users, CheckCircle2, XCircle, AlertTriangle, History
@@ -51,6 +52,7 @@ function getNextSession(session: string): string {
 }
 
 export default function StudentPromotion() {
+  const schoolId = useSchoolId();
   const { classNames } = useSchool();
   const classSelectOptions = useClassSelectOptions();
   const [selectedClass, setSelectedClass] = useState('');
@@ -69,10 +71,12 @@ export default function StudentPromotion() {
 
   // Load students for selected class
   useEffect(() => {
+    if (!schoolId) return;
     setLoading(true);
     setDecisions({});
     const q = query(
       collection(db, 'students'),
+      where('schoolId', '==', schoolId!),
       where('currentClass', '==', selectedClass),
       where('admissionStatus', '!=', 'graduated')
     );
@@ -86,19 +90,20 @@ export default function StudentPromotion() {
       setLoading(false);
     });
     return () => unsub();
-  }, [selectedClass]);
+  }, [selectedClass, schoolId]);
 
   // Load promotion history
   useEffect(() => {
+    if (!schoolId) return;
     if (activeTab !== 'history') return;
     setHistoryLoading(true);
-    const q = query(collection(db, 'promotions'), orderBy('createdAt', 'desc'));
+    const q = query(collection(db, 'promotions'), where('schoolId', '==', schoolId!), orderBy('createdAt', 'desc'));
     const unsub = onSnapshot(q, snap => {
       setPromotionHistory(snap.docs.map(d => ({ id: d.id, ...d.data() } as PromotionRecord)));
       setHistoryLoading(false);
     });
     return () => unsub();
-  }, [activeTab]);
+  }, [activeTab, schoolId]);
 
   const setAllDecisions = (decision: Decision) => {
     const updated: Record<string, Decision> = {};
@@ -157,6 +162,7 @@ export default function StudentPromotion() {
           fromSession: CURRENT_SESSION,
           toSession: nextSession,
           createdAt: serverTimestamp(),
+          schoolId: schoolId ?? undefined,
         });
       }
 

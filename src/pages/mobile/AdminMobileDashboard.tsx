@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { cn } from '../../lib/utils';
+import { useSchoolId } from '../../hooks/useSchoolId';
 
 interface Stats {
   pendingApplications: number;
@@ -33,6 +34,7 @@ const statusIcon = (s: string) =>
 
 export default function AdminMobileDashboard() {
   const { profile } = useAuth();
+  const schoolId = useSchoolId();
   const today = new Date().toLocaleDateString('en-NG', { weekday: 'long', month: 'short', day: 'numeric' });
 
   const [stats, setStats] = useState<Stats>({ pendingApplications: 0, overdueFeesTotal: 0, overdueCount: 0 });
@@ -41,11 +43,12 @@ export default function AdminMobileDashboard() {
   const [notifications, setNotifications] = useState<(Notification & { id: string })[]>([]);
 
   useEffect(() => {
+    if (!schoolId) return;
     const unsubs: (() => void)[] = [];
 
     // Pending applications
     unsubs.push(onSnapshot(
-      query(collection(db, 'applications'), where('status', '==', 'pending'), orderBy('createdAt', 'desc'), limit(10)),
+      query(collection(db, 'applications'), where('schoolId', '==', schoolId!), where('status', '==', 'pending'), orderBy('createdAt', 'desc'), limit(10)),
       snap => {
         const docs = snap.docs.map(d => ({ id: d.id, ...d.data() } as Application & { id: string }));
         setApplications(docs);
@@ -55,7 +58,7 @@ export default function AdminMobileDashboard() {
 
     // Overdue invoices
     unsubs.push(onSnapshot(
-      query(collection(db, 'invoices'), where('status', '==', 'overdue'), orderBy('dueDate', 'asc'), limit(5)),
+      query(collection(db, 'invoices'), where('schoolId', '==', schoolId!), where('status', '==', 'overdue'), orderBy('dueDate', 'asc'), limit(5)),
       snap => {
         const docs = snap.docs.map(d => ({ id: d.id, ...d.data() } as Invoice & { id: string }));
         setOverdueInvoices(docs);
@@ -66,14 +69,14 @@ export default function AdminMobileDashboard() {
 
     // Recent notifications
     unsubs.push(onSnapshot(
-      query(collection(db, 'notifications'), orderBy('createdAt', 'desc'), limit(5)),
+      query(collection(db, 'notifications'), where('schoolId', '==', schoolId!), orderBy('createdAt', 'desc'), limit(5)),
       snap => {
         setNotifications(snap.docs.map(d => ({ id: d.id, ...d.data() } as Notification & { id: string })));
       }
     ));
 
     return () => unsubs.forEach(u => u());
-  }, []);
+  }, [schoolId]);
 
   const greeting = () => {
     const h = new Date().getHours();

@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import { useClassSelectOptions } from '../components/SchoolContext';
 import { useAuth } from '../components/FirebaseProvider';
+import { useSchoolId } from '../hooks/useSchoolId';
 import { generateQuestionBatch } from '../services/geminiService';
 import toast from 'react-hot-toast';
 
@@ -759,6 +760,7 @@ function ResultsTab() {
 
 // ─── Main ExamManagement ──────────────────────────────────────────────────────
 export default function ExamManagement() {
+  const schoolId = useSchoolId();
   const classSelectOptions = useClassSelectOptions();
   const [activeTab, setActiveTab] = useState<TabId>('exams');
   const [exams, setExams] = useState<Exam[]>([]);
@@ -775,25 +777,26 @@ export default function ExamManagement() {
   const [autoAssigning, setAutoAssigning] = useState(false);
 
   useEffect(() => {
-    const unsub1 = onSnapshot(query(collection(db, 'exams')), snap => {
+    if (!schoolId) return;
+    const unsub1 = onSnapshot(query(collection(db, 'exams'), where('schoolId', '==', schoolId!)), snap => {
       setExams(snap.docs.map(d => ({ id: d.id, ...d.data() } as Exam)));
       setLoading(false);
     });
-    const unsub2 = onSnapshot(collection(db, 'exam_seating'), snap => {
+    const unsub2 = onSnapshot(query(collection(db, 'exam_seating'), where('schoolId', '==', schoolId!)), snap => {
       setSeatings(snap.docs.map(d => ({ id: d.id, ...d.data() } as ExamSeating)));
     });
-    const unsub3 = onSnapshot(collection(db, 'students'), snap => {
+    const unsub3 = onSnapshot(query(collection(db, 'students'), where('schoolId', '==', schoolId!)), snap => {
       setStudents(snap.docs.map(d => ({ id: d.id, ...d.data() } as Student)));
     });
     return () => { unsub1(); unsub2(); unsub3(); };
-  }, []);
+  }, [schoolId]);
 
   const saveExam = async () => {
     if (!examForm.name || !examForm.date) return;
     if ((examForm as any).id) {
       await updateDoc(doc(db, 'exams', (examForm as any).id), { ...examForm }).catch(console.error);
     } else {
-      await addDoc(collection(db, 'exams'), { ...examForm, createdAt: serverTimestamp() }).catch(console.error);
+      await addDoc(collection(db, 'exams'), { ...examForm, createdAt: serverTimestamp(), schoolId: schoolId ?? undefined }).catch(console.error);
     }
     setIsExamModal(false);
     setExamForm({ name: '', subject: SUBJECTS[0], class: '', date: '', startTime: '09:00', endTime: '11:00', hall: 'Hall A' });
@@ -807,7 +810,7 @@ export default function ExamManagement() {
   const autoAssignSeats = async (exam: Exam) => {
     setAutoAssigning(true);
     const classStudents = students.filter(s => s.currentClass === exam.class);
-    const existingQ = query(collection(db, 'exam_seating'), where('examName', '==', exam.name));
+    const existingQ = query(collection(db, 'exam_seating'), where('schoolId', '==', schoolId!), where('examName', '==', exam.name));
     const existing = await getDocs(existingQ);
     await Promise.all(existing.docs.map(d => deleteDoc(d.ref)));
     await Promise.all(classStudents.map((s, i) =>
@@ -819,6 +822,7 @@ export default function ExamManagement() {
         date: exam.date,
         time: exam.startTime,
         createdAt: serverTimestamp(),
+        schoolId: schoolId ?? undefined,
       })
     ));
     setAutoAssigning(false);

@@ -7,6 +7,7 @@ import {
 import { motion, AnimatePresence } from 'motion/react';
 import toast from 'react-hot-toast';
 import { ConfirmDialog } from '../components/Toast';
+import { useSchoolId } from '../hooks/useSchoolId';
 import { Key, Trash2, Plus, Lock, Unlock, Shield, Eye, EyeOff, CheckCircle2, XCircle } from 'lucide-react';
 
 interface Pin {
@@ -140,6 +141,7 @@ export function PinGate({
 
 // ── Admin PIN Management page ─────────────────────────────────────────────────
 export default function PinManagement() {
+  const schoolId = useSchoolId();
   const [pins, setPins] = useState<Pin[]>([]);
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
@@ -149,12 +151,13 @@ export default function PinManagement() {
   const [showCodes, setShowCodes] = useState(false);
 
   useEffect(() => {
-    const unsub = onSnapshot(query(collection(db, 'pins')), snap => {
+    if (!schoolId) return;
+    const unsub = onSnapshot(query(collection(db, 'pins'), where('schoolId', '==', schoolId!)), snap => {
       setPins(snap.docs.map(d => ({ id: d.id, ...d.data() } as Pin)));
       setLoading(false);
     });
     return () => unsub();
-  }, []);
+  }, [schoolId]);
 
   const validPins = pins.filter(p => !p.isUsed);
   const usedPins = pins.filter(p => p.isUsed);
@@ -183,6 +186,7 @@ export default function PinManagement() {
           maxUses: 6,
           isUsed: false,
           createdAt: serverTimestamp(),
+          schoolId: schoolId ?? undefined,
         }));
         created++;
       }

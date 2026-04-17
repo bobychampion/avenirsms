@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { db, auth, handleFirestoreError, OperationType } from '../firebase';
-import { collection, query, onSnapshot, doc, updateDoc, orderBy, serverTimestamp, setDoc } from 'firebase/firestore';
+import { collection, query, onSnapshot, doc, updateDoc, orderBy, serverTimestamp, setDoc, where } from 'firebase/firestore';
+import { useSchoolId } from '../hooks/useSchoolId';
 import { createUserWithEmailAndPassword, updateProfile } from 'firebase/auth';
 import { UserProfile } from '../types';
 import { motion, AnimatePresence } from 'motion/react';
@@ -27,6 +28,7 @@ interface RoleChangeConfirm {
 }
 
 export default function UserManagement() {
+  const schoolId = useSchoolId();
   const [users, setUsers] = useState<UserProfile[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
@@ -39,14 +41,15 @@ export default function UserManagement() {
   const [inviteForm, setInviteForm] = useState({ email: '', displayName: '', role: 'teacher', password: '', confirmPassword: '' });
 
   useEffect(() => {
-    const q = query(collection(db, 'users'), orderBy('email'));
+    if (!schoolId) return;
+    const q = query(collection(db, 'users'), where('schoolId', '==', schoolId!), orderBy('email'));
     const unsub = onSnapshot(q, snap => {
       // FIX: use doc.id for uid
       setUsers(snap.docs.map(d => ({ uid: d.id, ...d.data() } as UserProfile)));
       setLoading(false);
     }, err => handleFirestoreError(err, OperationType.LIST, 'users'));
     return () => unsub();
-  }, []);
+  }, [schoolId]);
 
   const handleRoleChange = (u: UserProfile, newRole: string) => {
     if (newRole === u.role) return;
@@ -91,6 +94,7 @@ export default function UserManagement() {
         displayName: inviteForm.displayName,
         role: inviteForm.role,
         disabled: false,
+        schoolId: schoolId ?? 'main',
         createdAt: serverTimestamp(),
       });
       toast.success(`${inviteForm.role.charAt(0).toUpperCase() + inviteForm.role.slice(1)} account created for ${inviteForm.displayName}!`, { id: tid });

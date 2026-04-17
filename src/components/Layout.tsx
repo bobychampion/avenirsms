@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from './FirebaseProvider';
 import { useSchool } from './SchoolContext';
+import { useSuperAdmin } from './SuperAdminContext';
 import { useMobile } from '../hooks/useMobile';
 import { MobileShell } from './MobileShell';
 import {
@@ -9,7 +10,7 @@ import {
   ClipboardList, Calendar, DollarSign, FileText, Settings, BarChart3,
   Clock, Award, Briefcase, CreditCard, Map, Menu, X, Bell,
   ArrowUpRight, Key, Sparkles, MessageSquare, Star, CheckSquare, FileSpreadsheet, Database,
-  HelpCircle
+  HelpCircle, Building2, ShieldCheck, LogIn
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 
@@ -40,6 +41,22 @@ const teacherNavGroups = [
     label: 'AI Tools',
     items: [
       { to: '/teacher?tab=ai_tools', label: 'AI Teaching Tools', icon: Sparkles, exact: false },
+    ],
+  },
+];
+
+const superAdminNavGroups = [
+  {
+    label: 'Platform',
+    items: [
+      { to: '/super-admin', label: 'Platform Dashboard', icon: LayoutDashboard, exact: true },
+      { to: '/super-admin/schools', label: 'Schools', icon: Building2 },
+    ],
+  },
+  {
+    label: 'System',
+    items: [
+      { to: '/admin/migrate', label: 'Data Migration', icon: Database },
     ],
   },
 ];
@@ -313,8 +330,9 @@ function TeacherSidebar({ open, onClose, displayName, schoolName, logoUrl }: { o
 }
 
 export function Layout({ children }: { children: React.ReactNode }) {
-  const { user, profile, logout, login, isAdmin } = useAuth();
+  const { user, profile, logout, login, isAdmin, isSuperAdmin } = useAuth();
   const { schoolName, logoUrl } = useSchool();
+  const { activeSchoolId, activeSchoolName, exitSchool } = useSuperAdmin();
   const navigate = useNavigate();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const isMobile = useMobile();
@@ -332,6 +350,59 @@ export function Layout({ children }: { children: React.ReactNode }) {
   if (isMobile && (isAdmin || isTeacher || isParent)) {
     const mobileRole = isAdmin ? 'admin' : isTeacher ? 'teacher' : 'parent';
     return <MobileShell role={mobileRole}>{children}</MobileShell>;
+  }
+
+  // ── SUPER ADMIN LAYOUT ──
+  if (isSuperAdmin) {
+    // When super_admin has entered a school, show normal admin sidebar + viewing banner
+    const navGroups = activeSchoolId ? adminNavGroups : superAdminNavGroups;
+    const sidebarSchoolName = activeSchoolId ? activeSchoolName : 'Avenir Platform';
+    return (
+      <div className="min-h-screen bg-slate-50 flex">
+        <AdminSidebar
+          open={sidebarOpen}
+          onClose={() => setSidebarOpen(false)}
+          schoolName={sidebarSchoolName}
+          logoUrl={logoUrl}
+          navGroups={navGroups}
+        />
+        <div className="flex-1 flex flex-col min-w-0">
+          {/* Viewing school banner */}
+          {activeSchoolId && (
+            <div className="bg-amber-500 text-white text-sm font-semibold px-4 py-2 flex items-center gap-3">
+              <ShieldCheck className="w-4 h-4 flex-shrink-0" />
+              <span className="flex-1">Viewing school: <strong>{activeSchoolName}</strong></span>
+              <button
+                onClick={() => { exitSchool(); navigate('/super-admin'); }}
+                className="flex items-center gap-1.5 bg-white/20 hover:bg-white/30 px-3 py-1 rounded-lg text-xs font-bold transition-colors"
+              >
+                <LogIn className="w-3.5 h-3.5" />
+                Exit School
+              </button>
+            </div>
+          )}
+          <header className="bg-white border-b border-slate-200 sticky top-0 z-30 h-16 flex items-center px-4 sm:px-6 gap-4">
+            <button onClick={() => setSidebarOpen(true)} className="lg:hidden p-2 text-slate-500 hover:text-slate-900 hover:bg-slate-100 rounded-lg">
+              <Menu className="w-5 h-5" />
+            </button>
+            <div className="flex-1" />
+            <div className="flex items-center gap-3">
+              <div className="text-right hidden sm:block">
+                <p className="text-sm font-semibold text-slate-900">{profile?.displayName}</p>
+                <p className="text-xs text-purple-600 font-bold">Super Admin</p>
+              </div>
+              <div className="w-9 h-9 bg-gradient-to-br from-purple-600 to-indigo-600 rounded-full flex items-center justify-center">
+                <ShieldCheck className="w-5 h-5 text-white" />
+              </div>
+              <button onClick={handleLogout} className="p-2 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors" title="Logout">
+                <LogOut className="w-4 h-4" />
+              </button>
+            </div>
+          </header>
+          <main className="flex-1 overflow-auto">{children}</main>
+        </div>
+      </div>
+    );
   }
 
   // ── TEACHER LAYOUT ──

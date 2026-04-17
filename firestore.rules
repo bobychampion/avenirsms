@@ -1,38 +1,9 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // ===============================================================
-    // Assumed Data Model
-    // ===============================================================
-    //
-    // Collection: users
-    // Document ID: {userId}
-    // Fields:
-    //   - email: string (required)
-    //   - role: string (required, 'admin' | 'applicant')
-    //   - displayName: string
-    //
-    // Collection: applications
-    // Document ID: {applicationId}
-    // Fields:
-    //   - applicantName: string (required)
-    //   - email: string (required)
-    //   - phone: string
-    //   - dob: string (required)
-    //   - gender: string
-    //   - nin: string
-    //   - classApplyingFor: string (required)
-    //   - previousSchool: string
-    //   - waecNecoNumber: string
-    //   - status: string (required, 'pending' | 'reviewing' | 'approved' | 'rejected')
-    //   - createdAt: timestamp (required)
-    //   - updatedAt: timestamp
-    //   - reviewerNotes: string
-    //   - applicantUid: string (required, owner)
-    //
-    // ===============================================================
 
-    // Helper Functions
+    // ─── Helper functions ──────────────────────────────────────────────────────
+
     function isAuthenticated() {
       return request.auth != null;
     }
@@ -41,115 +12,399 @@ service cloud.firestore {
       return isAuthenticated() && request.auth.uid == userId;
     }
 
+    /** Cached profile read — called once per request context. */
+    function userProfile() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    /** Super admin: manages all schools, no schoolId of their own. */
+    function isSuperAdmin() {
+      return isAuthenticated() && userProfile().role == 'super_admin';
+    }
+
+    /** School-scoped admin (admin or School_admin) whose schoolId matches. */
     function isAdmin() {
-      return isAuthenticated() && 
-        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['admin', 'School_admin'] ||
-         (request.auth.token.email == "jabpa87@gmail.com" && request.auth.token.email_verified == true));
+      return isAuthenticated() &&
+        userProfile().role in ['admin', 'School_admin'] &&
+        userProfile().schoolId != null;
     }
 
+    /** School-scoped teacher. */
     function isTeacher() {
-      return isAuthenticated() && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'teacher';
+      return isAuthenticated() && userProfile().role == 'teacher';
     }
 
+    /** School-scoped parent/guardian. */
     function isParent() {
-      return isAuthenticated() && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'parent';
+      return isAuthenticated() && userProfile().role == 'parent';
+    }
+
+    /** Caller belongs to the given schoolId. */
+    function belongsToSchool(sid) {
+      return isAuthenticated() && userProfile().schoolId == sid;
+    }
+
+    /** Document's schoolId matches the caller's schoolId. */
+    function docBelongsToCallerSchool() {
+      return isAuthenticated() &&
+        resource.data.get('schoolId', null) == userProfile().schoolId;
+    }
+
+    /** New document's schoolId matches the caller's schoolId. */
+    function newDocBelongsToCallerSchool() {
+      return isAuthenticated() &&
+        request.resource.data.get('schoolId', null) == userProfile().schoolId;
     }
 
     function isValidEmail(email) {
       return email is string && email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$");
     }
 
-    function isValidApplication(data) {
-      return data.applicantName is string && data.applicantName.size() > 0 && data.applicantName.size() < 100 &&
-             data.email is string && isValidEmail(data.email) &&
-             data.dob is string &&
-             data.classApplyingFor is string &&
-             data.status in ['pending', 'reviewing', 'approved', 'rejected'] &&
-             data.applicantUid == request.auth.uid;
+    // ─── Platform-level: schools collection ───────────────────────────────────
+
+    match /schools/{schoolId} {
+      allow read: if isSuperAdmin() || (isAdmin() && belongsToSchool(schoolId));
+      allow write: if isSuperAdmin();
     }
 
-    // Rules
-    match /users/{userId} {
-      allow read: if isAuthenticated() && (isOwner(userId) || isAdmin() || isTeacher());
-      allow create: if isAuthenticated() && isOwner(userId) && 
-                    request.resource.data.role in ['applicant', 'teacher', 'parent', 'admin', 'School_admin'];
-      allow update: if isAuthenticated() && (isAdmin() || (isOwner(userId) && request.resource.data.role == resource.data.role));
+    // ─── School settings (keyed by schoolId, not 'main') ──────────────────────
+
+    match /school_settings/{schoolId} {
+      allow read: if isSuperAdmin() || belongsToSchool(schoolId);
+      allow write: if isSuperAdmin() || (isAdmin() && belongsToSchool(schoolId));
     }
+
+    // ─── Geofences (keyed by schoolId) ────────────────────────────────────────
+
+    match /geofences/{schoolId} {
+      allow read: if isSuperAdmin() || belongsToSchool(schoolId);
+      allow write: if isSuperAdmin() || (isAdmin() && belongsToSchool(schoolId));
+    }
+
+    // ─── Users ────────────────────────────────────────────────────────────────
+
+    match /users/{userId} {
+      // Super admin can read/write all users.
+      // Users can read their own profile.
+      // Admins/teachers can read profiles within their school.
+      allow read: if isSuperAdmin() ||
+                    isOwner(userId) ||
+                    (isAuthenticated() &&
+                     (isAdmin() || isTeacher()) &&
+                     resource.data.get('schoolId', null) == userProfile().schoolId);
+
+      allow create: if isAuthenticated() && isOwner(userId) &&
+                    request.resource.data.role in ['applicant', 'teacher', 'parent', 'admin',
+                                                   'School_admin', 'accountant', 'super_admin'];
+
+      allow update: if isSuperAdmin() ||
+                    (isAdmin() && resource.data.get('schoolId', null) == userProfile().schoolId) ||
+                    (isOwner(userId) &&
+                     request.resource.data.role == resource.data.role &&
+                     request.resource.data.get('schoolId', null) == resource.data.get('schoolId', null));
+
+      allow delete: if isSuperAdmin() || (isAdmin() && docBelongsToCallerSchool());
+    }
+
+    // ─── FCM tokens (user-scoped by uid) ──────────────────────────────────────
+
+    match /fcm_tokens/{userId} {
+      allow read, write: if isAuthenticated() && isOwner(userId);
+    }
+
+    // ─── Applications ─────────────────────────────────────────────────────────
 
     match /applications/{applicationId} {
-      allow read: if isAuthenticated() && (resource.data.applicantUid == request.auth.uid || isAdmin());
-      allow create: if isAuthenticated() && isValidApplication(request.resource.data) && 
+      allow read: if isSuperAdmin() ||
+                    (isAuthenticated() && resource.data.applicantUid == request.auth.uid) ||
+                    (isAdmin() && docBelongsToCallerSchool()) ||
+                    (isTeacher() && docBelongsToCallerSchool());
+
+      allow create: if isAuthenticated() &&
+                    request.resource.data.applicantUid == request.auth.uid &&
                     request.resource.data.status == 'pending';
-      allow update: if isAuthenticated() && (
-        (isAdmin() && request.resource.data.diff(resource.data).affectedKeys().hasAny(['status', 'reviewerNotes', 'updatedAt'])) ||
-        (resource.data.applicantUid == request.auth.uid && resource.data.status == 'pending' && isValidApplication(request.resource.data))
-      );
-      allow delete: if isAdmin();
+
+      allow update: if isSuperAdmin() ||
+                    (isAdmin() && docBelongsToCallerSchool()) ||
+                    (isAuthenticated() &&
+                     resource.data.applicantUid == request.auth.uid &&
+                     resource.data.status == 'pending');
+
+      allow delete: if isSuperAdmin() || (isAdmin() && docBelongsToCallerSchool());
     }
+
+    // ─── Students ─────────────────────────────────────────────────────────────
 
     match /students/{studentId} {
-      allow read: if isAuthenticated() && (isAdmin() || isTeacher() || (resource.data.email == request.auth.token.email) || (resource.data.guardianEmail == request.auth.token.email));
-      allow write: if isAdmin();
+      allow read: if isSuperAdmin() ||
+                    ((isAdmin() || isTeacher()) && docBelongsToCallerSchool()) ||
+                    (isAuthenticated() && (
+                      resource.data.get('email', '') == request.auth.token.email ||
+                      resource.data.get('guardianEmail', '') == request.auth.token.email ||
+                      resource.data.get('guardianUserId', '') == request.auth.uid
+                    ));
+      allow write: if isSuperAdmin() || (isAdmin() && newDocBelongsToCallerSchool());
     }
 
-    match /grades/{gradeId} {
-      allow read: if isAuthenticated() && (isAdmin() || isTeacher() || (get(/databases/$(database)/documents/students/$(resource.data.studentId)).data.email == request.auth.token.email) || (get(/databases/$(database)/documents/students/$(resource.data.studentId)).data.guardianEmail == request.auth.token.email));
-      allow write: if isAdmin() || isTeacher();
+    // ─── Guardians ────────────────────────────────────────────────────────────
+
+    match /guardians/{guardianId} {
+      allow read: if isSuperAdmin() ||
+                    ((isAdmin() || isTeacher()) && docBelongsToCallerSchool()) ||
+                    (isAuthenticated() && resource.data.get('userId', '') == request.auth.uid);
+      allow write: if isSuperAdmin() || (isAdmin() && newDocBelongsToCallerSchool());
     }
 
-    match /exam_seating/{seatingId} {
-      allow read: if isAuthenticated() && (isAdmin() || isTeacher() || (get(/databases/$(database)/documents/students/$(resource.data.studentId)).data.email == request.auth.token.email) || (get(/databases/$(database)/documents/students/$(resource.data.studentId)).data.guardianEmail == request.auth.token.email));
-      allow write: if isAdmin();
-    }
-
-    match /timetables/{timetableId} {
-      allow read: if isAuthenticated();
-      allow write: if isAdmin();
-    }
-
-    match /attendance/{attendanceId} {
-      allow read: if isAuthenticated() && (isAdmin() || isTeacher() || (get(/databases/$(database)/documents/students/$(resource.data.studentId)).data.email == request.auth.token.email) || (get(/databases/$(database)/documents/students/$(resource.data.studentId)).data.guardianEmail == request.auth.token.email));
-      allow write: if isAdmin() || isTeacher();
-    }
-
-    match /assignments/{assignmentId} {
-      allow read: if isAuthenticated();
-      allow write: if isAdmin() || isTeacher();
-    }
-
-    match /messages/{messageId} {
-      allow read: if isAuthenticated() && (request.auth.uid == resource.data.senderId || request.auth.uid == resource.data.receiverId);
-      allow create: if isAuthenticated();
-      allow update: if isAuthenticated() && request.auth.uid == resource.data.receiverId && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['read']);
-    }
-
-    match /events/{eventId} {
-      allow read: if isAuthenticated();
-      allow write: if isAdmin();
-    }
+    // ─── Classes & class subjects ──────────────────────────────────────────────
 
     match /classes/{classId} {
-      allow read: if isAuthenticated();
-      allow write: if isAdmin();
+      allow read: if isAuthenticated() && (isSuperAdmin() || docBelongsToCallerSchool());
+      allow write: if isSuperAdmin() || (isAdmin() && newDocBelongsToCallerSchool());
     }
 
     match /class_subjects/{subjectId} {
-      allow read: if isAuthenticated();
-      allow write: if isAdmin();
+      allow read: if isAuthenticated() && (isSuperAdmin() || docBelongsToCallerSchool());
+      allow write: if isSuperAdmin() || (isAdmin() && newDocBelongsToCallerSchool());
     }
 
+    match /subjects/{subjectId} {
+      allow read: if isAuthenticated() && (isSuperAdmin() || docBelongsToCallerSchool());
+      allow write: if isSuperAdmin() || (isAdmin() && newDocBelongsToCallerSchool());
+    }
+
+    // ─── Grades & assessments ─────────────────────────────────────────────────
+
+    match /grades/{gradeId} {
+      allow read: if isSuperAdmin() ||
+                    ((isAdmin() || isTeacher()) && docBelongsToCallerSchool()) ||
+                    (isAuthenticated() && (
+                      get(/databases/$(database)/documents/students/$(resource.data.studentId)).data.get('email', '') == request.auth.token.email ||
+                      get(/databases/$(database)/documents/students/$(resource.data.studentId)).data.get('guardianEmail', '') == request.auth.token.email
+                    ));
+      allow write: if isSuperAdmin() ||
+                    ((isAdmin() || isTeacher()) && newDocBelongsToCallerSchool());
+    }
+
+    match /student_skills/{skillId} {
+      allow read: if isAuthenticated() && (isSuperAdmin() || docBelongsToCallerSchool());
+      allow write: if isSuperAdmin() ||
+                    ((isAdmin() || isTeacher()) && newDocBelongsToCallerSchool());
+    }
+
+    // ─── Attendance ───────────────────────────────────────────────────────────
+
+    match /attendance/{attendanceId} {
+      allow read: if isSuperAdmin() ||
+                    ((isAdmin() || isTeacher()) && docBelongsToCallerSchool()) ||
+                    (isAuthenticated() && (
+                      get(/databases/$(database)/documents/students/$(resource.data.studentId)).data.get('email', '') == request.auth.token.email ||
+                      get(/databases/$(database)/documents/students/$(resource.data.studentId)).data.get('guardianEmail', '') == request.auth.token.email
+                    ));
+      allow write: if isSuperAdmin() ||
+                    ((isAdmin() || isTeacher()) && newDocBelongsToCallerSchool());
+    }
+
+    match /attendance_checkins/{checkinId} {
+      allow read: if isAuthenticated() && (isSuperAdmin() || (isAdmin() && docBelongsToCallerSchool()) || isOwner(resource.data.get('teacherId', '')));
+      allow create: if isAuthenticated() && newDocBelongsToCallerSchool();
+      allow update: if isSuperAdmin() || (isAdmin() && docBelongsToCallerSchool());
+    }
+
+    // ─── Timetables ───────────────────────────────────────────────────────────
+
+    match /timetables/{timetableId} {
+      allow read: if isAuthenticated() && (isSuperAdmin() || docBelongsToCallerSchool());
+      allow write: if isSuperAdmin() || (isAdmin() && newDocBelongsToCallerSchool());
+    }
+
+    // ─── Assignments ──────────────────────────────────────────────────────────
+
+    match /assignments/{assignmentId} {
+      allow read: if isAuthenticated() && (isSuperAdmin() || docBelongsToCallerSchool());
+      allow write: if isSuperAdmin() ||
+                    ((isAdmin() || isTeacher()) && newDocBelongsToCallerSchool());
+    }
+
+    // ─── Messages ─────────────────────────────────────────────────────────────
+
+    match /messages/{messageId} {
+      allow read: if isAuthenticated() && (
+        isSuperAdmin() ||
+        request.auth.uid == resource.data.senderId ||
+        request.auth.uid == resource.data.receiverId
+      );
+      allow create: if isAuthenticated() && newDocBelongsToCallerSchool();
+      allow update: if isAuthenticated() && (
+        isSuperAdmin() ||
+        (request.auth.uid == resource.data.receiverId &&
+         request.resource.data.diff(resource.data).affectedKeys().hasOnly(['read']))
+      );
+    }
+
+    // ─── Events / calendar ────────────────────────────────────────────────────
+
+    match /events/{eventId} {
+      allow read: if isAuthenticated() && (isSuperAdmin() || docBelongsToCallerSchool());
+      allow write: if isSuperAdmin() || (isAdmin() && newDocBelongsToCallerSchool());
+    }
+
+    // ─── Finance ──────────────────────────────────────────────────────────────
+
     match /invoices/{invoiceId} {
-      allow read: if isAuthenticated() && (isAdmin() || (get(/databases/$(database)/documents/students/$(resource.data.studentId)).data.guardianEmail == request.auth.token.email) || (get(/databases/$(database)/documents/students/$(resource.data.studentId)).data.email == request.auth.token.email));
-      allow write: if isAdmin();
+      allow read: if isSuperAdmin() ||
+                    (isAdmin() && docBelongsToCallerSchool()) ||
+                    (isAuthenticated() && (
+                      get(/databases/$(database)/documents/students/$(resource.data.studentId)).data.get('guardianEmail', '') == request.auth.token.email ||
+                      get(/databases/$(database)/documents/students/$(resource.data.studentId)).data.get('email', '') == request.auth.token.email
+                    ));
+      allow write: if isSuperAdmin() || (isAdmin() && newDocBelongsToCallerSchool());
     }
 
     match /fee_payments/{paymentId} {
-      allow read: if isAuthenticated() && (isAdmin() || (get(/databases/$(database)/documents/students/$(resource.data.studentId)).data.guardianEmail == request.auth.token.email) || (get(/databases/$(database)/documents/students/$(resource.data.studentId)).data.email == request.auth.token.email));
-      allow write: if isAdmin();
+      allow read: if isSuperAdmin() ||
+                    (isAdmin() && docBelongsToCallerSchool()) ||
+                    (isAuthenticated() && (
+                      get(/databases/$(database)/documents/students/$(resource.data.studentId)).data.get('guardianEmail', '') == request.auth.token.email ||
+                      get(/databases/$(database)/documents/students/$(resource.data.studentId)).data.get('email', '') == request.auth.token.email
+                    ));
+      allow write: if isSuperAdmin() || (isAdmin() && newDocBelongsToCallerSchool());
+    }
+
+    match /payments/{paymentId} {
+      allow read, write: if isSuperAdmin() || (isAdmin() && docBelongsToCallerSchool());
     }
 
     match /expenses/{expenseId} {
-      allow read, write: if isAdmin();
+      allow read, write: if isSuperAdmin() || (isAdmin() && newDocBelongsToCallerSchool());
+    }
+
+    // ─── Staff, leave & payroll ───────────────────────────────────────────────
+
+    match /staff/{staffId} {
+      allow read: if isAuthenticated() && (isSuperAdmin() || (isAdmin() && docBelongsToCallerSchool()));
+      allow write: if isSuperAdmin() || (isAdmin() && newDocBelongsToCallerSchool());
+    }
+
+    match /leave_requests/{leaveId} {
+      allow read: if isAuthenticated() && (isSuperAdmin() || (isAdmin() && docBelongsToCallerSchool()) || isOwner(resource.data.get('staffId', '')));
+      allow create: if isAuthenticated() && newDocBelongsToCallerSchool();
+      allow update: if isSuperAdmin() || (isAdmin() && docBelongsToCallerSchool());
+    }
+
+    match /payroll/{payrollId} {
+      allow read, write: if isSuperAdmin() || (isAdmin() && docBelongsToCallerSchool());
+    }
+
+    // ─── Notifications ────────────────────────────────────────────────────────
+
+    match /notifications/{notifId} {
+      allow read: if isAuthenticated() && (
+        isSuperAdmin() ||
+        (isAdmin() && docBelongsToCallerSchool()) ||
+        resource.data.get('recipientId', '') == request.auth.uid
+      );
+      allow create: if isAuthenticated() && newDocBelongsToCallerSchool();
+      allow update: if isAuthenticated() && resource.data.get('recipientId', '') == request.auth.uid &&
+                    request.resource.data.diff(resource.data).affectedKeys().hasOnly(['read']);
+      allow delete: if isSuperAdmin() || (isAdmin() && docBelongsToCallerSchool());
+    }
+
+    match /notification_broadcasts/{broadcastId} {
+      allow read: if isAuthenticated() && (isSuperAdmin() || docBelongsToCallerSchool());
+      allow write: if isSuperAdmin() || (isAdmin() && newDocBelongsToCallerSchool());
+    }
+
+    // ─── Exams & CBT ──────────────────────────────────────────────────────────
+
+    match /exams/{examId} {
+      allow read: if isAuthenticated() && (isSuperAdmin() || docBelongsToCallerSchool());
+      allow write: if isSuperAdmin() || (isAdmin() && newDocBelongsToCallerSchool());
+    }
+
+    match /exam_seating/{seatingId} {
+      allow read: if isAuthenticated() && (
+        isSuperAdmin() ||
+        ((isAdmin() || isTeacher()) && docBelongsToCallerSchool()) ||
+        get(/databases/$(database)/documents/students/$(resource.data.studentId)).data.get('email', '') == request.auth.token.email
+      );
+      allow write: if isSuperAdmin() || (isAdmin() && newDocBelongsToCallerSchool());
+    }
+
+    match /question_bank/{questionId} {
+      allow read: if isAuthenticated() && (isSuperAdmin() || docBelongsToCallerSchool());
+      allow write: if isSuperAdmin() || ((isAdmin() || isTeacher()) && newDocBelongsToCallerSchool());
+    }
+
+    match /cbt_exams/{examId} {
+      allow read: if isAuthenticated() && (isSuperAdmin() || docBelongsToCallerSchool());
+      allow write: if isSuperAdmin() || (isAdmin() && newDocBelongsToCallerSchool());
+    }
+
+    match /cbt_sessions/{sessionId} {
+      allow read: if isAuthenticated() && (
+        isSuperAdmin() ||
+        (isAdmin() && docBelongsToCallerSchool()) ||
+        resource.data.get('studentId', '') == request.auth.uid
+      );
+      allow create: if isAuthenticated();
+      allow update: if isAuthenticated() && (
+        isSuperAdmin() ||
+        (isAdmin() && docBelongsToCallerSchool()) ||
+        resource.data.get('studentId', '') == request.auth.uid
+      );
+    }
+
+    // ─── Curriculum ───────────────────────────────────────────────────────────
+
+    match /curriculum_documents/{docId} {
+      allow read: if isAuthenticated() && (isSuperAdmin() || docBelongsToCallerSchool());
+      allow write: if isSuperAdmin() || ((isAdmin() || isTeacher()) && newDocBelongsToCallerSchool());
+    }
+
+    match /curriculum_items/{itemId} {
+      allow read: if isAuthenticated() && (isSuperAdmin() || docBelongsToCallerSchool());
+      allow write: if isSuperAdmin() || ((isAdmin() || isTeacher()) && newDocBelongsToCallerSchool());
+    }
+
+    // ─── Pins ─────────────────────────────────────────────────────────────────
+
+    match /pins/{pinId} {
+      allow read: if isAuthenticated() && (isSuperAdmin() || (isAdmin() && docBelongsToCallerSchool()));
+      allow write: if isSuperAdmin() || (isAdmin() && newDocBelongsToCallerSchool());
+    }
+
+    // ─── Promotions ───────────────────────────────────────────────────────────
+
+    match /promotions/{promoId} {
+      allow read: if isAuthenticated() && (isSuperAdmin() || (isAdmin() && docBelongsToCallerSchool()));
+      allow write: if isSuperAdmin() || (isAdmin() && newDocBelongsToCallerSchool());
+    }
+
+    // ─── WhatsApp logs ────────────────────────────────────────────────────────
+
+    match /whatsapp_logs/{logId} {
+      allow read: if isAuthenticated() && (isSuperAdmin() || (isAdmin() && docBelongsToCallerSchool()));
+      allow write: if isSuperAdmin() || (isAdmin() && newDocBelongsToCallerSchool());
+    }
+
+    // ─── Demo requests (public) ───────────────────────────────────────────────
+
+    match /demo_requests/{requestId} {
+      allow read: if isSuperAdmin();
+      allow create: if true; // Public form submission
+    }
+
+    // ─── Mail (Firebase Trigger Email extension) ──────────────────────────────
+
+    match /mail/{mailId} {
+      allow create: if isAuthenticated();
+      allow read: if isSuperAdmin() || (isAdmin() && docBelongsToCallerSchool());
+    }
+
+    // ─── Connection test (app connectivity check) ─────────────────────────────
+
+    match /_connection_test_/{docId} {
+      allow read: if isAuthenticated();
     }
   }
 }

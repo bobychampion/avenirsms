@@ -19,14 +19,19 @@ import { db } from '../firebase';
 
 // ─── Generic CRUD Helpers ─────────────────────────────────────────────────────
 
+/**
+ * Add a document to a collection.
+ * If schoolId is provided it is merged into the data so every record is
+ * automatically scoped to the correct school (multi-tenant safety net).
+ */
 export async function addDocument<T extends DocumentData>(
   collectionName: string,
-  data: T
+  data: T,
+  schoolId?: string | null
 ): Promise<string> {
-  const ref = await addDoc(collection(db, collectionName), {
-    ...data,
-    createdAt: serverTimestamp(),
-  });
+  const payload: DocumentData = { ...data, createdAt: serverTimestamp() };
+  if (schoolId) payload.schoolId = schoolId;
+  const ref = await addDoc(collection(db, collectionName), payload);
   return ref.id;
 }
 
@@ -57,11 +62,19 @@ export async function getDocument<T>(
   return { id: snap.id, ...snap.data() } as T & { id: string };
 }
 
+/**
+ * Fetch all documents from a collection (one-shot).
+ * Pass schoolId to automatically prepend a schoolId equality constraint.
+ */
 export async function getCollectionOnce<T>(
   collectionName: string,
-  constraints: QueryConstraint[] = []
+  constraints: QueryConstraint[] = [],
+  schoolId?: string | null
 ): Promise<(T & { id: string })[]> {
-  const q = query(collection(db, collectionName), ...constraints);
+  const allConstraints: QueryConstraint[] = schoolId
+    ? [where('schoolId', '==', schoolId), ...constraints]
+    : constraints;
+  const q = query(collection(db, collectionName), ...allConstraints);
   const snap = await getDocs(q);
   return snap.docs.map(d => ({ id: d.id, ...d.data() } as T & { id: string }));
 }
@@ -70,14 +83,14 @@ export { where, orderBy, limit, writeBatch, serverTimestamp };
 
 /**
  * Generate next student ID using the school's configured format.
- * Reads prefix/format/padding from school_settings/main; falls back to STU-YEAR-SEQ.
+ * Reads prefix/format/padding from school_settings/{schoolId}; falls back to STU-YEAR-SEQ.
  *
  * Formats:
  *   PREFIX-YEAR-SEQ  → KIS-2026-001
  *   PREFIXYEARSEQ    → KIS2026001
  *   PREFIX-SEQ       → KIS-001
  */
-export async function generateStudentId(): Promise<string> {
+export async function generateStudentId(schoolId: string = 'main'): Promise<string> {
   const year = new Date().getFullYear();
 
   // Fetch school settings for prefix/format/padding
@@ -85,7 +98,7 @@ export async function generateStudentId(): Promise<string> {
   let format: 'PREFIX-YEAR-SEQ' | 'PREFIXYEARSEQ' | 'PREFIX-SEQ' = 'PREFIX-YEAR-SEQ';
   let padding = 3;
   try {
-    const settingsSnap = await getDoc(doc(db, 'school_settings', 'main'));
+    const settingsSnap = await getDoc(doc(db, 'school_settings', schoolId));
     if (settingsSnap.exists()) {
       const data = settingsSnap.data();
       if (data.studentIdPrefix) prefix = data.studentIdPrefix;
@@ -94,7 +107,10 @@ export async function generateStudentId(): Promise<string> {
     }
   } catch { /* use defaults */ }
 
-  const snap = await getDocs(collection(db, 'students'));
+  // Count existing students for this school only
+  const snap = await getDocs(
+    query(collection(db, 'students'), where('schoolId', '==', schoolId))
+  );
   const seq = String(snap.size + 1).padStart(padding, '0');
 
   switch (format) {
@@ -106,37 +122,48 @@ export async function generateStudentId(): Promise<string> {
 
 /** Bulk upsert attendance records for a whole class */
 export async function batchUpsertAttendance(
-  records: { studentId: string; date: string; status: 'present' | 'absent' | 'late'; class: string; recordedBy: string }[]
+  records: { studentId: string; date: string; status: 'present' | 'absent' | 'late'; class: string; recordedBy: string }[],
+  schoolId?: string | null
 ): Promise<void> {
   const batch = writeBatch(db);
   for (const record of records) {
-    const q = query(
-      collection(db, 'attendance'),
+    const constraints: QueryConstraint[] = [
       where('studentId', '==', record.studentId),
-      where('date', '==', record.date)
-    );
+      where('date', '==', record.date),
+    ];
+    if (schoolId) constraints.push(where('schoolId', '==', schoolId));
+    const q = query(collection(db, 'attendance'), ...constraints);
     const existing = await getDocs(q);
     if (!existing.empty) {
       existing.docs.forEach(d => batch.update(d.ref, { status: record.status, updatedAt: serverTimestamp() }));
     } else {
       const newRef = doc(collection(db, 'attendance'));
-      batch.set(newRef, { ...record, createdAt: serverTimestamp() });
+      batch.set(newRef, {
+        ...record,
+        ...(schoolId ? { schoolId } : {}),
+        createdAt: serverTimestamp(),
+      });
     }
   }
   await batch.commit();
 }
 
-/** Get students in a class */
-export async function getStudentsByClass(className: string) {
-  return getCollectionOnce<any>('students', [
+/** Get students in a class, optionally scoped to a school */
+export async function getStudentsByClass(className: string, schoolId?: string | null) {
+  const constraints: QueryConstraint[] = [
     where('currentClass', '==', className),
     orderBy('studentName', 'asc'),
-  ]);
+  ];
+  return getCollectionOnce<any>('students', constraints, schoolId);
 }
 
-/** Get attendance summary for a student */
-export async function getAttendanceSummary(studentId: string) {
-  const records = await getCollectionOnce<any>('attendance', [where('studentId', '==', studentId)]);
+/** Get attendance summary for a student, optionally scoped to a school */
+export async function getAttendanceSummary(studentId: string, schoolId?: string | null) {
+  const records = await getCollectionOnce<any>(
+    'attendance',
+    [where('studentId', '==', studentId)],
+    schoolId
+  );
   const total = records.length;
   const present = records.filter((r: any) => r.status === 'present').length;
   const absent = records.filter((r: any) => r.status === 'absent').length;

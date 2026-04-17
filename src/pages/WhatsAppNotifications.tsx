@@ -7,6 +7,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import toast from 'react-hot-toast';
 import { generateFeeReminderDraft } from '../services/geminiService';
 import { useClassSelectOptions } from '../components/SchoolContext';
+import { useSchoolId } from '../hooks/useSchoolId';
 import {
   MessageSquare, Send, Users, Filter, CheckCircle2, Loader2,
   Sparkles, Phone, ArrowLeft, RefreshCw, AlertCircle, ExternalLink,
@@ -96,6 +97,7 @@ function openWhatsApp(phone: string, message: string) {
 export default function WhatsAppNotifications() {
   const { profile } = useAuth();
   const classSelectOptions = useClassSelectOptions();
+  const schoolId = useSchoolId();
   const [students, setStudents] = useState<Student[]>([]);
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [logs, setLogs] = useState<WhatsAppLog[]>([]);
@@ -114,26 +116,28 @@ export default function WhatsAppNotifications() {
   const [showConfirm, setShowConfirm] = useState(false);
 
   useEffect(() => {
-    const q = query(collection(db, 'students'));
+    if (!schoolId) return;
+    const q = query(collection(db, 'students'), where('schoolId', '==', schoolId!));
     const unsub = onSnapshot(q, snap => {
       setStudents(snap.docs.map(d => ({ id: d.id, ...d.data() } as Student)));
       setLoading(false);
     });
-    const qI = query(collection(db, 'invoices'), where('status', 'in', ['pending', 'overdue']));
+    const qI = query(collection(db, 'invoices'), where('schoolId', '==', schoolId!), where('status', 'in', ['pending', 'overdue']));
     const unsubI = onSnapshot(qI, snap => {
       setInvoices(snap.docs.map(d => ({ id: d.id, ...d.data() } as Invoice)));
     });
     return () => { unsub(); unsubI(); };
-  }, []);
+  }, [schoolId]);
 
   useEffect(() => {
     if (activeTab !== 'history') return;
-    const q = query(collection(db, 'whatsapp_logs'), orderBy('sentAt', 'desc'));
+    if (!schoolId) return;
+    const q = query(collection(db, 'whatsapp_logs'), where('schoolId', '==', schoolId!), orderBy('sentAt', 'desc'));
     const unsub = onSnapshot(q, snap => {
       setLogs(snap.docs.map(d => ({ id: d.id, ...d.data() } as WhatsAppLog)));
     });
     return () => unsub();
-  }, [activeTab]);
+  }, [activeTab, schoolId]);
 
   const filteredStudents = students.filter(s => {
     if (classFilter !== 'all' && s.currentClass !== classFilter) return false;
@@ -196,6 +200,7 @@ export default function WhatsAppNotifications() {
       recipients: phones,
       recipientCount: count,
       sentBy: profile?.displayName || 'Admin',
+      schoolId,
       sentAt: serverTimestamp(),
     } as Omit<WhatsAppLog, 'id'>);
 

@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { db } from '../firebase';
-import { collection, query, onSnapshot, addDoc, updateDoc, deleteDoc, doc, serverTimestamp, orderBy } from 'firebase/firestore';
+import { collection, query, onSnapshot, addDoc, updateDoc, deleteDoc, doc, serverTimestamp, orderBy, where } from 'firebase/firestore';
 import { Staff, LeaveRequest } from '../types';
 import { AnimatePresence, motion } from 'motion/react';
 import { Briefcase, Plus, X, Edit2, Trash2, Mail, Phone, DollarSign, ChevronDown, CheckCircle, XCircle, Upload, Camera, ChevronLeft, ChevronRight as ChevronRightIcon } from 'lucide-react';
 import { useSchool } from '../components/SchoolContext';
+import { useSchoolId } from '../hooks/useSchoolId';
 import { uploadToCloudinary } from '../utils/cloudinaryUpload';
 import { formatCurrency } from '../utils/formatCurrency';
 import toast from 'react-hot-toast';
@@ -19,6 +20,7 @@ const emptyForm: Partial<Staff> = { staffName: '', email: '', phone: '', role: '
 const emptyLeave: Partial<LeaveRequest> = { type: 'annual', startDate: '', endDate: '', reason: '' };
 
 export default function StaffManagement() {
+  const schoolId = useSchoolId();
   const { subjects: allSubjects, locale, currency, cloudinaryConfig } = useSchool();
 
   const [staff, setStaff] = useState<Staff[]>([]);
@@ -37,15 +39,16 @@ export default function StaffManagement() {
   const photoInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    const unsub1 = onSnapshot(query(collection(db, 'staff'), orderBy('staffName', 'asc')), snap => {
+    if (!schoolId) return;
+    const unsub1 = onSnapshot(query(collection(db, 'staff'), where('schoolId', '==', schoolId!), orderBy('staffName', 'asc')), snap => {
       setStaff(snap.docs.map(d => ({ id: d.id, ...d.data() } as Staff)));
       setLoading(false);
     });
-    const unsub2 = onSnapshot(query(collection(db, 'leave_requests'), orderBy('createdAt', 'desc')), snap => {
+    const unsub2 = onSnapshot(query(collection(db, 'leave_requests'), where('schoolId', '==', schoolId!), orderBy('createdAt', 'desc')), snap => {
       setLeaves(snap.docs.map(d => ({ id: d.id, ...d.data() } as LeaveRequest)));
     });
     return () => { unsub1(); unsub2(); };
-  }, []);
+  }, [schoolId]);
 
   // Reset page when filter changes
   useEffect(() => { setCurrentPage(0); }, [filterRole]);
@@ -55,7 +58,7 @@ export default function StaffManagement() {
     if (editingStaff?.id) {
       await updateDoc(doc(db, 'staff', editingStaff.id), { ...form, updatedAt: serverTimestamp() }).catch(console.error);
     } else {
-      await addDoc(collection(db, 'staff'), { ...form, employedAt: serverTimestamp() }).catch(console.error);
+      await addDoc(collection(db, 'staff'), { ...form, employedAt: serverTimestamp(), schoolId: schoolId ?? undefined }).catch(console.error);
     }
     setIsModal(false);
     setEditingStaff(null);
@@ -75,6 +78,7 @@ export default function StaffManagement() {
       staffName: selectedLeaveStaff.staffName,
       status: 'pending',
       createdAt: serverTimestamp(),
+      schoolId: schoolId ?? undefined,
     }).catch(console.error);
     setIsLeaveModal(false);
     setLeaveForm(emptyLeave);

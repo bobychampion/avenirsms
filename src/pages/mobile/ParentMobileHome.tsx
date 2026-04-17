@@ -10,6 +10,7 @@ import { CheckCircle2, XCircle, Clock, DollarSign, Bell, ChevronRight, BookOpen 
 import { Link } from 'react-router-dom';
 import { cn } from '../../lib/utils';
 import { format, subDays } from 'date-fns';
+import { useSchoolId } from '../../hooks/useSchoolId';
 
 const ATT_COLOR: Record<string, string> = {
   present: 'bg-emerald-500',
@@ -25,6 +26,7 @@ const ATT_ICON: Record<string, React.ElementType> = {
 
 export default function ParentMobileHome() {
   const { profile } = useAuth();
+  const schoolId = useSchoolId();
   const [children, setChildren] = useState<(Student & { id: string })[]>([]);
   const [selectedChild, setSelectedChild] = useState<(Student & { id: string }) | null>(null);
   const [weekAttendance, setWeekAttendance] = useState<Record<string, Attendance>>({});
@@ -40,10 +42,11 @@ export default function ParentMobileHome() {
 
   // Load linked children
   useEffect(() => {
+    if (!schoolId) return;
     if (!profile?.linkedStudentIds?.length) {
       // Fallback: load by guardianUserId
       const unsub = onSnapshot(
-        query(collection(db, 'students'), where('guardianUserId', '==', profile?.uid ?? '')),
+        query(collection(db, 'students'), where('schoolId', '==', schoolId!), where('guardianUserId', '==', profile?.uid ?? '')),
         snap => {
           const kids = snap.docs.map(d => ({ id: d.id, ...d.data() } as Student & { id: string }));
           setChildren(kids);
@@ -54,7 +57,7 @@ export default function ParentMobileHome() {
     }
 
     const unsub = onSnapshot(
-      query(collection(db, 'students'), where('__name__', 'in', profile.linkedStudentIds.slice(0, 10))),
+      query(collection(db, 'students'), where('schoolId', '==', schoolId!), where('__name__', 'in', profile.linkedStudentIds.slice(0, 10))),
       snap => {
         const kids = snap.docs.map(d => ({ id: d.id, ...d.data() } as Student & { id: string }));
         setChildren(kids);
@@ -62,15 +65,17 @@ export default function ParentMobileHome() {
       }
     );
     return () => unsub();
-  }, [profile?.uid]);
+  }, [profile?.uid, schoolId]);
 
   // Load attendance for selected child (last 7 days)
   useEffect(() => {
     if (!selectedChild) return;
+    if (!schoolId) return;
     const studentId = selectedChild.studentId || selectedChild.id;
     const unsub = onSnapshot(
       query(
         collection(db, 'attendance'),
+        where('schoolId', '==', schoolId!),
         where('studentId', '==', studentId),
         where('date', '>=', weekDays[0]),
         where('date', '<=', weekDays[6])
@@ -90,9 +95,10 @@ export default function ParentMobileHome() {
   // Load pending invoices for selected child
   useEffect(() => {
     if (!selectedChild) return;
+    if (!schoolId) return;
     const studentId = selectedChild.studentId || selectedChild.id;
     const unsub = onSnapshot(
-      query(collection(db, 'invoices'), where('studentId', '==', studentId), where('status', 'in', ['pending', 'overdue'])),
+      query(collection(db, 'invoices'), where('schoolId', '==', schoolId!), where('studentId', '==', studentId), where('status', 'in', ['pending', 'overdue'])),
       snap => {
         const total = snap.docs.reduce((sum, d) => sum + ((d.data() as Invoice).amount || 0), 0);
         setPendingBalance(total);
@@ -104,8 +110,9 @@ export default function ParentMobileHome() {
 
   // Load announcements
   useEffect(() => {
+    if (!schoolId) return;
     const unsub = onSnapshot(
-      query(collection(db, 'notifications'), where('type', '==', 'general'), orderBy('createdAt', 'desc'), limit(5)),
+      query(collection(db, 'notifications'), where('schoolId', '==', schoolId!), where('type', '==', 'general'), orderBy('createdAt', 'desc'), limit(5)),
       snap => {
         setNotifications(snap.docs.map(d => ({ id: d.id, ...d.data() } as Notification & { id: string })));
       }

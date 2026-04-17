@@ -1,12 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { db } from '../firebase';
-import { collection, getDocs } from 'firebase/firestore';
+import { collection, getDocs, query, where } from 'firebase/firestore';
 import {
   BarChart, Bar, PieChart, Pie, Cell, LineChart, Line,
   XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer
 } from 'recharts';
 import { BarChart3, RefreshCw, Download } from 'lucide-react';
 import { useSchool } from '../components/SchoolContext';
+import { useSchoolId } from '../hooks/useSchoolId';
 import { formatCurrency } from '../utils/formatCurrency';
 
 const COLORS = ['#6366f1','#10b981','#f59e0b','#ef4444','#8b5cf6','#06b6d4','#f97316','#84cc16','#ec4899'];
@@ -14,6 +15,7 @@ const GRADE_ORDER = ['A1','B2','B3','C4','C5','C6','D7','E8','F9'];
 
 export default function AnalyticsDashboard() {
   const { locale, currency } = useSchool();
+  const schoolId = useSchoolId();
   const fmt = (amount: number) => formatCurrency(amount, locale, currency);
   const [enrollment, setEnrollment] = useState<{month:string;count:number}[]>([]);
   const [gradeDist, setGradeDist] = useState<{grade:string;count:number}[]>([]);
@@ -22,14 +24,15 @@ export default function AnalyticsDashboard() {
   const [loading, setLoading] = useState(false);
 
   const loadData = async () => {
+    if (!schoolId) return;
     setLoading(true);
     const [stSnap, grSnap, attSnap, paySnap, expSnap, staffSnap] = await Promise.all([
-      getDocs(collection(db,'students')),
-      getDocs(collection(db,'grades')),
-      getDocs(collection(db,'attendance')),
-      getDocs(collection(db,'fee_payments')),
-      getDocs(collection(db,'expenses')),
-      getDocs(collection(db,'staff')),
+      getDocs(query(collection(db,'students'), where('schoolId','==',schoolId!))),
+      getDocs(query(collection(db,'grades'), where('schoolId','==',schoolId!))),
+      getDocs(query(collection(db,'attendance'), where('schoolId','==',schoolId!))),
+      getDocs(query(collection(db,'fee_payments'), where('schoolId','==',schoolId!))),
+      getDocs(query(collection(db,'expenses'), where('schoolId','==',schoolId!))),
+      getDocs(query(collection(db,'staff'), where('schoolId','==',schoolId!))),
     ]).catch(() => Array(6).fill({ docs:[] })) as any[];
 
     // enrollment trend

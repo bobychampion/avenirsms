@@ -8,6 +8,7 @@ import { motion } from 'motion/react';
 import toast from 'react-hot-toast';
 import { Save, Loader2, BookOpen, ArrowLeft, Sparkles, CheckCircle } from 'lucide-react';
 import { useClassSelectOptions } from '../components/SchoolContext';
+import { useSchoolId } from '../hooks/useSchoolId';
 
 const GRADE_COLORS: Record<string, string> = {
   A1: 'bg-emerald-50 text-emerald-700 border-emerald-200',
@@ -23,6 +24,7 @@ const GRADE_COLORS: Record<string, string> = {
 
 export default function Gradebook() {
   const classSelectOptions = useClassSelectOptions();
+  const schoolId = useSchoolId();
   const [students, setStudents] = useState<Student[]>([]);
   const [grades, setGrades] = useState<Record<string, Grade>>({});
   const [loading, setLoading] = useState(true);
@@ -35,21 +37,24 @@ export default function Gradebook() {
   const [aiLoading, setAiLoading] = useState<string | null>(null);
 
   useEffect(() => {
+    if (!schoolId) return;
     setLoading(true);
-    const q = query(collection(db, 'students'), where('currentClass', '==', selectedClass));
+    const q = query(collection(db, 'students'), where('schoolId', '==', schoolId!), where('currentClass', '==', selectedClass));
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const data = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as Student));
       setStudents(data);
     }, (error) => handleFirestoreError(error, OperationType.LIST, 'students'));
     return () => unsubscribe();
-  }, [selectedClass]);
+  }, [selectedClass, schoolId]);
 
   useEffect(() => {
     if (students.length === 0) { setLoading(false); return; }
+    if (!schoolId) return;
     const fetchGrades = async () => {
       setLoading(true);
       const q = query(
         collection(db, 'grades'),
+        where('schoolId', '==', schoolId!),
         where('class', '==', selectedClass),
         where('subject', '==', selectedSubject),
         where('term', '==', selectedTerm),
@@ -113,7 +118,7 @@ export default function Gradebook() {
           batch.update(ref, { ...withPos, updatedAt: serverTimestamp() });
         } else {
           const ref = doc(collection(db, 'grades'));
-          batch.set(ref, { ...withPos, updatedAt: serverTimestamp() });
+          batch.set(ref, { ...withPos, schoolId, updatedAt: serverTimestamp() });
         }
       }
       await batch.commit();

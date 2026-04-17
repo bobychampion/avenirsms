@@ -20,6 +20,7 @@ import { Application, ApplicationStatus, Student, Guardian, SCHOOL_CLASSES, CURR
 import { stripUndefined } from '../utils/firestoreSanitize';
 import { differenceInYears, parseISO } from 'date-fns';
 import { useAuth } from '../components/FirebaseProvider';
+import { useSchoolId } from '../hooks/useSchoolId';
 
 // ─── Status helpers ───────────────────────────────────────────────────────────
 
@@ -78,6 +79,7 @@ function DirectAdmitModal({
   existingStudents: Student[];
 }) {
   const { user, profile } = useAuth();
+  const schoolId = useSchoolId();
   const [form, setForm] = useState<DirectAdmitForm>(EMPTY_FORM);
   const [step, setStep] = useState(1); // 1-Student Info, 2-Guardian, 3-Siblings & Class, 4-Review
   const [saving, setSaving] = useState(false);
@@ -159,6 +161,7 @@ function DirectAdmitModal({
         reviewerNotes: 'Direct admission by admin.',
         applicantUid: user?.uid || 'admin',
         directAdmission: true,
+        schoolId: schoolId ?? undefined,
       });
 
       // 3. Create Guardian record
@@ -197,6 +200,7 @@ function DirectAdmitModal({
         stateOfOrigin: form.stateOfOrigin,
         nationality: form.nationality,
         admissionStatus: 'active',
+        schoolId: schoolId ?? undefined,
       };
       batch.set(studentRef, stripUndefined(studentData as Record<string, unknown>) as Omit<Student, 'id'>);
 
@@ -224,6 +228,7 @@ function DirectAdmitModal({
         studentIds: [studentRef.id, ...siblingIds],
         linkedChildren: [newChildEntry, ...siblingChildEntries],
         createdAt: serverTimestamp(),
+        schoolId: schoolId ?? undefined,
       } as Omit<Guardian, 'id'>);
 
       // 6. Update each sibling to add this new student to their siblingIds
@@ -627,6 +632,7 @@ type TabType = 'pipeline' | 'all' | 'stats';
 
 export default function AdmissionsManagement() {
   const navigate = useNavigate();
+  const schoolId = useSchoolId();
   const [applications, setApplications] = useState<Application[]>([]);
   const [students, setStudents] = useState<Student[]>([]);
   const [loading, setLoading] = useState(true);
@@ -639,17 +645,18 @@ export default function AdmissionsManagement() {
   const [appPage, setAppPage] = useState(0);
 
   useEffect(() => {
+    if (!schoolId) return;
     setLoading(true);
-    const q = query(collection(db, 'applications'), orderBy('createdAt', 'desc'));
+    const q = query(collection(db, 'applications'), where('schoolId', '==', schoolId!), orderBy('createdAt', 'desc'));
     const unsub = onSnapshot(q, snap => {
       setApplications(snap.docs.map(d => ({ id: d.id, ...(d.data() as Application) })));
       setLoading(false);
     });
-    const unsub2 = onSnapshot(query(collection(db, 'students'), orderBy('enrolledAt', 'desc')), snap => {
+    const unsub2 = onSnapshot(query(collection(db, 'students'), where('schoolId', '==', schoolId!), orderBy('enrolledAt', 'desc')), snap => {
       setStudents(snap.docs.map(d => ({ id: d.id, ...(d.data() as Student) })));
     });
     return () => { unsub(); unsub2(); };
-  }, [refresh]);
+  }, [refresh, schoolId]);
 
   // KPI counts
   const counts = useMemo(() => ({

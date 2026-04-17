@@ -2,8 +2,9 @@ import React, { useState, useEffect, useRef } from 'react';
 import { db } from '../firebase';
 import {
   collection, onSnapshot, addDoc, updateDoc, deleteDoc,
-  doc, serverTimestamp, orderBy, query,
+  doc, serverTimestamp, orderBy, query, where,
 } from 'firebase/firestore';
+import { useSchoolId } from '../hooks/useSchoolId';
 import { CurriculumItem, CurriculumDocument, SCHOOL_CLASSES, SUBJECTS } from '../types';
 import { generateCurriculumObjective, summarizeCurriculumDocument } from '../services/geminiService';
 import {
@@ -131,6 +132,7 @@ function AISummaryCard({ doc: cdoc, onDelete }: { doc: CurriculumDocument; onDel
 
 function AITrainingTab() {
   const { user } = useAuth();
+  const schoolId = useSchoolId();
   const [docs, setDocs] = useState<CurriculumDocument[]>([] as CurriculumDocument[]);
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<string>('');
@@ -142,13 +144,14 @@ function AITrainingTab() {
   const [dragging, setDragging] = useState(false);
 
   useEffect(() => {
+    if (!schoolId) return;
     const unsub = onSnapshot(
-      query(collection(db, 'curriculum_documents'), orderBy('uploadedAt', 'desc')),
+      query(collection(db, 'curriculum_documents'), where('schoolId', '==', schoolId!), orderBy('uploadedAt', 'desc')),
       snap => setDocs(snap.docs.map(d => ({ id: d.id, ...d.data() } as CurriculumDocument))),
       () => {}
     );
     return () => unsub();
-  }, []);
+  }, [schoolId]);
 
   const extractText = (file: File): Promise<string> => {
     return new Promise((resolve, reject) => {
@@ -208,7 +211,7 @@ function AITrainingTab() {
 
       setUploadProgress('Saving to Firestore…');
       await addDoc(collection(db, 'curriculum_documents'), {
-        schoolId: 'main',
+        schoolId: schoolId ?? 'main',
         fileName: file.name,
         subject: form.subject,
         level: form.level,
@@ -406,19 +409,21 @@ function AIDocumentImportPanel({
   existingTopics: string[];
   onImport: (items: ImportableItem[]) => Promise<void>;
 }) {
+  const schoolId = useSchoolId();
   const [docs, setDocs] = useState<CurriculumDocument[]>([]);
   const [expanded, setExpanded] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [importing, setImporting] = useState(false);
 
   useEffect(() => {
+    if (!schoolId) return;
     const unsub = onSnapshot(
-      query(collection(db, 'curriculum_documents'), orderBy('uploadedAt', 'desc')),
+      query(collection(db, 'curriculum_documents'), where('schoolId', '==', schoolId!), orderBy('uploadedAt', 'desc')),
       snap => setDocs(snap.docs.map(d => ({ id: d.id, ...d.data() } as CurriculumDocument))),
       () => {}
     );
     return () => unsub();
-  }, []);
+  }, [schoolId]);
 
   // Reset selection when context changes
   useEffect(() => { setSelected(new Set()); }, [subject, level, term]);
@@ -650,6 +655,7 @@ function AIDocumentImportPanel({
 // ─── Main Component ───────────────────────────────────────────────────────────
 
 export default function CurriculumMapping() {
+  const schoolId = useSchoolId();
   const [activeTab, setActiveTab] = useState<TabId>('mapping');
   const [items, setItems] = useState<CurriculumItem[]>([]);
   const [selectedSubject, setSelectedSubject] = useState(SUBJECTS[0]);
@@ -662,11 +668,12 @@ export default function CurriculumMapping() {
   const [expandedItemId, setExpandedItemId] = useState<string | null>(null);
 
   useEffect(() => {
-    const unsub = onSnapshot(collection(db, 'curriculum_items'), snap => {
+    if (!schoolId) return;
+    const unsub = onSnapshot(query(collection(db, 'curriculum_items'), where('schoolId', '==', schoolId!)), snap => {
       setItems(snap.docs.map(d => ({ id: d.id, ...d.data() } as CurriculumItem)));
     });
     return () => unsub();
-  }, []);
+  }, [schoolId]);
 
   const filtered = items.filter(i => i.subject === selectedSubject && i.level === selectedLevel && i.term === selectedTerm);
   const completed = filtered.filter(i => i.completed).length;
@@ -691,6 +698,7 @@ export default function CurriculumMapping() {
       term: selectedTerm,
       completed: false,
       source: 'manual',
+      schoolId: schoolId ?? 'main',
       createdAt: serverTimestamp(),
     }).catch(console.error);
     setIsModal(false);
@@ -709,7 +717,7 @@ export default function CurriculumMapping() {
     await addDoc(collection(db, 'curriculum_items'), {
       subject: selectedSubject, level: selectedLevel, term: selectedTerm,
       topic, objective: `Students will understand ${topic} in ${selectedSubject}`,
-      completed: false, source: 'nerdc', createdAt: serverTimestamp(),
+      completed: false, source: 'nerdc', schoolId: schoolId ?? 'main', createdAt: serverTimestamp(),
     }).catch(console.error);
   };
 
@@ -727,6 +735,7 @@ export default function CurriculumMapping() {
         sourceDocName: item.docName,
         completed: false,
         source: 'ai_document',
+        schoolId: schoolId ?? 'main',
         createdAt: serverTimestamp(),
       } as Omit<CurriculumItem, 'id'>)
     );

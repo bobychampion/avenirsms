@@ -5,6 +5,7 @@ import { Student, Grade, calculateGrade, CURRENT_SESSION, formatDate, StudentSki
 import { generateReportSummary } from '../services/geminiService';
 import toast from 'react-hot-toast';
 import { useClassSelectOptions } from '../components/SchoolContext';
+import { useSchoolId } from '../hooks/useSchoolId';
 import { FileText, Printer, Sparkles, ChevronDown, Users } from 'lucide-react';
 
 const DEFAULT_SKILLS: StudentSkills = {
@@ -36,6 +37,7 @@ const GRADE_MAP: Record<string, { label: string; color: string }> = {
 
 export default function ReportCards() {
   const classSelectOptions = useClassSelectOptions();
+  const schoolId = useSchoolId();
   const [selectedClass, setSelectedClass] = useState('');
   const [selectedTerm, setSelectedTerm] = useState<'1st Term' | '2nd Term' | '3rd Term'>('1st Term');
   const [session] = useState(CURRENT_SESSION);
@@ -46,12 +48,13 @@ export default function ReportCards() {
   const [schoolName] = useState('Avenir Secondary School');
 
   const loadReports = async () => {
+    if (!schoolId) return;
     setLoading(true);
     setSelectedReport(null);
     const [studentsSnap, gradesSnap, skillsSnap] = await Promise.all([
-      getDocs(query(collection(db, 'students'), where('currentClass', '==', selectedClass))),
-      getDocs(query(collection(db, 'grades'), where('class', '==', selectedClass), where('term', '==', selectedTerm), where('session', '==', session))),
-      getDocs(query(collection(db, 'student_skills'), where('class', '==', selectedClass), where('term', '==', selectedTerm), where('session', '==', session))),
+      getDocs(query(collection(db, 'students'), where('schoolId', '==', schoolId!), where('currentClass', '==', selectedClass))),
+      getDocs(query(collection(db, 'grades'), where('schoolId', '==', schoolId!), where('class', '==', selectedClass), where('term', '==', selectedTerm), where('session', '==', session))),
+      getDocs(query(collection(db, 'student_skills'), where('schoolId', '==', schoolId!), where('class', '==', selectedClass), where('term', '==', selectedTerm), where('session', '==', session))),
     ]).catch(e => { handleFirestoreError(e, OperationType.LIST, 'grades'); return [null, null, null]; });
 
     if (!studentsSnap || !gradesSnap) { setLoading(false); return; }

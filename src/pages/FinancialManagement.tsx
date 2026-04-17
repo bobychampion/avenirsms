@@ -9,6 +9,7 @@ import toast from 'react-hot-toast';
 import { ConfirmDialog } from '../components/Toast';
 import { generateFeeReminderDraft } from '../services/geminiService';
 import { useClassSelectOptions, useSchool } from '../components/SchoolContext';
+import { useSchoolId } from '../hooks/useSchoolId';
 import { formatCurrency } from '../utils/formatCurrency';
 import { 
   DollarSign, Receipt, TrendingUp, TrendingDown, Plus, 
@@ -23,6 +24,7 @@ export default function FinancialManagement() {
   const { profile } = useAuth();
   const classSelectOptions = useClassSelectOptions();
   const { locale, currency } = useSchool();
+  const schoolId = useSchoolId();
   const fmt = (amount: number) => formatCurrency(amount, locale, currency);
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [payments, setPayments] = useState<FeePayment[]>([]);
@@ -82,19 +84,20 @@ export default function FinancialManagement() {
   });
 
   useEffect(() => {
-    const unsubInvoices = onSnapshot(query(collection(db, 'invoices'), orderBy('createdAt', 'desc')), (snapshot) => {
+    if (!schoolId) return;
+    const unsubInvoices = onSnapshot(query(collection(db, 'invoices'), where('schoolId', '==', schoolId!), orderBy('createdAt', 'desc')), (snapshot) => {
       setInvoices(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Invoice)));
     });
 
-    const unsubPayments = onSnapshot(query(collection(db, 'fee_payments'), orderBy('date', 'desc')), (snapshot) => {
+    const unsubPayments = onSnapshot(query(collection(db, 'fee_payments'), where('schoolId', '==', schoolId!), orderBy('date', 'desc')), (snapshot) => {
       setPayments(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as FeePayment)));
     });
 
-    const unsubExpenses = onSnapshot(query(collection(db, 'expenses'), orderBy('date', 'desc')), (snapshot) => {
+    const unsubExpenses = onSnapshot(query(collection(db, 'expenses'), where('schoolId', '==', schoolId!), orderBy('date', 'desc')), (snapshot) => {
       setExpenses(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Expense)));
     });
 
-    const unsubStudents = onSnapshot(collection(db, 'students'), (snapshot) => {
+    const unsubStudents = onSnapshot(query(collection(db, 'students'), where('schoolId', '==', schoolId!)), (snapshot) => {
       setStudents(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Student)));
       setLoading(false);
     });
@@ -105,7 +108,7 @@ export default function FinancialManagement() {
       unsubExpenses();
       unsubStudents();
     };
-  }, []);
+  }, [schoolId]);
 
   const totalRevenue = payments.reduce((sum, p) => sum + p.amount, 0);
   const totalExpenses = expenses.reduce((sum, e) => sum + e.amount, 0);
@@ -120,6 +123,7 @@ export default function FinancialManagement() {
       await addDoc(collection(db, 'invoices'), {
         ...invoiceForm,
         studentName: student.studentName,
+        schoolId,
         createdAt: serverTimestamp()
       });
       toast.success('Invoice created!', { id: tid });
@@ -140,7 +144,8 @@ export default function FinancialManagement() {
       await addDoc(collection(db, 'fee_payments'), {
         ...paymentForm,
         studentId: invoice.studentId,
-        recordedBy: profile?.displayName || 'Admin'
+        recordedBy: profile?.displayName || 'Admin',
+        schoolId,
       });
       await updateDoc(doc(db, 'invoices', invoice.id!), { status: 'paid' });
       toast.success('Payment recorded!', { id: tid });
@@ -158,7 +163,8 @@ export default function FinancialManagement() {
     try {
       await addDoc(collection(db, 'expenses'), {
         ...expenseForm,
-        recordedBy: profile?.displayName || 'Admin'
+        recordedBy: profile?.displayName || 'Admin',
+        schoolId,
       });
       toast.success('Expense recorded!', { id: tid });
       setIsExpenseModalOpen(false);
@@ -216,6 +222,7 @@ export default function FinancialManagement() {
           session: scheduleForm.session,
           dueDate: scheduleForm.dueDate,
           status: 'pending',
+          schoolId,
           createdAt: serverTimestamp(),
         })
       );

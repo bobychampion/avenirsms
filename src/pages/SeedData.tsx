@@ -4,6 +4,7 @@ import {
   collection, addDoc, serverTimestamp, writeBatch, doc, getDocs, query, limit
 } from 'firebase/firestore';
 import { Database, CheckCircle2, Loader2, AlertTriangle, Trash2, Play } from 'lucide-react';
+import { useSchoolId } from '../hooks/useSchoolId';
 
 // ─── Sample Nigerian school data ──────────────────────────────────────────────
 
@@ -138,6 +139,7 @@ const INITIAL_STEPS: Step[] = [
 ];
 
 export default function SeedData() {
+  const schoolId = useSchoolId();
   const [steps, setSteps] = useState<Step[]>(INITIAL_STEPS);
   const [running, setRunning] = useState(false);
   const [done, setDone] = useState(false);
@@ -159,7 +161,7 @@ export default function SeedData() {
       for (const cls of CLASSES) {
         const ref = doc(collection(db, 'classes'));
         classIdMap[cls.name] = ref.id;
-        batch.set(ref, { ...cls });
+        batch.set(ref, { ...cls, schoolId: schoolId ?? 'main' });
       }
       await batch.commit();
       setStepStatus('classes', 'done', { count: CLASSES.length });
@@ -183,6 +185,7 @@ export default function SeedData() {
           nationality: 'Nigerian',
           enrolledAt: serverTimestamp(),
           applicationId: 'demo',
+          schoolId: schoolId ?? 'main',
         };
         for (const [k, v] of Object.entries(s)) {
           if (v !== undefined) sData[k] = v;
@@ -204,7 +207,7 @@ export default function SeedData() {
         const ref = doc(collection(db, 'staff'));
         staffDocIds.push(ref.id);
         // Strip undefined fields — Firestore rejects them
-        const data: Record<string, any> = { employedAt: serverTimestamp() };
+        const data: Record<string, any> = { employedAt: serverTimestamp(), schoolId: schoolId ?? 'main' };
         for (const [k, v] of Object.entries(st)) {
           if (v !== undefined) data[k] = v;
         }
@@ -243,6 +246,7 @@ export default function SeedData() {
             examScore: exam,
             totalScore: total,
             grade: calculateGradeLocal(total),
+            schoolId: schoolId ?? 'main',
             updatedAt: serverTimestamp(),
           });
           batchCount++;
@@ -292,6 +296,7 @@ export default function SeedData() {
             status,
             class: student.currentClass,
             recordedBy: 'demo-admin',
+            schoolId: schoolId ?? 'main',
           });
           batchCount++;
           attCount++;
@@ -332,6 +337,7 @@ export default function SeedData() {
           status: paid ? 'paid' : 'pending',
           term: TERM,
           session: SESSION,
+          schoolId: schoolId ?? 'main',
           createdAt: serverTimestamp(),
         });
         invCount++;
@@ -348,7 +354,7 @@ export default function SeedData() {
       const batch = writeBatch(db);
       for (const exp of EXPENSES_RAW) {
         const ref = doc(collection(db, 'expenses'));
-        batch.set(ref, exp);
+        batch.set(ref, { ...exp, schoolId: schoolId ?? 'main' });
       }
       await batch.commit();
       setStepStatus('expenses', 'done', { count: EXPENSES_RAW.length });
@@ -362,7 +368,7 @@ export default function SeedData() {
       const batch = writeBatch(db);
       for (const ev of EVENTS_RAW) {
         const ref = doc(collection(db, 'events'));
-        batch.set(ref, ev);
+        batch.set(ref, { ...ev, schoolId: schoolId ?? 'main' });
       }
       await batch.commit();
       setStepStatus('events', 'done', { count: EVENTS_RAW.length });
@@ -384,7 +390,7 @@ export default function SeedData() {
       const batch = writeBatch(db);
       for (const asgn of assignmentsData) {
         const ref = doc(collection(db, 'assignments'));
-        batch.set(ref, { ...asgn, createdAt: serverTimestamp() });
+        batch.set(ref, { ...asgn, schoolId: schoolId ?? 'main', createdAt: serverTimestamp() });
       }
       await batch.commit();
       setStepStatus('assignments', 'done', { count: assignmentsData.length });
@@ -405,7 +411,7 @@ export default function SeedData() {
       const batch = writeBatch(db);
       for (const notif of notificationsData) {
         const ref = doc(collection(db, 'notifications'));
-        batch.set(ref, { ...notif, createdAt: serverTimestamp() });
+        batch.set(ref, { ...notif, schoolId: schoolId ?? 'main', createdAt: serverTimestamp() });
       }
       await batch.commit();
       setStepStatus('notifications', 'done', { count: notificationsData.length });

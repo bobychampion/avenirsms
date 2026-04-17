@@ -5,14 +5,20 @@
  * current session/term) fetched once on mount — no more repeated getDocs calls
  * in every page.
  *
+ * Multi-tenant: All three Firestore subscriptions are scoped to the effective
+ * schoolId returned by useSchoolId(). When schoolId is null (super_admin on
+ * their platform dashboard) no subscriptions are opened and defaults are used.
+ *
  * Usage:
  *   const { classes, subjects, schoolLevels, periodTimes, currentSession, currentTerm } = useSchool();
  */
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { db } from '../firebase';
-import { collection, onSnapshot, orderBy, query, doc } from 'firebase/firestore';
+import { collection, onSnapshot, orderBy, query, doc, where } from 'firebase/firestore';
 import { SchoolClass, SCHOOL_CLASSES, SUBJECTS, CURRENT_SESSION, TERMS, GradingSystem, CustomGradeScale, SubjectDefinition } from '../types';
 import { SchoolSettings, defaultSettings } from '../pages/SchoolSettings';
+import { useAuth } from './FirebaseProvider';
+import { useSuperAdmin } from './SuperAdminContext';
 
 const DEFAULT_PERIOD_TIMES = [
   '07:00', '07:40', '08:20', '09:00', '09:40', '10:20',
@@ -43,6 +49,8 @@ interface SchoolContextValue {
   terms: readonly string[];        // dynamic term labels derived from termStructure
   refreshClasses: () => void;
   loading: boolean;
+  /** Effective schoolId used by this context's subscriptions (null for super_admin on platform dash) */
+  schoolId: string | null;
   // Internationalisation
   locale: string;
   currency: string;
@@ -77,6 +85,7 @@ const SchoolContext = createContext<SchoolContextValue>({
   terms: TERMS,
   refreshClasses: () => {},
   loading: false,
+  schoolId: null,
   locale: 'en',
   currency: 'USD',
   country: '',
@@ -96,13 +105,19 @@ const SchoolContext = createContext<SchoolContextValue>({
 });
 
 export function SchoolProvider({ children }: { children: React.ReactNode }) {
+  const { schoolId: profileSchoolId } = useAuth();
+  const { activeSchoolId } = useSuperAdmin();
+
+  // Effective schoolId: super_admin override takes precedence over profile schoolId
+  const schoolId = activeSchoolId ?? profileSchoolId;
+
   const [classes, setClasses] = useState<SchoolClass[]>([]);
   const [classNames, setClassNames] = useState<string[]>(SCHOOL_CLASSES);
   const [currentTerm, setCurrentTerm] = useState<string>('1st Term');
   const [loading, setLoading] = useState(true);
   const [tick, setTick] = useState(0);
 
-  // Dynamic settings from school_settings/main
+  // Dynamic settings from school_settings/{schoolId}
   const [schoolLevels, setSchoolLevels] = useState<string[]>([...SCHOOL_CLASSES]);
   const [periodTimes, setPeriodTimes] = useState<string[]>([...DEFAULT_PERIOD_TIMES]);
   const [customSubjects, setCustomSubjects] = useState<string[]>([]);
@@ -130,10 +145,11 @@ export function SchoolProvider({ children }: { children: React.ReactNode }) {
   const [faviconUrl, setFaviconUrl] = useState('');
   const [primaryColor, setPrimaryColor] = useState('#4f46e5');
 
-  // Subscribe to school_settings/main for dynamic configuration
+  // Subscribe to school_settings/{schoolId}
   useEffect(() => {
+    if (!schoolId) return; // super_admin on platform dashboard — use defaults
     const unsub = onSnapshot(
-      doc(db, 'school_settings', 'main'),
+      doc(db, 'school_settings', schoolId),
       snap => {
         if (snap.exists()) {
           const data = { ...defaultSettings, ...snap.data() } as SchoolSettings;
@@ -167,13 +183,19 @@ export function SchoolProvider({ children }: { children: React.ReactNode }) {
       () => { /* silently fall back to defaults on error */ }
     );
     return () => unsub();
-  }, []);
+  }, [schoolId]);
 
-  // Subscribe to /classes collection
+  // Subscribe to /classes collection filtered by schoolId
   useEffect(() => {
+    if (!schoolId) {
+      setClasses([]);
+      setClassNames(SCHOOL_CLASSES);
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     const unsub = onSnapshot(
-      query(collection(db, 'classes'), orderBy('name', 'asc')),
+      query(collection(db, 'classes'), where('schoolId', '==', schoolId), orderBy('name', 'asc')),
       snap => {
         if (snap.empty) {
           setClasses([]);
@@ -192,19 +214,23 @@ export function SchoolProvider({ children }: { children: React.ReactNode }) {
       }
     );
     return () => unsub();
-  }, [tick]);
+  }, [schoolId, tick]);
 
-  // Subscribe to /subjects collection (custom SubjectDefinitions)
+  // Subscribe to /subjects collection filtered by schoolId
   useEffect(() => {
+    if (!schoolId) {
+      setSubjectDefinitions([]);
+      return;
+    }
     const unsub = onSnapshot(
-      collection(db, 'subjects'),
+      query(collection(db, 'subjects'), where('schoolId', '==', schoolId)),
       snap => {
         setSubjectDefinitions(snap.docs.map(d => ({ id: d.id, ...d.data() } as SubjectDefinition)));
       },
       () => { /* silently ignore on error */ }
     );
     return () => unsub();
-  }, []);
+  }, [schoolId]);
 
   // Merge built-in subjects with custom subjects (deduplicated)
   const mergedSubjects = [...SUBJECTS, ...customSubjects.filter(s => !SUBJECTS.includes(s))];
@@ -235,6 +261,7 @@ export function SchoolProvider({ children }: { children: React.ReactNode }) {
       terms,
       refreshClasses: () => setTick(t => t + 1),
       loading,
+      schoolId,
       locale,
       currency,
       country,

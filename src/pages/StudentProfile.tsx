@@ -7,6 +7,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import toast from 'react-hot-toast';
 import { generateStudentInsights } from '../services/geminiService';
 import { useSchool } from '../components/SchoolContext';
+import { useSchoolId } from '../hooks/useSchoolId';
 import { uploadToCloudinary } from '../utils/cloudinaryUpload';
 import { 
   ArrowLeft, User, Phone, Mail, GraduationCap, Calendar, Hash, 
@@ -31,6 +32,7 @@ export default function StudentProfile() {
   const { id } = useParams();
   const navigate = useNavigate();
   const { cloudinaryConfig, currentSession } = useSchool();
+  const schoolId = useSchoolId();
   const [student, setStudent] = useState<Student | null>(null);
   const [classes, setClasses] = useState<SchoolClass[]>([]);
   const [loading, setLoading] = useState(true);
@@ -66,12 +68,13 @@ export default function StudentProfile() {
   }, [id]);
 
   useEffect(() => {
-    const q = query(collection(db, 'classes'));
+    if (!schoolId) return;
+    const q = query(collection(db, 'classes'), where('schoolId', '==', schoolId!));
     const unsubscribe = onSnapshot(q, (snapshot) => {
       setClasses(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as SchoolClass)));
     });
     return () => unsubscribe();
-  }, []);
+  }, [schoolId]);
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
     const { name, value } = e.target;
@@ -123,6 +126,7 @@ export default function StudentProfile() {
       // Fetch grades for the selected term
       const gradesSnap = await getDocs(query(
         collection(db, 'grades'),
+        where('schoolId', '==', schoolId!),
         where('studentId', '==', student.id),
         where('term', '==', insightTerm),
         where('session', '==', currentSession)
@@ -133,7 +137,7 @@ export default function StudentProfile() {
       });
 
       // Fetch attendance
-      const attSnap = await getDocs(query(collection(db, 'attendance'), where('studentId', '==', student.id)));
+      const attSnap = await getDocs(query(collection(db, 'attendance'), where('schoolId', '==', schoolId!), where('studentId', '==', student.id)));
       const total = attSnap.size;
       const present = attSnap.docs.filter(d => d.data().status === 'present').length;
       const attendanceRate = total > 0 ? Math.round((present / total) * 100) : 100;

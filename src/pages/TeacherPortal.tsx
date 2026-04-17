@@ -14,6 +14,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import ReactMarkdown from 'react-markdown';
 import toast from 'react-hot-toast';
 import { useSchool } from '../components/SchoolContext';
+import { useSchoolId } from '../hooks/useSchoolId';
 import {
   BookOpen, Users, MessageSquare, Plus, Send, Loader2,
   Calendar, CheckCircle2, Clock, Filter, Search,
@@ -36,6 +37,7 @@ export default function TeacherPortal() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const { classNames, subjects, currentSession, gradingSystem, customGradingScale, terms } = useSchool();
+  const schoolId = useSchoolId();
 
   // Derived helpers (safe fallbacks)
   const allClasses = classNames.length > 0 ? classNames : ['—'];
@@ -126,21 +128,22 @@ export default function TeacherPortal() {
 
   useEffect(() => {
     if (!user) return;
+    if (!schoolId) return;
 
-    const qStudents = query(collection(db, 'students'), where('currentClass', '==', selectedClass));
+    const qStudents = query(collection(db, 'students'), where('schoolId', '==', schoolId!), where('currentClass', '==', selectedClass));
     const unsubStudents = onSnapshot(qStudents, snap => {
       const list = snap.docs.map(d => ({ id: d.id, ...d.data() } as Student));
       setStudents(list);
       setLoading(false);
     });
 
-    const qAssignments = query(collection(db, 'assignments'), where('teacherId', '==', user.uid));
+    const qAssignments = query(collection(db, 'assignments'), where('schoolId', '==', schoolId!), where('teacherId', '==', user.uid));
     const unsubAssign = onSnapshot(qAssignments, snap => {
       setAssignments(snap.docs.map(d => ({ id: d.id, ...d.data() } as Assignment)));
     });
 
-    const qMsgs = query(collection(db, 'messages'), where('receiverId', 'in', [user.uid, user.email]), orderBy('timestamp', 'desc'));
-    const qSent = query(collection(db, 'messages'), where('senderId', '==', user.uid), orderBy('timestamp', 'desc'));
+    const qMsgs = query(collection(db, 'messages'), where('schoolId', '==', schoolId!), where('receiverId', 'in', [user.uid, user.email]), orderBy('timestamp', 'desc'));
+    const qSent = query(collection(db, 'messages'), where('schoolId', '==', schoolId!), where('senderId', '==', user.uid), orderBy('timestamp', 'desc'));
 
     const unsubMsgs = onSnapshot(qMsgs, snap => {
       const received = snap.docs.map(d => ({ id: d.id, ...d.data() } as Message));
@@ -161,7 +164,7 @@ export default function TeacherPortal() {
     });
 
     // Fetch all timetables and filter client-side for periods assigned to this teacher
-    const unsubTimetables = onSnapshot(collection(db, 'timetables'), snap => {
+    const unsubTimetables = onSnapshot(query(collection(db, 'timetables'), where('schoolId', '==', schoolId!)), snap => {
       const teacherName = profile?.displayName;
       if (!teacherName) return;
       const matched = snap.docs
@@ -175,7 +178,7 @@ export default function TeacherPortal() {
     });
 
     // Subscribe to geo-fence config
-    const unsubFence = onSnapshot(doc(db, 'geofences', 'main'), snap => {
+    const unsubFence = onSnapshot(doc(db, 'geofences', schoolId ?? 'main'), snap => {
       setGeofence(snap.exists() ? ({ id: snap.id, ...snap.data() } as GeoFence) : null);
     });
 
@@ -183,6 +186,7 @@ export default function TeacherPortal() {
     const today = new Date().toISOString().split('T')[0];
     const qCheckins = query(
       collection(db, 'attendance_checkins'),
+      where('schoolId', '==', schoolId!),
       where('teacherId', '==', user.uid),
       where('date', '==', today),
     );
@@ -198,7 +202,7 @@ export default function TeacherPortal() {
       unsubStudents(); unsubAssign(); unsubMsgs(); unsubSent();
       unsubTimetables(); unsubFence(); unsubCheckins();
     };
-  }, [user, selectedClass, profile?.displayName]);
+  }, [user, selectedClass, profile?.displayName, schoolId]);
 
   // ── Auto geo-fence crossing detection via watchPosition ─────────────────────
   useEffect(() => {
@@ -225,6 +229,7 @@ export default function TeacherPortal() {
           withinFence: type === 'check_in', // check_in only fires inside fence
           spoofDetected: false,
           autoDetected: true,
+          schoolId: schoolId ?? 'main',
         });
 
         // Browser notification so teacher knows it fired
@@ -303,6 +308,7 @@ export default function TeacherPortal() {
     const fetchExisting = async () => {
       const q = query(
         collection(db, 'attendance'),
+        where('schoolId', '==', schoolId!),
         where('class', '==', selectedClass),
         where('date', '==', attendanceDate)
       );
@@ -364,9 +370,11 @@ export default function TeacherPortal() {
   // ── Load existing grades when subject/class/term changes ──
   useEffect(() => {
     if (activeTab !== 'grades' || students.length === 0) return;
+    if (!schoolId) return;
     const fetchGrades = async () => {
       const q = query(
         collection(db, 'grades'),
+        where('schoolId', '==', schoolId!),
         where('class', '==', selectedClass),
         where('subject', '==', gradeSubject),
         where('term', '==', gradeTerm),
@@ -402,9 +410,11 @@ export default function TeacherPortal() {
   // ── Load existing skills when class/term changes ──
   useEffect(() => {
     if (activeTab !== 'skills' || students.length === 0) return;
+    if (!schoolId) return;
     const fetchSkillsData = async () => {
       const q = query(
         collection(db, 'student_skills'),
+        where('schoolId', '==', schoolId!),
         where('class', '==', selectedClass),
         where('term', '==', skillsTerm),
         where('session', '==', skillsSession)
@@ -447,7 +457,7 @@ export default function TeacherPortal() {
           batch.update(doc(db, 'grades', g.id), { ...withPos, updatedAt: serverTimestamp() });
         } else {
           const ref = doc(collection(db, 'grades'));
-          batch.set(ref, { ...withPos, updatedAt: serverTimestamp() });
+          batch.set(ref, { ...withPos, schoolId: schoolId ?? 'main', updatedAt: serverTimestamp() });
         }
       }
       await batch.commit();
@@ -471,6 +481,7 @@ export default function TeacherPortal() {
     try {
       const q = query(
         collection(db, 'student_skills'),
+        where('schoolId', '==', schoolId!),
         where('class', '==', selectedClass),
         where('term', '==', skillsTerm),
         where('session', '==', skillsSession)
@@ -487,6 +498,7 @@ export default function TeacherPortal() {
           term: skillsTerm as StudentSkillRecord['term'],
           session: skillsSession,
           skills: s,
+          schoolId: schoolId ?? 'main',
           updatedAt: serverTimestamp(),
         };
         if (existingMap[studentId]) {
@@ -512,7 +524,7 @@ export default function TeacherPortal() {
       setEditingAssignment(null);
     } else {
       await addDoc(collection(db, 'assignments'), {
-        ...newAssignment, teacherId: user.uid, createdAt: serverTimestamp()
+        ...newAssignment, teacherId: user.uid, schoolId: schoolId ?? 'main', createdAt: serverTimestamp()
       });
     }
     setNewAssignment({ title: '', description: '', subject: allSubjects[0], class: allClasses[0], dueDate: '' });
@@ -621,6 +633,7 @@ export default function TeacherPortal() {
         accuracy: Math.round(gps.accuracy),
         withinFence: true,   // only reachable for check_in if within fence (check_out skips fence check)
         spoofDetected: spoofed,
+        schoolId: schoolId ?? 'main',
       } satisfies Omit<TeacherCheckIn, 'id'>);
 
       if (spoofed) {
@@ -651,7 +664,7 @@ export default function TeacherPortal() {
     if (!user || !profile || !newMessage.receiverId) return;
     await addDoc(collection(db, 'messages'), {
       ...newMessage, senderId: user.uid, senderName: profile.displayName,
-      timestamp: serverTimestamp(), read: false
+      timestamp: serverTimestamp(), read: false, schoolId: schoolId ?? 'main',
     });
     setNewMessage({ ...newMessage, content: '' });
   };

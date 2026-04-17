@@ -1,18 +1,24 @@
 import React, { createContext, useContext, useEffect, useState, ReactNode } from 'react';
 import { onAuthStateChanged, User, signInWithPopup, GoogleAuthProvider, signOut, signInWithEmailAndPassword, createUserWithEmailAndPassword } from 'firebase/auth';
-import { doc, onSnapshot, setDoc, getDoc } from 'firebase/firestore';
+import { doc, setDoc, getDoc } from 'firebase/firestore';
 import { auth, db, handleFirestoreError, OperationType } from '../firebase';
 import { UserProfile } from '../types';
+
+// Emails that are automatically bootstrapped as super_admin on first sign-in
+const SUPER_ADMIN_EMAILS = ['jabpa87@gmail.com', 'bobychampion87@gmail.com'];
 
 interface AuthContextType {
   user: User | null;
   profile: UserProfile | null;
   loading: boolean;
   isAdmin: boolean;
+  isSuperAdmin: boolean;
+  /** schoolId from the user's profile (null for super_admin) */
+  schoolId: string | null;
   authError: string | null;
   login: () => Promise<void>;
   loginWithEmail: (email: string, pass: string) => Promise<void>;
-  registerWithEmail: (email: string, pass: string, name: string, role?: UserProfile['role']) => Promise<void>;
+  registerWithEmail: (email: string, pass: string, name: string, role?: UserProfile['role'], schoolId?: string) => Promise<void>;
   logout: () => Promise<void>;
   clearError: () => void;
 }
@@ -44,11 +50,15 @@ export function FirebaseProvider({ children }: { children: ReactNode }) {
         if (profileSnap.exists()) {
           setProfile(profileSnap.data() as UserProfile);
         } else {
+          // Bootstrap first-time profile
+          const isSuperAdminEmail = SUPER_ADMIN_EMAILS.includes(currentUser.email ?? '');
           const newProfile: UserProfile = {
             uid: currentUser.uid,
             email: currentUser.email || '',
-            role: (currentUser.email === 'jabpa87@gmail.com' || currentUser.email === 'bobychampion87@gmail.com') ? 'admin' : 'applicant',
-            displayName: currentUser.displayName || 'New User'
+            role: isSuperAdminEmail ? 'super_admin' : 'applicant',
+            displayName: currentUser.displayName || 'New User',
+            // super_admin has no schoolId — they manage all schools
+            ...(isSuperAdminEmail ? {} : { schoolId: undefined }),
           };
           await setDoc(profileRef, newProfile);
           setProfile(newProfile);
@@ -103,18 +113,25 @@ export function FirebaseProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  const registerWithEmail = async (email: string, pass: string, name: string, role?: UserProfile['role']) => {
+  const registerWithEmail = async (
+    email: string,
+    pass: string,
+    name: string,
+    role?: UserProfile['role'],
+    schoolId?: string
+  ) => {
     setAuthError(null);
     try {
       const result = await createUserWithEmailAndPassword(auth, email, pass);
       const profileRef = doc(db, 'users', result.user.uid);
-      const isSuperAdmin = email === 'jabpa87@gmail.com' || email === 'bobychampion87@gmail.com';
-      const assignedRole: UserProfile['role'] = isSuperAdmin ? 'admin' : (role ?? 'applicant');
+      const isSuperAdminEmail = SUPER_ADMIN_EMAILS.includes(email);
+      const assignedRole: UserProfile['role'] = isSuperAdminEmail ? 'super_admin' : (role ?? 'applicant');
       const newProfile: UserProfile = {
         uid: result.user.uid,
-        email: email,
+        email,
         role: assignedRole,
-        displayName: name
+        displayName: name,
+        ...(schoolId ? { schoolId } : {}),
       };
       await setDoc(profileRef, newProfile);
       setProfile(newProfile);
@@ -138,15 +155,26 @@ export function FirebaseProvider({ children }: { children: ReactNode }) {
 
   const clearError = () => setAuthError(null);
 
-  const isAdmin = profile?.role !== 'teacher' && profile?.role !== 'parent' && profile?.role !== 'applicant' && (
-                  profile?.role === 'admin' || 
-                  profile?.role === 'School_admin' || 
-                  user?.email === 'jabpa87@gmail.com' ||
-                  user?.email === 'bobychampion87@gmail.com'
-                );
+  // isSuperAdmin: platform-level, no school scope
+  const isSuperAdmin = profile?.role === 'super_admin';
+
+  // isAdmin: school-scoped admin (admin or School_admin with a schoolId)
+  // super_admin is NOT isAdmin — they use their own dashboard
+  const isAdmin =
+    !isSuperAdmin &&
+    profile !== null &&
+    (profile.role === 'admin' || profile.role === 'School_admin' || profile.role === 'accountant');
+
+  // schoolId: from profile (undefined for super_admin)
+  const schoolId = profile?.schoolId ?? null;
 
   return (
-    <AuthContext.Provider value={{ user, profile, loading, isAdmin, authError, login, loginWithEmail, registerWithEmail, logout, clearError }}>
+    <AuthContext.Provider value={{
+      user, profile, loading,
+      isAdmin, isSuperAdmin, schoolId,
+      authError,
+      login, loginWithEmail, registerWithEmail, logout, clearError
+    }}>
       {children}
     </AuthContext.Provider>
   );

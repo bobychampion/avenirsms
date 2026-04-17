@@ -4,6 +4,7 @@ import { db, handleFirestoreError, OperationType } from '../firebase';
 import { collection, query, onSnapshot, addDoc, updateDoc, doc, deleteDoc, where, getDocs } from 'firebase/firestore';
 import { SchoolClass, ClassSubject, SUBJECTS, UserProfile } from '../types';
 import { useSchool } from '../components/SchoolContext';
+import { useSchoolId } from '../hooks/useSchoolId';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   Plus, Trash2, Edit2, Users, BookOpen, UserCheck, 
@@ -13,6 +14,7 @@ import {
 
 export default function ClassManagement() {
   const navigate = useNavigate();
+  const schoolId = useSchoolId();
   const { schoolLevels, currentSession, subjects: schoolSubjects } = useSchool();
   const [classes, setClasses] = useState<SchoolClass[]>([]);
   const [teachers, setTeachers] = useState<UserProfile[]>([]);
@@ -37,7 +39,8 @@ export default function ClassManagement() {
   const [editingSubject, setEditingSubject] = useState<ClassSubject | null>(null);
 
   useEffect(() => {
-    const q = query(collection(db, 'classes'));
+    if (!schoolId) return;
+    const q = query(collection(db, 'classes'), where('schoolId', '==', schoolId!));
     const unsubscribe = onSnapshot(q, (snapshot) => {
       setClasses(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as SchoolClass)));
       setLoading(false);
@@ -48,7 +51,7 @@ export default function ClassManagement() {
       setTeachers(snapshot.docs.map(doc => ({ uid: doc.id, ...doc.data() } as UserProfile)));
     });
 
-    const subjectsQuery = query(collection(db, 'class_subjects'));
+    const subjectsQuery = query(collection(db, 'class_subjects'), where('schoolId', '==', schoolId!));
     const unsubscribeSubjects = onSnapshot(subjectsQuery, (snapshot) => {
       setClassSubjects(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as ClassSubject)));
     });
@@ -58,7 +61,7 @@ export default function ClassManagement() {
       unsubscribeTeachers();
       unsubscribeSubjects();
     };
-  }, []);
+  }, [schoolId]);
 
   const handleSaveClass = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -66,7 +69,8 @@ export default function ClassManagement() {
       const tutor = teachers.find(t => t.uid === formData.formTutorId);
       const data = {
         ...formData,
-        formTutorName: tutor?.displayName || 'Not Assigned'
+        formTutorName: tutor?.displayName || 'Not Assigned',
+        schoolId: schoolId ?? undefined,
       };
 
       if (editingClass?.id) {
@@ -91,7 +95,8 @@ export default function ClassManagement() {
         classId: selectedClass.id,
         subjectName: subjectFormData.subjectName,
         teacherId: subjectFormData.teacherId,
-        teacherName: teacher?.displayName || 'Not Assigned'
+        teacherName: teacher?.displayName || 'Not Assigned',
+        schoolId: schoolId ?? undefined,
       };
 
       if (editingSubject?.id) {

@@ -4,6 +4,7 @@ import { collection, query, onSnapshot, orderBy, where, getDocs, addDoc, serverT
 import { Student, Attendance } from '../types';
 import { batchUpsertAttendance } from '../services/firestoreService';
 import { useAuth } from '../components/FirebaseProvider';
+import { useSchoolId } from '../hooks/useSchoolId';
 import { suggestAttendanceAlert } from '../services/geminiService';
 import { motion } from 'motion/react';
 import toast from 'react-hot-toast';
@@ -22,6 +23,7 @@ interface AttendanceRow {
 
 export default function AttendancePage() {
   const { user } = useAuth();
+  const schoolId = useSchoolId();
   const [selectedClass, setSelectedClass] = useState('');
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
   const [classRows, setClassRows] = useState<{ id: string; name: string }[]>([]);
@@ -47,17 +49,20 @@ export default function AttendancePage() {
 
   // Load classes from Firestore so the dropdown matches actual data
   useEffect(() => {
-    const q = query(collection(db, 'classes'), orderBy('name', 'asc'));
+    if (!schoolId) return;
+    const q = query(collection(db, 'classes'), where('schoolId', '==', schoolId!), orderBy('name', 'asc'));
     const unsub = onSnapshot(q, snap => {
       setClassRows(snap.docs.map(d => ({ id: d.id, name: (d.data().name as string) || '' })));
     });
     return () => unsub();
-  }, []);
+  }, [schoolId]);
 
   useEffect(() => {
+    if (!schoolId) return;
     if (!selectedClass) return;
     const q = query(
       collection(db, 'students'),
+      where('schoolId', '==', schoolId!),
       where('currentClass', '==', selectedClass),
       orderBy('studentName', 'asc')
     );
@@ -66,14 +71,16 @@ export default function AttendancePage() {
       setStudents(data);
     }, err => handleFirestoreError(err, OperationType.LIST, 'students'));
     return () => unsub();
-  }, [selectedClass]);
+  }, [selectedClass, schoolId]);
 
   // Load existing attendance for the selected class+date
   useEffect(() => {
+    if (!schoolId) return;
     if (!selectedClass || !selectedDate || students.length === 0) return;
     const loadExisting = async () => {
       const q = query(
         collection(db, 'attendance'),
+        where('schoolId', '==', schoolId!),
         where('class', '==', selectedClass),
         where('date', '==', selectedDate)
       );
@@ -87,7 +94,7 @@ export default function AttendancePage() {
       })));
     };
     loadExisting().catch(console.error);
-  }, [students, selectedDate, selectedClass]);
+  }, [students, selectedDate, selectedClass, schoolId]);
 
   const setAllStatus = (status: AttendanceStatus) => {
     setAttendanceRows(prev => prev.map(r => ({ ...r, status })));
@@ -114,7 +121,7 @@ export default function AttendancePage() {
     }));
     const tid = toast.loading('Saving attendance…');
     try {
-      await batchUpsertAttendance(records);
+      await batchUpsertAttendance(records, schoolId);
       toast.success('Attendance saved!', { id: tid });
       setSaved(true);
       setTimeout(() => setSaved(false), 3000);
@@ -128,7 +135,7 @@ export default function AttendancePage() {
   const loadReport = async () => {
     if (!selectedClass) return;
     setLoadingReport(true);
-    const q = query(collection(db, 'attendance'), where('class', '==', selectedClass));
+    const q = query(collection(db, 'attendance'), where('schoolId', '==', schoolId!), where('class', '==', selectedClass));
     const snap = await getDocs(q);
     const byStudent: Record<string, { id: string; name: string; present: number; absent: number; late: number }> = {};
     snap.docs.forEach(d => {
@@ -163,6 +170,7 @@ export default function AttendancePage() {
     }
     const q = query(
       collection(db, 'attendance'),
+      where('schoolId', '==', schoolId!),
       where('class', '==', selectedClass),
       where('date', '>=', firstDay),
       where('date', '<=', lastDay)
@@ -207,6 +215,7 @@ export default function AttendancePage() {
           type: 'attendance',
           read: false,
           createdAt: serverTimestamp(),
+          schoolId: schoolId ?? undefined,
         });
         toast.success(`Alert sent to parent of ${row.studentName}`, { id: tid });
       } else {

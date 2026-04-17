@@ -10,6 +10,7 @@ import { Notification, Student, CURRENT_SESSION } from '../types';
 import { motion, AnimatePresence } from 'motion/react';
 import toast from 'react-hot-toast';
 import { useClassSelectOptions } from '../components/SchoolContext';
+import { useSchoolId } from '../hooks/useSchoolId';
 import {
   Bell, Plus, Send, Trash2, Users, User, BookOpen,
   ArrowLeft, Loader2, ChevronDown, CheckCircle2, AlertCircle,
@@ -35,6 +36,7 @@ const TYPE_ICONS: Record<NotifType, React.ElementType> = {
 export default function NotificationsManagement() {
   const { profile } = useAuth();
   const classSelectOptions = useClassSelectOptions();
+  const schoolId = useSchoolId();
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [students, setStudents] = useState<Student[]>([]);
   const [loading, setLoading] = useState(true);
@@ -50,19 +52,20 @@ export default function NotificationsManagement() {
   const [studentSearch, setStudentSearch] = useState('');
 
   useEffect(() => {
+    if (!schoolId) return;
     const unsubNotif = onSnapshot(
-      query(collection(db, 'notifications'), orderBy('createdAt', 'desc')),
+      query(collection(db, 'notifications'), where('schoolId', '==', schoolId!), orderBy('createdAt', 'desc')),
       snap => {
         setNotifications(snap.docs.map(d => ({ id: d.id, ...d.data() } as Notification)));
         setLoading(false);
       },
       e => handleFirestoreError(e, OperationType.LIST, 'notifications')
     );
-    const unsubStudents = onSnapshot(collection(db, 'students'), snap => {
+    const unsubStudents = onSnapshot(query(collection(db, 'students'), where('schoolId', '==', schoolId!)), snap => {
       setStudents(snap.docs.map(d => ({ id: d.id, ...d.data() } as Student)));
     });
     return () => { unsubNotif(); unsubStudents(); };
-  }, []);
+  }, [schoolId]);
 
   const filteredStudents = students.filter(s =>
     studentSearch.length > 1 &&
@@ -83,7 +86,7 @@ export default function NotificationsManagement() {
         // Write one notification with recipientId = 'all'
         recipients = ['all'];
       } else if (targetMode === 'class') {
-        const snap = await getDocs(query(collection(db, 'students'), where('currentClass', '==', targetClass)));
+        const snap = await getDocs(query(collection(db, 'students'), where('schoolId', '==', schoolId!), where('currentClass', '==', targetClass)));
         const uids = snap.docs.map(d => d.data().guardianUserId).filter(Boolean) as string[];
         recipients = uids.length > 0 ? uids : ['all'];
       } else if (targetMode === 'student') {
@@ -102,6 +105,7 @@ export default function NotificationsManagement() {
           body: body.trim(),
           type: notifType,
           read: false,
+          schoolId: schoolId!,
           createdAt: serverTimestamp() as any,
         };
         batch.set(ref, payload);

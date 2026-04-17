@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import PaystackButton from '../components/PaystackPayment';
 import { DOCUMENT_TITLE_DEFAULT } from '../constants/appMeta';
+import { useSchoolId } from '../hooks/useSchoolId';
 
 const GRADE_COLORS: Record<string, string> = {
   A1: 'text-emerald-700 bg-emerald-50', B2: 'text-emerald-600 bg-emerald-50',
@@ -29,6 +30,7 @@ type TabType = 'progress' | 'attendance' | 'assignments' | 'finance' | 'messages
 export default function ParentPortal() {
   const { user, profile } = useAuth();
   const navigate = useNavigate();
+  const schoolId = useSchoolId();
   const [children, setChildren] = useState<Student[]>([]);
   const [selectedChild, setSelectedChild] = useState<Student | null>(null);
   const [grades, setGrades] = useState<Grade[]>([]);
@@ -46,16 +48,19 @@ export default function ParentPortal() {
 
   useEffect(() => {
     if (!user) return;
+    if (!schoolId) return;
 
     // ── Strategy 1: match by guardianEmail (email typed by admin during enrollment)
     const qByEmail = query(
       collection(db, 'students'),
+      where('schoolId', '==', schoolId!),
       where('guardianEmail', '==', user.email)
     );
 
     // ── Strategy 2: match by guardianUserId (UID written when admin selected "Link to existing parent account")
     const qByUid = query(
       collection(db, 'students'),
+      where('schoolId', '==', schoolId!),
       where('guardianUserId', '==', user.uid)
     );
 
@@ -111,6 +116,7 @@ export default function ParentPortal() {
 
     const qNotif = query(
       collection(db, 'notifications'),
+      where('schoolId', '==', schoolId!),
       where('recipientId', 'in', [user.uid, 'all']),
       orderBy('createdAt', 'desc')
     );
@@ -126,11 +132,13 @@ export default function ParentPortal() {
 
     const qMsgs = query(
       collection(db, 'messages'),
+      where('schoolId', '==', schoolId!),
       where('receiverId', 'in', [user.uid, user.email!]),
       orderBy('timestamp', 'desc')
     );
     const qSent = query(
       collection(db, 'messages'),
+      where('schoolId', '==', schoolId!),
       where('senderId', '==', user.uid),
       orderBy('timestamp', 'desc')
     );
@@ -166,10 +174,11 @@ export default function ParentPortal() {
     );
 
     return () => { unsubByEmail(); unsubByUid(); unsubNotif(); unsubMsgs(); unsubSent(); };
-  }, [user]);
+  }, [user, schoolId]);
 
   useEffect(() => {
     if (!selectedChild) return;
+    if (!schoolId) return;
 
     // Clear stale data immediately when switching children
     setGrades([]);
@@ -177,28 +186,28 @@ export default function ParentPortal() {
     setAssignments([]);
     setInvoices([]);
 
-    const qGrades = query(collection(db, 'grades'), where('studentId', '==', selectedChild.id));
+    const qGrades = query(collection(db, 'grades'), where('schoolId', '==', schoolId!), where('studentId', '==', selectedChild.id));
     const unsubGrades = onSnapshot(
       qGrades,
       snap => setGrades(snap.docs.map(d => ({ id: d.id, ...d.data() } as Grade))),
       err => console.error('[ParentPortal] grades query failed:', err.code, err.message)
     );
 
-    const qAtt = query(collection(db, 'attendance'), where('studentId', '==', selectedChild.id), orderBy('date', 'desc'));
+    const qAtt = query(collection(db, 'attendance'), where('schoolId', '==', schoolId!), where('studentId', '==', selectedChild.id), orderBy('date', 'desc'));
     const unsubAtt = onSnapshot(
       qAtt,
       snap => setAttendance(snap.docs.map(d => ({ id: d.id, ...d.data() } as Attendance))),
       err => console.error('[ParentPortal] attendance query failed:', err.code, err.message)
     );
 
-    const qAssign = query(collection(db, 'assignments'), where('class', '==', selectedChild.currentClass));
+    const qAssign = query(collection(db, 'assignments'), where('schoolId', '==', schoolId!), where('class', '==', selectedChild.currentClass));
     const unsubAssign = onSnapshot(
       qAssign,
       snap => setAssignments(snap.docs.map(d => ({ id: d.id, ...d.data() } as Assignment))),
       err => console.error('[ParentPortal] assignments query failed:', err.code, err.message)
     );
 
-    const qInv = query(collection(db, 'invoices'), where('studentId', '==', selectedChild.id), orderBy('createdAt', 'desc'));
+    const qInv = query(collection(db, 'invoices'), where('schoolId', '==', schoolId!), where('studentId', '==', selectedChild.id), orderBy('createdAt', 'desc'));
     const unsubInv = onSnapshot(
       qInv,
       snap => setInvoices(snap.docs.map(d => ({ id: d.id, ...d.data() } as Invoice))),
@@ -206,7 +215,7 @@ export default function ParentPortal() {
     );
 
     return () => { unsubGrades(); unsubAtt(); unsubAssign(); unsubInv(); };
-  }, [selectedChild]);
+  }, [selectedChild, schoolId]);
 
   const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -214,7 +223,7 @@ export default function ParentPortal() {
     try {
       await addDoc(collection(db, 'messages'), {
         ...newMessage, senderId: user.uid, senderName: profile.displayName,
-        timestamp: serverTimestamp(), read: false
+        timestamp: serverTimestamp(), read: false, schoolId: schoolId ?? 'main',
       });
       setNewMessage({ ...newMessage, content: '' });
     } catch (err: any) {

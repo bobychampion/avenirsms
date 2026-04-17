@@ -15,6 +15,8 @@ import {
   CreditCard, Printer, X, CheckCircle2, ChevronRight, Camera
 } from 'lucide-react';
 import { DOCUMENT_TITLE_DEFAULT } from '../constants/appMeta';
+import { useUnsavedChanges } from '../hooks/useUnsavedChanges';
+import UnsavedChangesDialog from '../components/UnsavedChangesDialog';
 
 interface AIInsight {
   overallRemark: string;
@@ -34,8 +36,11 @@ export default function StudentProfile() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [formData, setFormData] = useState<Partial<Student>>({});
+  const [isDirty, setIsDirty] = useState(false);
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
   const photoInputRef = useRef<HTMLInputElement>(null);
+
+  const { blocker } = useUnsavedChanges(isDirty);
 
   // AI Insights
   const [aiInsight, setAiInsight] = useState<AIInsight | null>(null);
@@ -71,6 +76,7 @@ export default function StudentProfile() {
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
     const { name, value } = e.target;
     setFormData(prev => ({ ...prev, [name]: value }));
+    setIsDirty(true);
   };
 
   const handleSave = async () => {
@@ -81,6 +87,7 @@ export default function StudentProfile() {
         ...formData,
         updatedAt: serverTimestamp()
       });
+      setIsDirty(false);
       toast.success('Profile updated successfully!');
     } catch (error) {
       handleFirestoreError(error, OperationType.UPDATE, `students/${id}`);
@@ -173,6 +180,7 @@ export default function StudentProfile() {
 
   return (
     <>
+    <UnsavedChangesDialog blocker={blocker} />
     <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-10">
       <div className="flex items-center space-x-4 mb-8">
         <button

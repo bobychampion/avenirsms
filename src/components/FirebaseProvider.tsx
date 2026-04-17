@@ -12,7 +12,7 @@ interface AuthContextType {
   authError: string | null;
   login: () => Promise<void>;
   loginWithEmail: (email: string, pass: string) => Promise<void>;
-  registerWithEmail: (email: string, pass: string, name: string) => Promise<void>;
+  registerWithEmail: (email: string, pass: string, name: string, role?: UserProfile['role']) => Promise<void>;
   logout: () => Promise<void>;
   clearError: () => void;
 }
@@ -103,15 +103,17 @@ export function FirebaseProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  const registerWithEmail = async (email: string, pass: string, name: string) => {
+  const registerWithEmail = async (email: string, pass: string, name: string, role?: UserProfile['role']) => {
     setAuthError(null);
     try {
       const result = await createUserWithEmailAndPassword(auth, email, pass);
       const profileRef = doc(db, 'users', result.user.uid);
+      const isSuperAdmin = email === 'jabpa87@gmail.com' || email === 'bobychampion87@gmail.com';
+      const assignedRole: UserProfile['role'] = isSuperAdmin ? 'admin' : (role ?? 'applicant');
       const newProfile: UserProfile = {
         uid: result.user.uid,
         email: email,
-        role: (email === 'jabpa87@gmail.com' || email === 'bobychampion87@gmail.com') ? 'admin' : 'applicant',
+        role: assignedRole,
         displayName: name
       };
       await setDoc(profileRef, newProfile);

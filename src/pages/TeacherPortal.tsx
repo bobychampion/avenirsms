@@ -1,12 +1,13 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { db, handleFirestoreError, OperationType } from '../firebase';
 import { useAuth } from '../components/FirebaseProvider';
 import {
   collection, query, onSnapshot, where, addDoc, serverTimestamp,
-  orderBy, updateDoc, doc, deleteDoc, getDocs, writeBatch
+  orderBy, updateDoc, doc, deleteDoc, getDocs, writeBatch, setDoc, getDoc,
 } from 'firebase/firestore';
-import { Student, Assignment, Message, SUBJECTS, TERMS, Grade, calculateGrade, StudentSkills, SKILL_LABELS, SkillRating, StudentSkillRecord } from '../types';
+import { Student, Assignment, Message, SUBJECTS, TERMS, Grade, calculateGrade, StudentSkills, SKILL_LABELS, SkillRating, StudentSkillRecord, Timetable, DAYS_OF_WEEK, GeoFence, TeacherCheckIn } from '../types';
+import { getCurrentPosition, isWithinFence, isAccuracyAcceptable, isSpoofedVelocity } from '../services/geofenceService';
 import { batchUpsertAttendance } from '../services/firestoreService';
 import { generateLessonNotes, generateExamQuestions } from '../services/geminiService';
 import { motion, AnimatePresence } from 'motion/react';
@@ -18,9 +19,10 @@ import {
   Calendar, CheckCircle2, Clock, Filter, Search,
   Edit2, Trash2, X, AlertCircle, ClipboardList, CheckSquare,
   Sparkles, FileText, Copy, ChevronDown, Star, Award,
+  MapPin, Navigation, LogIn, LogOut, ShieldAlert,
 } from 'lucide-react';
 
-type TabType = 'students' | 'attendance' | 'assignments' | 'grades' | 'skills' | 'messages' | 'ai_tools';
+type TabType = 'students' | 'attendance' | 'assignments' | 'grades' | 'skills' | 'messages' | 'ai_tools' | 'timetable';
 
 interface AttendanceRow {
   studentId: string;
@@ -42,6 +44,7 @@ export default function TeacherPortal() {
   const [students, setStudents] = useState<Student[]>([]);
   const [assignments, setAssignments] = useState<Assignment[]>([]);
   const [messages, setMessages] = useState<Message[]>([]);
+  const [myTimetables, setMyTimetables] = useState<Timetable[]>([]);
   const [loading, setLoading] = useState(true);
 
   // Derive activeTab from URL query param
@@ -101,6 +104,26 @@ export default function TeacherPortal() {
   const [skills, setSkills] = useState<Record<string, StudentSkills>>({});
   const [savingSkills, setSavingSkills] = useState(false);
 
+  // GPS check-in state
+  const [geofence, setGeofence] = useState<GeoFence | null>(null);
+  const [todayCheckIn, setTodayCheckIn] = useState<TeacherCheckIn | null>(null);
+  const [todayCheckOut, setTodayCheckOut] = useState<TeacherCheckIn | null>(null);
+  const [checkInLoading, setCheckInLoading] = useState(false);
+  const [autoTracking, setAutoTracking] = useState(false);
+  const [currentlyInFence, setCurrentlyInFence] = useState<boolean | null>(null);
+
+  // Refs so watchPosition callback always sees latest state
+  const geofenceRef     = useRef<GeoFence | null>(null);
+  const checkInRef      = useRef<TeacherCheckIn | null>(null);
+  const checkOutRef     = useRef<TeacherCheckIn | null>(null);
+  const prevInsideRef   = useRef<boolean | null>(null);
+  const watchIdRef      = useRef<number | null>(null);
+  const processingRef   = useRef(false); // prevent double-fire
+
+  useEffect(() => { geofenceRef.current  = geofence;      }, [geofence]);
+  useEffect(() => { checkInRef.current   = todayCheckIn;  }, [todayCheckIn]);
+  useEffect(() => { checkOutRef.current  = todayCheckOut; }, [todayCheckOut]);
+
   useEffect(() => {
     if (!user) return;
 
@@ -137,8 +160,141 @@ export default function TeacherPortal() {
       });
     });
 
-    return () => { unsubStudents(); unsubAssign(); unsubMsgs(); unsubSent(); };
-  }, [user, selectedClass]);
+    // Fetch all timetables and filter client-side for periods assigned to this teacher
+    const unsubTimetables = onSnapshot(collection(db, 'timetables'), snap => {
+      const teacherName = profile?.displayName;
+      if (!teacherName) return;
+      const matched = snap.docs
+        .map(d => ({ id: d.id, ...d.data() } as Timetable))
+        .filter(tt =>
+          DAYS_OF_WEEK.some(day =>
+            (tt.schedule[day] || []).some(p => p.teacher === teacherName)
+          )
+        );
+      setMyTimetables(matched);
+    });
+
+    // Subscribe to geo-fence config
+    const unsubFence = onSnapshot(doc(db, 'geofences', 'main'), snap => {
+      setGeofence(snap.exists() ? ({ id: snap.id, ...snap.data() } as GeoFence) : null);
+    });
+
+    // Subscribe to today's check-in / check-out events for this teacher
+    const today = new Date().toISOString().split('T')[0];
+    const qCheckins = query(
+      collection(db, 'attendance_checkins'),
+      where('teacherId', '==', user.uid),
+      where('date', '==', today),
+    );
+    const unsubCheckins = onSnapshot(qCheckins, snap => {
+      snap.docs.forEach(d => {
+        const ev = { id: d.id, ...d.data() } as TeacherCheckIn;
+        if (ev.type === 'check_in') setTodayCheckIn(ev);
+        if (ev.type === 'check_out') setTodayCheckOut(ev);
+      });
+    });
+
+    return () => {
+      unsubStudents(); unsubAssign(); unsubMsgs(); unsubSent();
+      unsubTimetables(); unsubFence(); unsubCheckins();
+    };
+  }, [user, selectedClass, profile?.displayName]);
+
+  // ── Auto geo-fence crossing detection via watchPosition ─────────────────────
+  useEffect(() => {
+    if (!user || !profile) return;
+    if (!navigator.geolocation) return;
+
+    const recordAutoEvent = async (
+      type: 'check_in' | 'check_out',
+      lat: number, lng: number, accuracy: number, ts: number,
+    ) => {
+      if (processingRef.current) return;
+      processingRef.current = true;
+      try {
+        const today = new Date().toISOString().split('T')[0];
+        const docId = `${user.uid}_${today}_${type}`;
+        await setDoc(doc(db, 'attendance_checkins', docId), {
+          teacherId: user.uid,
+          teacherName: profile.displayName,
+          type,
+          date: today,
+          timestamp: serverTimestamp(),
+          lat, lng,
+          accuracy: Math.round(accuracy),
+          withinFence: type === 'check_in', // check_in only fires inside fence
+          spoofDetected: false,
+          autoDetected: true,
+        });
+
+        // Browser notification so teacher knows it fired
+        if ('Notification' in window && Notification.permission === 'granted') {
+          const timeStr = new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+          new Notification(
+            type === 'check_in' ? '✅ Auto checked in' : '👋 Auto checked out',
+            { body: `Recorded at ${timeStr}`, icon: '/favicon.svg', tag: type, silent: true },
+          );
+        }
+      } catch (e) {
+        console.warn('Auto check-in write failed:', e);
+      } finally {
+        processingRef.current = false;
+      }
+    };
+
+    const startWatch = () => {
+      if (watchIdRef.current !== null) return; // already watching
+
+      setAutoTracking(true);
+      watchIdRef.current = navigator.geolocation.watchPosition(
+        pos => {
+          const { latitude: lat, longitude: lng, accuracy } = pos.coords;
+          const fence = geofenceRef.current;
+
+          // Skip inaccurate readings
+          if (accuracy > 150) return;
+          if (!fence) return;
+
+          const inside = isWithinFence(lat, lng, fence);
+          const prev   = prevInsideRef.current;
+
+          setCurrentlyInFence(inside);
+
+          // ── Crossed IN → auto check-in ──────────────────────────────────────
+          if (inside && prev === false && !checkInRef.current) {
+            void recordAutoEvent('check_in', lat, lng, accuracy, pos.timestamp);
+          }
+
+          // ── Crossed OUT → auto check-out ────────────────────────────────────
+          if (!inside && prev === true && checkInRef.current && !checkOutRef.current) {
+            void recordAutoEvent('check_out', lat, lng, accuracy, pos.timestamp);
+          }
+
+          prevInsideRef.current = inside;
+        },
+        err => console.warn('watchPosition error:', err.message),
+        { enableHighAccuracy: true, maximumAge: 30_000, timeout: 20_000 },
+      );
+    };
+
+    const stopWatch = () => {
+      if (watchIdRef.current !== null) {
+        navigator.geolocation.clearWatch(watchIdRef.current);
+        watchIdRef.current = null;
+      }
+      setAutoTracking(false);
+    };
+
+    // Start watching if work is not done for today
+    if (!todayCheckIn || !todayCheckOut) {
+      startWatch();
+    } else {
+      stopWatch();
+    }
+
+    return stopWatch;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.uid, profile?.displayName, todayCheckIn?.id, todayCheckOut?.id]);
 
   // Load existing attendance when class or date changes (in attendance tab)
   useEffect(() => {
@@ -394,6 +550,98 @@ export default function TeacherPortal() {
     }
   };
 
+  const handleGpsEvent = async (type: 'check_in' | 'check_out') => {
+    if (!user || !profile) return;
+    setCheckInLoading(true);
+    const tid = toast.loading(type === 'check_in' ? 'Verifying your location…' : 'Recording check-out…');
+    try {
+      const gps = await getCurrentPosition();
+
+      // ── 1. GPS accuracy gate ────────────────────────────────────────────────
+      if (!isAccuracyAcceptable(gps.accuracy)) {
+        toast.error(
+          `GPS signal too weak (±${Math.round(gps.accuracy)} m). Step outside or move away from buildings and try again.`,
+          { id: tid },
+        );
+        return;
+      }
+
+      // ── 2. Geo-fence boundary check — HARD BLOCK ────────────────────────────
+      // Check-in is only allowed from within the school boundary.
+      // Check-out is always allowed (teacher may leave and forget to check out).
+      if (geofence && type === 'check_in') {
+        const within = isWithinFence(gps.lat, gps.lng, geofence);
+        if (!within) {
+          const dist = Math.round(
+            // haversine re-used inline to show distance
+            (() => {
+              const R = 6_371_000;
+              const toRad = (d: number) => (d * Math.PI) / 180;
+              const dLat = toRad(gps.lat - geofence.lat);
+              const dLng = toRad(gps.lng - geofence.lng);
+              const a = Math.sin(dLat / 2) ** 2 +
+                Math.cos(toRad(geofence.lat)) * Math.cos(toRad(gps.lat)) * Math.sin(dLng / 2) ** 2;
+              return 2 * R * Math.asin(Math.sqrt(a));
+            })()
+          );
+          toast.error(
+            `Check-in blocked — you are ${dist} m outside the school boundary. You must be on school premises to check in.`,
+            { id: tid, duration: 6000 },
+          );
+          return;
+        }
+      }
+
+      // ── 3. Velocity / spoof check ───────────────────────────────────────────
+      // Compare against today's previous check-in to detect impossible movement.
+      const previous = todayCheckIn
+        ? {
+            lat: todayCheckIn.lat,
+            lng: todayCheckIn.lng,
+            timestamp: todayCheckIn.timestamp?.toMillis?.() ?? Date.now(),
+          }
+        : null;
+
+      const spoofed = isSpoofedVelocity(
+        { lat: gps.lat, lng: gps.lng, timestamp: gps.timestamp },
+        previous,
+      );
+
+      const today = new Date().toISOString().split('T')[0];
+      const docId = `${user.uid}_${today}_${type}`;
+
+      await setDoc(doc(db, 'attendance_checkins', docId), {
+        teacherId: user.uid,
+        teacherName: profile.displayName,
+        type,
+        date: today,
+        timestamp: serverTimestamp(),
+        lat: gps.lat,
+        lng: gps.lng,
+        accuracy: Math.round(gps.accuracy),
+        withinFence: true,   // only reachable for check_in if within fence (check_out skips fence check)
+        spoofDetected: spoofed,
+      } satisfies Omit<TeacherCheckIn, 'id'>);
+
+      if (spoofed) {
+        // Record it but flag it — let admin investigate
+        toast(
+          'Check-in recorded but flagged: your location changed unusually fast. An admin will review.',
+          { id: tid, icon: '⚠️', duration: 6000 },
+        );
+      } else {
+        toast.success(
+          type === 'check_in' ? 'Checked in — welcome!' : 'Checked out — see you tomorrow!',
+          { id: tid },
+        );
+      }
+    } catch (err: any) {
+      toast.error(err.message || 'Location error. Please try again.', { id: tid });
+    } finally {
+      setCheckInLoading(false);
+    }
+  };
+
   const copyToClipboard = () => {
     navigator.clipboard.writeText(aiOutput).then(() => toast.success('Copied to clipboard!'));
   };
@@ -410,6 +658,7 @@ export default function TeacherPortal() {
 
   const tabs: { id: TabType; label: string; Icon: React.ElementType }[] = [
     { id: 'students', label: 'My Students', Icon: Users },
+    { id: 'timetable', label: 'My Timetable', Icon: Clock },
     { id: 'attendance', label: 'Attendance', Icon: ClipboardList },
     { id: 'grades', label: 'Gradebook', Icon: Award },
     { id: 'skills', label: 'Skills', Icon: Star },
@@ -458,6 +707,106 @@ export default function TeacherPortal() {
           </button>
         ))}
       </div>
+
+      {/* GPS Attendance widget */}
+      {geofence && (
+        <div className={`border rounded-2xl shadow-sm p-5 mb-6 ${
+          todayCheckIn?.spoofDetected ? 'bg-amber-50 border-amber-200' : 'bg-white border-slate-200'
+        }`}>
+          {/* Top row: status + actions */}
+          <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4">
+            <div className="flex items-center gap-3 flex-1 min-w-0">
+              {/* Fence presence indicator */}
+              <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 relative ${
+                currentlyInFence === true  ? 'bg-emerald-50' :
+                currentlyInFence === false ? 'bg-rose-50' :
+                todayCheckIn ? 'bg-emerald-50' : 'bg-slate-100'
+              }`}>
+                <MapPin className={`w-5 h-5 ${
+                  currentlyInFence === true  ? 'text-emerald-600' :
+                  currentlyInFence === false ? 'text-rose-500' :
+                  todayCheckIn ? 'text-emerald-600' : 'text-slate-400'
+                }`} />
+                {autoTracking && (
+                  <span className="absolute -top-1 -right-1 w-3 h-3 bg-blue-500 rounded-full border-2 border-white animate-pulse" />
+                )}
+              </div>
+              <div className="min-w-0">
+                <p className="font-semibold text-slate-800 text-sm">
+                  {todayCheckIn && todayCheckOut
+                    ? 'Checked out — have a great evening'
+                    : todayCheckIn
+                      ? 'On campus — checked in'
+                      : currentlyInFence === true
+                        ? 'You are inside school premises'
+                        : currentlyInFence === false
+                          ? 'You are outside school premises'
+                          : 'Waiting for GPS signal…'}
+                </p>
+                <p className="text-xs text-slate-500 truncate mt-0.5">
+                  {todayCheckIn
+                    ? `In: ${new Date(todayCheckIn.timestamp?.toDate?.() ?? Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}${
+                        todayCheckOut
+                          ? `  ·  Out: ${new Date(todayCheckOut.timestamp?.toDate?.() ?? Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
+                          : '  ·  Still on campus'
+                      }${todayCheckIn.spoofDetected ? '  ·  ⚠️ Flagged for admin review' : ''}${
+                        (todayCheckIn as any).autoDetected ? '  ·  Auto-detected' : ''
+                      }`
+                    : autoTracking
+                      ? 'GPS is active — check-in fires automatically when you enter the school gate'
+                      : 'Open this page to activate GPS monitoring'}
+                </p>
+              </div>
+            </div>
+
+            {/* Manual fallback buttons */}
+            <div className="flex gap-2 shrink-0">
+              {!todayCheckIn && (
+                <button
+                  onClick={() => handleGpsEvent('check_in')}
+                  disabled={checkInLoading}
+                  className="flex items-center gap-2 px-4 py-2.5 bg-emerald-600 text-white font-bold rounded-xl hover:bg-emerald-700 transition-colors text-sm disabled:opacity-60">
+                  {checkInLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <LogIn className="w-4 h-4" />}
+                  {checkInLoading ? 'Verifying…' : 'Check In'}
+                </button>
+              )}
+              {todayCheckIn && !todayCheckOut && (
+                <button
+                  onClick={() => handleGpsEvent('check_out')}
+                  disabled={checkInLoading}
+                  className="flex items-center gap-2 px-4 py-2.5 bg-rose-600 text-white font-bold rounded-xl hover:bg-rose-700 transition-colors text-sm disabled:opacity-60">
+                  {checkInLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <LogOut className="w-4 h-4" />}
+                  Check Out
+                </button>
+              )}
+              {todayCheckIn && todayCheckOut && (
+                <span className="flex items-center gap-2 px-4 py-2.5 bg-slate-100 text-slate-500 font-semibold rounded-xl text-sm">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-500" /> Done for today
+                </span>
+              )}
+            </div>
+          </div>
+
+          {/* Bottom: live fence status bar */}
+          {autoTracking && (
+            <div className={`mt-3 pt-3 border-t flex items-center gap-2 text-xs font-medium ${
+              currentlyInFence === true  ? 'border-emerald-100 text-emerald-700' :
+              currentlyInFence === false ? 'border-rose-100 text-rose-600' :
+              'border-slate-100 text-slate-400'
+            }`}>
+              <span className={`w-2 h-2 rounded-full ${
+                currentlyInFence === true  ? 'bg-emerald-500 animate-pulse' :
+                currentlyInFence === false ? 'bg-rose-400' :
+                'bg-slate-300'
+              }`} />
+              {currentlyInFence === true  ? 'Currently INSIDE school boundary — GPS tracking active' :
+               currentlyInFence === false ? 'Currently OUTSIDE school boundary' :
+               'Acquiring GPS position…'}
+              <span className="ml-auto text-slate-400 font-normal">Auto-monitoring on</span>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Tab Bar */}
       <div className="flex space-x-1 bg-slate-100 p-1 rounded-xl mb-8 w-fit">
@@ -1093,6 +1442,64 @@ export default function TeacherPortal() {
               </div>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* My Timetable Tab */}
+      {activeTab === 'timetable' && (
+        <div className="space-y-6">
+          {myTimetables.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-20 text-slate-300 gap-3">
+              <Clock className="w-12 h-12" />
+              <p className="text-slate-500 text-sm">No timetable entries found for your account.</p>
+              <p className="text-slate-400 text-xs">Ask your admin to assign you to classes in the Timetable module.</p>
+            </div>
+          ) : (
+            myTimetables.map(tt => {
+              const teacherName = profile?.displayName;
+              return (
+                <div key={tt.id} className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+                  <div className="bg-slate-900 text-white px-5 py-3 flex items-center gap-3">
+                    <Clock className="w-4 h-4 text-indigo-400" />
+                    <span className="font-bold text-sm">{tt.class}</span>
+                    <span className="text-slate-400 text-xs">— {tt.term} · {tt.session}</span>
+                  </div>
+                  <div className="overflow-x-auto">
+                    <table className="w-full min-w-[600px] text-sm">
+                      <thead>
+                        <tr className="bg-slate-50 border-b border-slate-200">
+                          <th className="px-4 py-2.5 text-left text-xs font-bold text-slate-500 uppercase tracking-wide w-24">Day</th>
+                          <th className="px-4 py-2.5 text-left text-xs font-bold text-slate-500 uppercase tracking-wide">Your Periods</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {DAYS_OF_WEEK.map(day => {
+                          const myPeriods = (tt.schedule[day] || []).filter(p => p.teacher === teacherName);
+                          if (myPeriods.length === 0) return null;
+                          return (
+                            <tr key={day} className="hover:bg-slate-50 transition-colors">
+                              <td className="px-4 py-3 font-bold text-slate-700 text-sm">{day}</td>
+                              <td className="px-4 py-3">
+                                <div className="flex flex-wrap gap-2">
+                                  {myPeriods.map((p, i) => (
+                                    <div key={i} className="flex items-center gap-2 bg-indigo-50 text-indigo-700 border border-indigo-200 rounded-xl px-3 py-1.5 text-xs">
+                                      <span className="font-bold">{p.subject}</span>
+                                      <span className="text-indigo-400">·</span>
+                                      <span>{p.startTime}–{p.endTime}</span>
+                                    </div>
+                                  ))}
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        }).filter(Boolean)}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              );
+            })
+          )}
         </div>
       )}
 

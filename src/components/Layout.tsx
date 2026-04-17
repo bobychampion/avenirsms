@@ -1,11 +1,15 @@
 import React, { useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from './FirebaseProvider';
+import { useSchool } from './SchoolContext';
+import { useMobile } from '../hooks/useMobile';
+import { MobileShell } from './MobileShell';
 import {
   GraduationCap, LogOut, LayoutDashboard, Users, UserCheck, BookOpen,
   ClipboardList, Calendar, DollarSign, FileText, Settings, BarChart3,
   Clock, Award, Briefcase, CreditCard, Map, Menu, X, Bell,
-  ArrowUpRight, Key, Sparkles, MessageSquare, Star, CheckSquare, FileSpreadsheet, Database
+  ArrowUpRight, Key, Sparkles, MessageSquare, Star, CheckSquare, FileSpreadsheet, Database,
+  HelpCircle
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 
@@ -36,6 +40,17 @@ const teacherNavGroups = [
     label: 'AI Tools',
     items: [
       { to: '/teacher?tab=ai_tools', label: 'AI Teaching Tools', icon: Sparkles, exact: false },
+    ],
+  },
+];
+
+const accountantNavGroups = [
+  {
+    label: 'Finance',
+    items: [
+      { to: '/admin/finance', label: 'Finance', icon: DollarSign },
+      { to: '/admin/payroll', label: 'Payroll', icon: CreditCard },
+      { to: '/admin/analytics', label: 'Analytics', icon: BarChart3 },
     ],
   },
 ];
@@ -85,8 +100,9 @@ const adminNavGroups = [
   },
 ];
 
-function AdminSidebar({ open, onClose }: { open: boolean; onClose: () => void }) {
+function AdminSidebar({ open, onClose, schoolName, logoUrl, navGroups: customNavGroups }: { open: boolean; onClose: () => void; schoolName: string; logoUrl: string; navGroups?: typeof adminNavGroups }) {
   const location = useLocation();
+  const navGroups = customNavGroups ?? adminNavGroups;
 
   return (
     <>
@@ -109,11 +125,15 @@ function AdminSidebar({ open, onClose }: { open: boolean; onClose: () => void })
         {/* Logo */}
         <div className="flex items-center justify-between px-5 py-5 border-b border-slate-700">
           <Link to="/admin" className="flex items-center gap-3" onClick={onClose}>
-            <div className="bg-indigo-600 p-2 rounded-xl">
-              <GraduationCap className="w-5 h-5 text-white" />
-            </div>
+            {logoUrl ? (
+              <img src={logoUrl} alt={schoolName} className="w-9 h-9 object-contain rounded-xl bg-white p-0.5" />
+            ) : (
+              <div className="bg-indigo-600 p-2 rounded-xl">
+                <GraduationCap className="w-5 h-5 text-white" />
+              </div>
+            )}
             <div>
-              <p className="text-white font-bold text-sm leading-tight">Avenir SIS</p>
+              <p className="text-white font-bold text-sm leading-tight">{schoolName}</p>
               <p className="text-slate-400 text-xs">School Management</p>
             </div>
           </Link>
@@ -124,7 +144,7 @@ function AdminSidebar({ open, onClose }: { open: boolean; onClose: () => void })
 
         {/* Nav */}
         <nav className="flex-1 overflow-y-auto py-4 px-3 space-y-6">
-          {adminNavGroups.map(group => (
+          {navGroups.map(group => (
             <div key={group.label}>
               <p className="text-slate-500 text-xs font-semibold uppercase tracking-widest px-3 mb-2">
                 {group.label}
@@ -159,8 +179,8 @@ function AdminSidebar({ open, onClose }: { open: boolean; onClose: () => void })
           ))}
         </nav>
 
-        {/* Calendar quick link */}
-        <div className="p-3 border-t border-slate-700">
+        {/* Calendar quick link + Getting Started */}
+        <div className="p-3 border-t border-slate-700 space-y-1">
           <Link
             to="/calendar"
             onClick={onClose}
@@ -169,13 +189,21 @@ function AdminSidebar({ open, onClose }: { open: boolean; onClose: () => void })
             <Calendar className="w-4 h-4" />
             School Calendar
           </Link>
+          <Link
+            to="/onboarding"
+            onClick={onClose}
+            className="flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium text-slate-300 hover:bg-indigo-700 hover:text-white transition-all"
+          >
+            <HelpCircle className="w-4 h-4 text-indigo-400" />
+            Getting Started Guide
+          </Link>
         </div>
       </aside>
     </>
   );
 }
 
-function TeacherSidebar({ open, onClose, displayName }: { open: boolean; onClose: () => void; displayName?: string }) {
+function TeacherSidebar({ open, onClose, displayName, schoolName, logoUrl }: { open: boolean; onClose: () => void; displayName?: string; schoolName: string; logoUrl: string }) {
   const location = useLocation();
   const activeTab = new URLSearchParams(location.search).get('tab') || '';
 
@@ -194,11 +222,15 @@ function TeacherSidebar({ open, onClose, displayName }: { open: boolean; onClose
         {/* Logo */}
         <div className="flex items-center justify-between px-5 py-5 border-b border-slate-700">
           <Link to="/teacher" className="flex items-center gap-3" onClick={onClose}>
-            <div className="bg-emerald-600 p-2 rounded-xl">
-              <GraduationCap className="w-5 h-5 text-white" />
-            </div>
+            {logoUrl ? (
+              <img src={logoUrl} alt={schoolName} className="w-9 h-9 object-contain rounded-xl bg-white p-0.5" />
+            ) : (
+              <div className="bg-emerald-600 p-2 rounded-xl">
+                <GraduationCap className="w-5 h-5 text-white" />
+              </div>
+            )}
             <div>
-              <p className="text-white font-bold text-sm leading-tight">Avenir SIS</p>
+              <p className="text-white font-bold text-sm leading-tight">{schoolName}</p>
               <p className="text-emerald-400 text-xs font-medium">Teacher Portal</p>
             </div>
           </Link>
@@ -256,8 +288,8 @@ function TeacherSidebar({ open, onClose, displayName }: { open: boolean; onClose
           ))}
         </nav>
 
-        {/* Calendar quick link */}
-        <div className="p-3 border-t border-slate-700">
+        {/* Calendar quick link + Getting Started */}
+        <div className="p-3 border-t border-slate-700 space-y-1">
           <Link
             to="/calendar"
             onClick={onClose}
@@ -265,6 +297,14 @@ function TeacherSidebar({ open, onClose, displayName }: { open: boolean; onClose
           >
             <Calendar className="w-4 h-4" />
             School Calendar
+          </Link>
+          <Link
+            to="/onboarding"
+            onClick={onClose}
+            className="flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium text-slate-300 hover:bg-emerald-700 hover:text-white transition-all"
+          >
+            <HelpCircle className="w-4 h-4 text-emerald-400" />
+            Getting Started Guide
           </Link>
         </div>
       </aside>
@@ -274,8 +314,10 @@ function TeacherSidebar({ open, onClose, displayName }: { open: boolean; onClose
 
 export function Layout({ children }: { children: React.ReactNode }) {
   const { user, profile, logout, login, isAdmin } = useAuth();
+  const { schoolName, logoUrl } = useSchool();
   const navigate = useNavigate();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const isMobile = useMobile();
 
   const handleLogout = async () => {
     await logout();
@@ -283,12 +325,20 @@ export function Layout({ children }: { children: React.ReactNode }) {
   };
 
   const isTeacher = profile?.role === 'teacher';
+  const isParent = profile?.role === 'parent';
+  const isAccountant = profile?.role === 'accountant';
+
+  // ── MOBILE SHELL (admin / teacher / parent on small screens) ──
+  if (isMobile && (isAdmin || isTeacher || isParent)) {
+    const mobileRole = isAdmin ? 'admin' : isTeacher ? 'teacher' : 'parent';
+    return <MobileShell role={mobileRole}>{children}</MobileShell>;
+  }
 
   // ── TEACHER LAYOUT ──
   if (isTeacher) {
     return (
       <div className="min-h-screen bg-slate-50 flex">
-        <TeacherSidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} displayName={profile?.displayName} />
+        <TeacherSidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} displayName={profile?.displayName} schoolName={schoolName} logoUrl={logoUrl} />
         <div className="flex-1 flex flex-col min-w-0">
           <header className="bg-white border-b border-slate-200 sticky top-0 z-30 h-16 flex items-center px-4 sm:px-6 gap-4">
             <button
@@ -332,11 +382,41 @@ export function Layout({ children }: { children: React.ReactNode }) {
     );
   }
 
+  // ── ACCOUNTANT LAYOUT ──
+  if (isAccountant) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex">
+        <AdminSidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} schoolName={schoolName} logoUrl={logoUrl} navGroups={accountantNavGroups} />
+        <div className="flex-1 flex flex-col min-w-0">
+          <header className="bg-white border-b border-slate-200 sticky top-0 z-30 h-16 flex items-center px-4 sm:px-6 gap-4">
+            <button onClick={() => setSidebarOpen(true)} className="lg:hidden p-2 text-slate-500 hover:text-slate-900 hover:bg-slate-100 rounded-lg">
+              <Menu className="w-5 h-5" />
+            </button>
+            <div className="flex-1" />
+            <div className="flex items-center gap-3">
+              <div className="text-right hidden sm:block">
+                <p className="text-sm font-semibold text-slate-900">{profile?.displayName}</p>
+                <p className="text-xs text-teal-600 font-medium">Accountant</p>
+              </div>
+              <div className="w-9 h-9 bg-gradient-to-br from-teal-500 to-cyan-600 rounded-full flex items-center justify-center">
+                <span className="text-white text-sm font-bold">{profile?.displayName?.[0]?.toUpperCase() || 'A'}</span>
+              </div>
+              <button onClick={handleLogout} className="p-2 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors" title="Logout">
+                <LogOut className="w-4 h-4" />
+              </button>
+            </div>
+          </header>
+          <main className="flex-1 overflow-auto">{children}</main>
+        </div>
+      </div>
+    );
+  }
+
   // ── ADMIN LAYOUT ──
   if (isAdmin) {
     return (
       <div className="min-h-screen bg-slate-50 flex">
-        <AdminSidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} />
+        <AdminSidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} schoolName={schoolName} logoUrl={logoUrl} />
 
         {/* Main Content */}
         <div className="flex-1 flex flex-col min-w-0">
@@ -395,10 +475,14 @@ export function Layout({ children }: { children: React.ReactNode }) {
           <Link to={!user ? '/' : profile?.role === 'teacher' ? '/teacher' : profile?.role === 'parent' ? '/parent' : '/apply'}
             className="flex items-center space-x-2"
           >
-            <div className="bg-indigo-600 p-2 rounded-lg">
-              <GraduationCap className="w-6 h-6 text-white" />
-            </div>
-            <span className="text-xl font-bold text-slate-900 tracking-tight">Avenir SIS</span>
+            {logoUrl ? (
+              <img src={logoUrl} alt={schoolName} className="w-9 h-9 object-contain rounded-lg" />
+            ) : (
+              <div className="bg-indigo-600 p-2 rounded-lg">
+                <GraduationCap className="w-6 h-6 text-white" />
+              </div>
+            )}
+            <span className="text-xl font-bold text-slate-900 tracking-tight">{schoolName}</span>
           </Link>
 
           <nav className="flex items-center space-x-4">
@@ -412,9 +496,14 @@ export function Layout({ children }: { children: React.ReactNode }) {
                     <LayoutDashboard className="w-4 h-4 mr-2" />Teacher Portal
                   </Link>
                 ) : profile?.role === 'parent' ? (
-                  <Link to="/parent" className="text-slate-600 hover:text-indigo-600 font-medium flex items-center px-3 py-2 rounded-md transition-colors text-sm">
-                    <LayoutDashboard className="w-4 h-4 mr-2" />Parent Portal
-                  </Link>
+                  <>
+                    <Link to="/parent" className="text-slate-600 hover:text-indigo-600 font-medium flex items-center px-3 py-2 rounded-md transition-colors text-sm">
+                      <LayoutDashboard className="w-4 h-4 mr-2" />Parent Portal
+                    </Link>
+                    <Link to="/onboarding" className="text-slate-600 hover:text-indigo-600 font-medium flex items-center px-3 py-2 rounded-md transition-colors text-sm">
+                      <HelpCircle className="w-4 h-4 mr-2" />Help
+                    </Link>
+                  </>
                 ) : (
                   <Link to="/apply" className="text-slate-600 hover:text-indigo-600 font-medium flex items-center px-3 py-2 rounded-md transition-colors text-sm">
                     <FileText className="w-4 h-4 mr-2" />My Application
@@ -447,10 +536,14 @@ export function Layout({ children }: { children: React.ReactNode }) {
           <div className="grid grid-cols-1 md:grid-cols-3 gap-8 mb-8 text-center md:text-left">
             <div>
               <div className="flex items-center justify-center md:justify-start space-x-2 mb-4">
-                <div className="bg-indigo-600 p-1.5 rounded-lg">
-                  <GraduationCap className="w-5 h-5 text-white" />
-                </div>
-                <span className="text-lg font-bold text-slate-900">Avenir SIS</span>
+                {logoUrl ? (
+                  <img src={logoUrl} alt={schoolName} className="w-8 h-8 object-contain rounded-lg" />
+                ) : (
+                  <div className="bg-indigo-600 p-1.5 rounded-lg">
+                    <GraduationCap className="w-5 h-5 text-white" />
+                  </div>
+                )}
+                <span className="text-lg font-bold text-slate-900">{schoolName}</span>
               </div>
               <p className="text-slate-500 text-sm leading-relaxed">
                 Empowering schools worldwide with smart, secure, and efficient management tools.

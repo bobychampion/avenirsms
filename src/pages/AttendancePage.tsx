@@ -29,11 +29,21 @@ export default function AttendancePage() {
   const [attendanceRows, setAttendanceRows] = useState<AttendanceRow[]>([]);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
-  const [activeTab, setActiveTab] = useState<'mark' | 'report'>('mark');
+  const [activeTab, setActiveTab] = useState<'mark' | 'report' | 'monthly'>('mark');
   const [reportData, setReportData] = useState<{ studentId: string; studentName: string; present: number; absent: number; late: number; rate: number }[]>([]);
   const [loadingReport, setLoadingReport] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [aiAlertLoading, setAiAlertLoading] = useState<string | null>(null);
+
+  // Monthly view state
+  const [selectedMonth, setSelectedMonth] = useState(() => new Date().toISOString().slice(0, 7)); // YYYY-MM
+  const [monthlyData, setMonthlyData] = useState<{
+    studentId: string;
+    studentName: string;
+    cells: Record<string, 'present' | 'absent' | 'late' | null>;
+    present: number; absent: number; late: number; rate: number;
+  }[]>([]);
+  const [loadingMonthly, setLoadingMonthly] = useState(false);
 
   // Load classes from Firestore so the dropdown matches actual data
   useEffect(() => {
@@ -139,6 +149,49 @@ export default function AttendancePage() {
     setLoadingReport(false);
   };
 
+  const loadMonthlyData = async () => {
+    if (!selectedClass || !selectedMonth) return;
+    setLoadingMonthly(true);
+    const [year, month] = selectedMonth.split('-').map(Number);
+    const daysInMonth = new Date(year, month, 0).getDate();
+    const firstDay = `${selectedMonth}-01`;
+    const lastDay = `${selectedMonth}-${String(daysInMonth).padStart(2, '0')}`;
+    // Build array of day strings for the month
+    const allDays: string[] = [];
+    for (let d = 1; d <= daysInMonth; d++) {
+      allDays.push(`${selectedMonth}-${String(d).padStart(2, '0')}`);
+    }
+    const q = query(
+      collection(db, 'attendance'),
+      where('class', '==', selectedClass),
+      where('date', '>=', firstDay),
+      where('date', '<=', lastDay)
+    );
+    const snap = await getDocs(q);
+    // Build lookup: studentId -> day -> status
+    const lookup: Record<string, Record<string, 'present' | 'absent' | 'late'>> = {};
+    snap.docs.forEach(d => {
+      const { studentId, date, status } = d.data();
+      if (!lookup[studentId]) lookup[studentId] = {};
+      lookup[studentId][date] = status;
+    });
+    const rows = students.map(s => {
+      const cells: Record<string, 'present' | 'absent' | 'late' | null> = {};
+      let present = 0, absent = 0, late = 0;
+      allDays.forEach(day => {
+        const st = lookup[s.id!]?.[day] || null;
+        cells[day] = st;
+        if (st === 'present') present++;
+        else if (st === 'absent') absent++;
+        else if (st === 'late') late++;
+      });
+      const total = present + absent + late;
+      return { studentId: s.id!, studentName: s.studentName, cells, present, absent, late, rate: total > 0 ? Math.round((present / total) * 100) : 0 };
+    }).sort((a, b) => a.studentName.localeCompare(b.studentName));
+    setMonthlyData(rows);
+    setLoadingMonthly(false);
+  };
+
   const sendAIAlert = async (row: typeof reportData[0]) => {
     setAiAlertLoading(row.studentId);
     const tid = toast.loading(`Generating alert for ${row.studentName}…`);
@@ -236,6 +289,13 @@ export default function AttendancePage() {
             >
               <BarChart3 className="w-4 h-4 inline mr-1.5" />
               Report
+            </button>
+            <button
+              onClick={() => setActiveTab('monthly')}
+              className={`px-4 py-2.5 rounded-xl text-sm font-semibold transition-colors ${activeTab === 'monthly' ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
+            >
+              <Calendar className="w-4 h-4 inline mr-1.5" />
+              Monthly
             </button>
           </div>
         </div>
@@ -385,6 +445,124 @@ export default function AttendancePage() {
               </table>
             </div>
           )}
+        </div>
+      )}
+
+      {/* Monthly View Tab */}
+      {activeTab === 'monthly' && (
+        <div className="space-y-4">
+          {/* Month controls */}
+          <div className="bg-white rounded-2xl border border-slate-200 p-4 shadow-sm flex flex-wrap gap-3 items-end">
+            <div>
+              <label className="text-xs font-bold text-slate-500 uppercase tracking-wide block mb-1.5">Month</label>
+              <input type="month" value={selectedMonth} onChange={e => setSelectedMonth(e.target.value)}
+                className="px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm" />
+            </div>
+            <button onClick={loadMonthlyData} disabled={!selectedClass || loadingMonthly}
+              className="flex items-center gap-2 px-5 py-2.5 bg-indigo-600 text-white font-bold rounded-xl hover:bg-indigo-700 transition-all text-sm disabled:opacity-60">
+              {loadingMonthly ? <><Clock className="w-4 h-4 animate-spin" /> Loading…</> : <><Calendar className="w-4 h-4" /> Load Month</>}
+            </button>
+            {monthlyData.length > 0 && (
+              <button onClick={() => window.print()}
+                className="flex items-center gap-2 px-4 py-2.5 bg-slate-100 text-slate-700 font-bold rounded-xl hover:bg-slate-200 transition-all text-sm">
+                Print / PDF
+              </button>
+            )}
+          </div>
+
+          {!selectedClass && (
+            <div className="bg-white rounded-2xl border border-slate-200 py-16 text-center">
+              <ClipboardList className="w-10 h-10 text-slate-200 mx-auto mb-3" />
+              <p className="text-slate-500 text-sm">Select a class above to view monthly attendance.</p>
+            </div>
+          )}
+
+          {selectedClass && monthlyData.length === 0 && !loadingMonthly && (
+            <div className="bg-white rounded-2xl border border-slate-200 py-16 text-center">
+              <Calendar className="w-10 h-10 text-slate-200 mx-auto mb-3" />
+              <p className="text-slate-500 text-sm">Click "Load Month" to display the monthly attendance grid.</p>
+            </div>
+          )}
+
+          {monthlyData.length > 0 && (() => {
+            const [year, month] = selectedMonth.split('-').map(Number);
+            const daysInMonth = new Date(year, month, 0).getDate();
+            const days = Array.from({ length: daysInMonth }, (_, i) => {
+              const d = i + 1;
+              return `${selectedMonth}-${String(d).padStart(2, '0')}`;
+            });
+            return (
+              <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden print:shadow-none">
+                <div className="p-4 border-b border-slate-100 flex items-center justify-between">
+                  <h3 className="font-bold text-slate-800 text-sm flex items-center gap-2">
+                    <Users className="w-4 h-4 text-indigo-600" />
+                    {selectedClass} — {new Date(year, month - 1).toLocaleString('default', { month: 'long', year: 'numeric' })}
+                  </h3>
+                  <div className="flex gap-3 text-xs font-medium">
+                    <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-emerald-200 inline-block" />Present</span>
+                    <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-rose-200 inline-block" />Absent</span>
+                    <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-amber-200 inline-block" />Late</span>
+                    <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-slate-100 inline-block" />No record</span>
+                  </div>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-xs" style={{ minWidth: `${200 + daysInMonth * 30}px` }}>
+                    <thead>
+                      <tr className="bg-slate-50 border-b border-slate-200">
+                        <th className="px-3 py-2 text-left font-bold text-slate-500 sticky left-0 bg-slate-50 z-10 min-w-[140px]">Student</th>
+                        {days.map(d => (
+                          <th key={d} className="px-1 py-2 text-center font-bold text-slate-400 min-w-[28px]">
+                            {Number(d.split('-')[2])}
+                          </th>
+                        ))}
+                        <th className="px-3 py-2 text-center font-bold text-slate-500 min-w-[60px]">P</th>
+                        <th className="px-3 py-2 text-center font-bold text-slate-500 min-w-[60px]">A</th>
+                        <th className="px-3 py-2 text-center font-bold text-slate-500 min-w-[60px]">L</th>
+                        <th className="px-3 py-2 text-center font-bold text-slate-500 min-w-[60px]">%</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-50">
+                      {monthlyData.map(row => (
+                        <tr key={row.studentId} className="hover:bg-slate-50 transition-colors">
+                          <td className="px-3 py-1.5 font-medium text-slate-800 sticky left-0 bg-white z-10">{row.studentName}</td>
+                          {days.map(d => {
+                            const st = row.cells[d];
+                            const bg = st === 'present' ? 'bg-emerald-200' : st === 'absent' ? 'bg-rose-200' : st === 'late' ? 'bg-amber-200' : 'bg-slate-100';
+                            const title = st ? st.charAt(0).toUpperCase() + st.slice(1) : '—';
+                            return <td key={d} className="px-1 py-1.5 text-center"><span title={title} className={`inline-block w-5 h-5 rounded ${bg}`} /></td>;
+                          })}
+                          <td className="px-3 py-1.5 text-center font-bold text-emerald-700">{row.present}</td>
+                          <td className="px-3 py-1.5 text-center font-bold text-rose-600">{row.absent}</td>
+                          <td className="px-3 py-1.5 text-center font-bold text-amber-600">{row.late}</td>
+                          <td className="px-3 py-1.5 text-center">
+                            <span className={`font-bold ${row.rate >= 80 ? 'text-emerald-700' : row.rate >= 60 ? 'text-amber-600' : 'text-rose-600'}`}>
+                              {row.rate}%
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    {/* Summary row */}
+                    <tfoot>
+                      <tr className="bg-slate-50 border-t border-slate-200 font-bold text-slate-600">
+                        <td className="px-3 py-2 sticky left-0 bg-slate-50 z-10">Total</td>
+                        {days.map(d => {
+                          const cnt = monthlyData.filter(r => r.cells[d] === 'present').length;
+                          return <td key={d} className="px-1 py-2 text-center text-[10px] text-emerald-700">{cnt > 0 ? cnt : ''}</td>;
+                        })}
+                        <td className="px-3 py-2 text-center text-emerald-700">{monthlyData.reduce((s, r) => s + r.present, 0)}</td>
+                        <td className="px-3 py-2 text-center text-rose-600">{monthlyData.reduce((s, r) => s + r.absent, 0)}</td>
+                        <td className="px-3 py-2 text-center text-amber-600">{monthlyData.reduce((s, r) => s + r.late, 0)}</td>
+                        <td className="px-3 py-2 text-center">
+                          {monthlyData.length > 0 ? Math.round(monthlyData.reduce((s, r) => s + r.rate, 0) / monthlyData.length) : 0}%
+                        </td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+              </div>
+            );
+          })()}
         </div>
       )}
 

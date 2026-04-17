@@ -2,12 +2,27 @@ import { initializeApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
 import { getFirestore, doc, getDocFromCache, getDocFromServer } from 'firebase/firestore';
 import { getAnalytics } from 'firebase/analytics';
+import { getMessaging, isSupported } from 'firebase/messaging';
 import firebaseConfig from '../firebase-applet-config.json';
 
 const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
 export const db = getFirestore(app, (firebaseConfig as any).firestoreDatabaseId);
 export const analytics = typeof window !== 'undefined' ? getAnalytics(app) : null;
+
+/**
+ * Returns the Firebase Messaging instance, or null if the browser does not
+ * support web push (e.g. Safari < 16, Firefox in private mode, non-HTTPS).
+ */
+export const getMessagingInstance = async () => {
+  try {
+    const supported = await isSupported();
+    if (!supported) return null;
+    return getMessaging(app);
+  } catch {
+    return null;
+  }
+};
 
 async function testConnection() {
   try {

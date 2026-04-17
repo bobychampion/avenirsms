@@ -2,15 +2,54 @@ import React, { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../components/FirebaseProvider';
 import { getPostAuthHomePath } from '../utils/postAuthRedirect';
+import { UserProfile } from '../types';
 import { motion } from 'motion/react';
-import { ShieldCheck, Mail, Lock, ArrowRight, ShieldAlert, User } from 'lucide-react';
+import { ShieldCheck, Mail, Lock, ArrowRight, ShieldAlert, User, GraduationCap, BookOpen, Briefcase, Users } from 'lucide-react';
+
+type RegisterRole = 'applicant' | 'parent' | 'teacher' | 'staff';
+
+const ROLE_OPTIONS: { value: RegisterRole; label: string; description: string; icon: React.ReactNode }[] = [
+  {
+    value: 'applicant',
+    label: 'Student / Applicant',
+    description: 'Apply for admission or access your student portal',
+    icon: <GraduationCap className="w-5 h-5" />,
+  },
+  {
+    value: 'parent',
+    label: 'Parent / Guardian',
+    description: 'Monitor your child\'s academic progress and fees',
+    icon: <Users className="w-5 h-5" />,
+  },
+  {
+    value: 'teacher',
+    label: 'Teacher',
+    description: 'Manage gradebooks, attendance and student skills',
+    icon: <BookOpen className="w-5 h-5" />,
+  },
+  {
+    value: 'staff',
+    label: 'Non-Teaching Staff',
+    description: 'Access the staff portal for administrative tasks',
+    icon: <Briefcase className="w-5 h-5" />,
+  },
+];
+
+// Map register role choices to UserProfile roles
+function toProfileRole(r: RegisterRole): UserProfile['role'] {
+  if (r === 'staff') return 'applicant'; // staff accounts are upgraded by admin
+  return r;
+}
 
 export default function Login() {
   const { loginWithEmail, registerWithEmail, authError, clearError, user, profile, loading: authLoading, isAdmin } = useAuth();
   const [isRegistering, setIsRegistering] = useState(false);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
   const [name, setName] = useState('');
+  const [registerRole, setRegisterRole] = useState<RegisterRole>('applicant');
+  const [passwordError, setPasswordError] = useState('');
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
 
@@ -21,13 +60,25 @@ export default function Login() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setPasswordError('');
+    if (isRegistering && password !== confirmPassword) {
+      setPasswordError('Passwords do not match.');
+      return;
+    }
     setLoading(true);
     if (isRegistering) {
-      await registerWithEmail(email, password, name);
+      await registerWithEmail(email, password, name, toProfileRole(registerRole));
     } else {
       await loginWithEmail(email, password);
     }
     setLoading(false);
+  };
+
+  const handleSwitchMode = () => {
+    setIsRegistering(!isRegistering);
+    setPasswordError('');
+    setConfirmPassword('');
+    clearError();
   };
 
   return (
@@ -44,10 +95,7 @@ export default function Login() {
         <p className="mt-2 text-center text-sm text-slate-600">
           {isRegistering ? 'Already have an account?' : "Don't have an account?"}{' '}
           <button
-            onClick={() => {
-              setIsRegistering(!isRegistering);
-              clearError();
-            }}
+            onClick={handleSwitchMode}
             className="font-medium text-indigo-600 hover:text-indigo-500"
           >
             {isRegistering ? 'Sign in instead' : 'Register now'}
@@ -72,7 +120,47 @@ export default function Login() {
             </div>
           )}
 
-          <form className="space-y-6" onSubmit={handleSubmit}>
+          <form className="space-y-5" onSubmit={handleSubmit}>
+
+            {/* ── REGISTER: Role selector ── */}
+            {isRegistering && (
+              <div>
+                <label className="block text-sm font-bold text-slate-700 mb-2">
+                  I am registering as
+                </label>
+                <div className="grid grid-cols-2 gap-2">
+                  {ROLE_OPTIONS.map(opt => (
+                    <button
+                      key={opt.value}
+                      type="button"
+                      onClick={() => setRegisterRole(opt.value)}
+                      className={`flex items-start gap-2.5 p-3 rounded-xl border-2 text-left transition-all ${
+                        registerRole === opt.value
+                          ? 'border-indigo-500 bg-indigo-50 text-indigo-800'
+                          : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300'
+                      }`}
+                    >
+                      <span className={`mt-0.5 shrink-0 ${registerRole === opt.value ? 'text-indigo-600' : 'text-slate-400'}`}>
+                        {opt.icon}
+                      </span>
+                      <div>
+                        <p className={`text-xs font-bold leading-tight ${registerRole === opt.value ? 'text-indigo-800' : 'text-slate-700'}`}>
+                          {opt.label}
+                        </p>
+                        <p className="text-[10px] text-slate-400 mt-0.5 leading-tight">{opt.description}</p>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+                {registerRole === 'teacher' || registerRole === 'staff' ? (
+                  <p className="mt-2 text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                    <strong>Note:</strong> {registerRole === 'teacher' ? 'Teacher' : 'Staff'} accounts require admin approval before full access is granted. Your school administrator will be notified.
+                  </p>
+                ) : null}
+              </div>
+            )}
+
+            {/* ── REGISTER: Full name ── */}
             {isRegistering && (
               <div>
                 <label className="block text-sm font-bold text-slate-700 mb-2">
@@ -88,12 +176,13 @@ export default function Login() {
                     value={name}
                     onChange={(e) => setName(e.target.value)}
                     className="block w-full pl-10 pr-3 py-3 border border-slate-200 rounded-xl leading-5 bg-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm transition-all"
-                    placeholder="John Doe"
+                    placeholder="e.g. Amaka Okonkwo"
                   />
                 </div>
               </div>
             )}
 
+            {/* ── Email ── */}
             <div>
               <label className="block text-sm font-bold text-slate-700 mb-2">
                 Email Address
@@ -108,11 +197,12 @@ export default function Login() {
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   className="block w-full pl-10 pr-3 py-3 border border-slate-200 rounded-xl leading-5 bg-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm transition-all"
-                  placeholder="admin@example.com"
+                  placeholder="you@example.com"
                 />
               </div>
             </div>
 
+            {/* ── Password ── */}
             <div>
               <label className="block text-sm font-bold text-slate-700 mb-2">
                 Password
@@ -124,6 +214,7 @@ export default function Login() {
                 <input
                   type="password"
                   required
+                  minLength={6}
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   className="block w-full pl-10 pr-3 py-3 border border-slate-200 rounded-xl leading-5 bg-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm transition-all"
@@ -131,6 +222,34 @@ export default function Login() {
                 />
               </div>
             </div>
+
+            {/* ── REGISTER: Confirm password ── */}
+            {isRegistering && (
+              <div>
+                <label className="block text-sm font-bold text-slate-700 mb-2">
+                  Confirm Password
+                </label>
+                <div className="relative">
+                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                    <Lock className="h-5 w-5 text-slate-400" />
+                  </div>
+                  <input
+                    type="password"
+                    required
+                    minLength={6}
+                    value={confirmPassword}
+                    onChange={(e) => { setConfirmPassword(e.target.value); setPasswordError(''); }}
+                    className={`block w-full pl-10 pr-3 py-3 border rounded-xl leading-5 bg-white placeholder-slate-400 focus:outline-none focus:ring-2 sm:text-sm transition-all ${
+                      passwordError ? 'border-red-400 focus:ring-red-400' : 'border-slate-200 focus:ring-indigo-500 focus:border-indigo-500'
+                    }`}
+                    placeholder="••••••••"
+                  />
+                </div>
+                {passwordError && (
+                  <p className="mt-1.5 text-xs text-red-600 font-medium">{passwordError}</p>
+                )}
+              </div>
+            )}
 
             <div>
               <button

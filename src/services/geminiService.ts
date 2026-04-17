@@ -138,6 +138,123 @@ Base riskLevel on attendance + weakest grades. Be specific and constructive, usi
   }
 }
 
+export async function summarizeCurriculumDocument(
+  text: string,
+  subject: string,
+  level: string
+): Promise<{ keyTopics: string[]; learningObjectives: string[]; assessmentFocus: string[]; rawSummary: string }> {
+  const ai = getAI();
+  const prompt = `You are an expert Nigerian curriculum specialist following the NERDC framework.
+Analyse the following curriculum document for ${subject} at ${level} level.
+
+Document content:
+---
+${text.slice(0, 15000)}
+---
+
+Return a JSON object with exactly this structure:
+{
+  "keyTopics": ["topic 1", "topic 2", "topic 3"],
+  "learningObjectives": ["objective 1", "objective 2"],
+  "assessmentFocus": ["focus area 1", "focus area 2"],
+  "rawSummary": "A 200-300 word plain-text summary of the document content, key themes, and curriculum alignment suitable for injecting into AI prompts."
+}`;
+
+  const response = await ai.models.generateContent({
+    model: 'gemini-2.5-flash',
+    contents: [{ parts: [{ text: prompt }] }],
+    config: { responseMimeType: 'application/json' },
+  });
+  try {
+    return JSON.parse(response.text || '{}');
+  } catch {
+    return { keyTopics: [], learningObjectives: [], assessmentFocus: [], rawSummary: response.text || '' };
+  }
+}
+
+export async function generateQuestionsFromCurriculum(
+  subject: string,
+  topic: string,
+  count: number,
+  level: string,
+  curriculumContext: string
+): Promise<{ questionText: string; options: { label: 'A' | 'B' | 'C' | 'D'; text: string }[]; correctAnswer: 'A' | 'B' | 'C' | 'D'; difficulty: 'easy' | 'medium' | 'hard' }[]> {
+  const ai = getAI();
+  const prompt = `You are an expert WAEC/NECO examiner for Nigerian secondary schools.
+Using the following curriculum context, generate ${count} multiple-choice questions for ${subject} — topic: "${topic}", class level: ${level}.
+
+Curriculum context:
+${curriculumContext}
+
+Return a JSON array with exactly this structure (no extra keys):
+[
+  {
+    "questionText": "Question text here?",
+    "options": [
+      {"label": "A", "text": "option text"},
+      {"label": "B", "text": "option text"},
+      {"label": "C", "text": "option text"},
+      {"label": "D", "text": "option text"}
+    ],
+    "correctAnswer": "A",
+    "difficulty": "medium"
+  }
+]`;
+
+  const response = await ai.models.generateContent({
+    model: 'gemini-2.5-flash',
+    contents: [{ parts: [{ text: prompt }] }],
+    config: { responseMimeType: 'application/json' },
+  });
+  try {
+    return JSON.parse(response.text || '[]');
+  } catch {
+    return [];
+  }
+}
+
+export async function generateQuestionBatch(
+  subject: string,
+  level: string,
+  topics: string[],
+  count: number,
+  context?: string
+): Promise<{ questionText: string; topic: string; options: { label: 'A' | 'B' | 'C' | 'D'; text: string }[]; correctAnswer: 'A' | 'B' | 'C' | 'D'; difficulty: 'easy' | 'medium' | 'hard' }[]> {
+  const ai = getAI();
+  const topicList = topics.join(', ');
+  const contextSection = context ? `\nCurriculum context:\n${context}\n` : '';
+  const prompt = `You are an expert WAEC/NECO examiner for Nigerian secondary schools.
+Generate ${count} multiple-choice questions for ${subject} at ${level} level, covering these topics: ${topicList}.${contextSection}
+Distribute questions across topics. Mix difficulty levels.
+
+Return a JSON array:
+[
+  {
+    "questionText": "...",
+    "topic": "topic name",
+    "options": [
+      {"label": "A", "text": "..."},
+      {"label": "B", "text": "..."},
+      {"label": "C", "text": "..."},
+      {"label": "D", "text": "..."}
+    ],
+    "correctAnswer": "B",
+    "difficulty": "easy"
+  }
+]`;
+
+  const response = await ai.models.generateContent({
+    model: 'gemini-2.5-flash',
+    contents: [{ parts: [{ text: prompt }] }],
+    config: { responseMimeType: 'application/json' },
+  });
+  try {
+    return JSON.parse(response.text || '[]');
+  } catch {
+    return [];
+  }
+}
+
 export async function generateFeeReminderDraft(
   studentName: string,
   guardianName: string,

@@ -22,9 +22,17 @@ export interface Application {
 export interface UserProfile {
   uid: string;
   email: string;
-  role: 'admin' | 'applicant' | 'teacher' | 'parent' | 'School_admin';
+  role: 'admin' | 'applicant' | 'teacher' | 'parent' | 'School_admin' | 'accountant';
   displayName: string;
   disabled?: boolean;
+  /** Firestore Student document IDs linked to this parent account */
+  linkedStudentIds?: string[];
+  /**
+   * Denormalized list of children for quick display (kept in sync on enrol/update).
+   * Each entry mirrors a linked student's name + class so the parent sees
+   * their children identified by name without an extra Firestore read.
+   */
+  linkedChildren?: { studentId: string; studentName: string; currentClass: string }[];
 }
 
 export interface SchoolClass {
@@ -98,6 +106,11 @@ export interface Guardian {
   homeAddress?: string;
   userId?: string;       // Firebase Auth UID if they have a parent portal account
   studentIds: string[];  // linked student document IDs
+  /**
+   * Denormalized child info stored alongside IDs so admin screens can display
+   * "Amara Okafor (JSS 2)" without fetching each student document individually.
+   */
+  linkedChildren?: { studentId: string; studentName: string; currentClass: string }[];
   createdAt: any;
 }
 
@@ -337,6 +350,113 @@ export interface CurriculumItem {
   completed: boolean;
   completedAt?: any;
   teacherId?: string;
+  /** Firestore ID of the curriculum_document this item was imported from */
+  sourceDocId?: string;
+  /** File name of the source document (denormalized for display) */
+  sourceDocName?: string;
+  /** The specific learning objective from the source document (for alignment tracking) */
+  alignedObjective?: string;
+  /** Assessment focus areas aligned to this topic from the source document */
+  alignedAssessmentFocus?: string[];
+  /** Source type: 'manual', 'nerdc', or 'ai_document' */
+  source?: 'manual' | 'nerdc' | 'ai_document';
+  createdAt?: any;
+  updatedAt?: any;
+}
+
+export interface CurriculumDocument {
+  id?: string;
+  schoolId: string;
+  fileName: string;
+  subject: string;
+  level: string;
+  term: '1st Term' | '2nd Term' | '3rd Term';
+  uploadedBy: string;
+  fileUrl?: string;
+  summary: {
+    keyTopics: string[];
+    learningObjectives: string[];
+    assessmentFocus: string[];
+    rawSummary: string;
+  };
+  charCount: number;
+  uploadedAt: any;
+}
+
+export interface QuestionBankItem {
+  id?: string;
+  schoolId?: string;
+  subject: string;
+  level: string;
+  topic: string;
+  questionText: string;
+  options: { label: 'A' | 'B' | 'C' | 'D'; text: string }[];
+  correctAnswer: 'A' | 'B' | 'C' | 'D';
+  difficulty: 'easy' | 'medium' | 'hard';
+  sourceDocId?: string;
+  sourceType: 'manual' | 'ai_generated';
+  createdBy: string;
+  createdAt: any;
+}
+
+export interface CBTExam {
+  id?: string;
+  schoolId?: string;
+  title: string;
+  subject: string;
+  targetClass: string;
+  durationMinutes: number;
+  questionCount: number;
+  passMark: number;
+  shuffleQuestions: boolean;
+  allowedAttempts: 1 | 2 | 3;
+  status: 'draft' | 'active' | 'closed';
+  questionFilter: {
+    subject: string;
+    level?: string;
+    topics?: string[];
+    difficulty?: 'easy' | 'medium' | 'hard' | 'mixed';
+  };
+  type: 'entrance' | 'internal';
+  createdAt: any;
+}
+
+export interface CBTSession {
+  id?: string;
+  examId: string;
+  studentId: string;
+  studentName: string;
+  questions: {
+    questionId: string;
+    questionText: string;
+    options: { label: string; text: string }[];
+    correctAnswer: string;
+  }[];
+  answers: Record<string, string>;
+  startedAt: any;
+  submittedAt?: any;
+  score?: number;
+  status: 'in_progress' | 'submitted' | 'timed_out';
+  durationMinutes: number;
+}
+
+export interface CBTAnswer {
+  questionId: string;
+  selected: string;
+}
+
+// ─── Subject Management ───────────────────────────────────────────────────────
+
+export interface SubjectDefinition {
+  id?: string;
+  name: string;
+  code?: string;
+  description?: string;
+  assignedClasses: string[];
+  assignedTeacherId?: string;
+  assignedTeacherName?: string;
+  level?: 'Primary' | 'Secondary' | 'All';
+  isBuiltIn: boolean;
 }
 
 // ─── Constants ───────────────────────────────────────────────────────────────
@@ -457,6 +577,42 @@ export const TERMS = ['1st Term', '2nd Term', '3rd Term'] as const;
 
 export function formatNaira(amount: number): string {
   return `₦${amount.toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+// ── Geo-fencing & Teacher Attendance ────────────────────────────────────────
+
+/**
+ * A circular geo-fence boundary around the school campus.
+ * Stored in Firestore: geofences/main
+ */
+export interface GeoFence {
+  id?: string;
+  lat: number;       // Centre latitude (decimal degrees)
+  lng: number;       // Centre longitude (decimal degrees)
+  radius: number;    // Radius in metres
+  schoolName?: string;
+  updatedAt?: any;
+  updatedBy?: string;
+}
+
+/**
+ * A teacher GPS check-in or check-out event.
+ * Stored in Firestore: attendance_checkins/{uid}_{date}_{type}
+ */
+export interface TeacherCheckIn {
+  id?: string;
+  teacherId: string;
+  teacherName: string;
+  type: 'check_in' | 'check_out';
+  date: string;           // YYYY-MM-DD
+  timestamp: any;         // Firestore serverTimestamp
+  lat: number;
+  lng: number;
+  accuracy: number;       // GPS accuracy in metres
+  withinFence: boolean;   // Was the GPS position inside the school geo-fence?
+  spoofDetected?: boolean;
+  manualOverride?: boolean;
+  overrideReason?: string;
 }
 
 export function formatDate(dateStr: string): string {

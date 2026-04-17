@@ -1,8 +1,16 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { db, handleFirestoreError, OperationType } from '../firebase';
-import { collection, query, onSnapshot, orderBy, getDocs, limit } from 'firebase/firestore';
-import { Application, ApplicationStatus } from '../types';
+import { collection, query, onSnapshot, orderBy, getDocs, limit, where } from 'firebase/firestore';
+import {
+  initFCMForUser, onForegroundMessage,
+  notifyCheckIn, notifyCheckOut, notifyIdleClass,
+  showBrowserNotification,
+} from '../services/notificationService';
+
+const showBrowserNotificationRaw = (title: string, body: string) =>
+  showBrowserNotification({ category: 'check_in', title, body });
+import { Application, ApplicationStatus, GeoFence, TeacherCheckIn, Timetable, DAYS_OF_WEEK } from '../types';
 import { useSchool } from '../components/SchoolContext';
 import { formatCurrency } from '../utils/formatCurrency';
 import { useAuth } from '../components/FirebaseProvider';
@@ -13,7 +21,8 @@ import {
   GraduationCap, Award, Briefcase, CreditCard, Map, Settings, Eye,
   UserCheck, Calendar, Bell, ArrowUpRight, Key, FileSpreadsheet, MessageSquare,
   Database, TrendingDown, Activity, Star, Layers, Target, RefreshCw,
-  Shield, Wallet, ReceiptText, UserCog, CalendarDays, BookMarked
+  Shield, Wallet, ReceiptText, UserCog, CalendarDays, BookMarked,
+  MapPin, Radio, Minus,
 } from 'lucide-react';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
@@ -104,6 +113,98 @@ const CustomTooltip = ({ active, payload, label }: any) => {
   return null;
 };
 
+// ─── Live Class Status Helpers ────────────────────────────────────────────────
+type ClassStatus = 'active' | 'scheduled' | 'idle' | 'no_timetable';
+
+interface LiveClassRow {
+  className: string;
+  status: ClassStatus;
+  teacherName?: string;
+  subject?: string;
+  periodStart?: string;
+  periodEnd?: string;
+  checkedIn: boolean;
+  outOfFence: boolean;
+}
+
+function computeLiveClasses(
+  timetables: Timetable[],
+  checkins: TeacherCheckIn[],
+  now: Date,
+): LiveClassRow[] {
+  const dayName = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][now.getDay()] as typeof DAYS_OF_WEEK[number];
+  const timeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+
+  const checkinMap: Record<string, TeacherCheckIn> = {};
+  const checkoutMap: Record<string, boolean> = {};
+  checkins.forEach(c => {
+    if (c.type === 'check_in') checkinMap[c.teacherName] = c;
+    if (c.type === 'check_out') checkoutMap[c.teacherName] = true;
+  });
+
+  const schoolDays: Record<string, boolean> = {
+    Monday: true, Tuesday: true, Wednesday: true, Thursday: true, Friday: true,
+  };
+
+  return timetables.map(tt => {
+    const base: LiveClassRow = {
+      className: tt.class,
+      status: 'idle',
+      checkedIn: false,
+      outOfFence: false,
+    };
+
+    if (!schoolDays[dayName]) {
+      return { ...base, status: 'no_timetable' };
+    }
+
+    const periods = tt.schedule[dayName as typeof DAYS_OF_WEEK[number]] || [];
+    if (periods.length === 0) return { ...base, status: 'no_timetable' };
+
+    // Find the current or next period
+    let activePeriod = periods.find(p => {
+      if (!p.startTime || !p.endTime) return false;
+      return p.startTime <= timeStr && timeStr < p.endTime;
+    });
+
+    if (activePeriod) {
+      const checkin = checkinMap[activePeriod.teacher ?? ''];
+      const checkedOut = checkoutMap[activePeriod.teacher ?? ''] ?? false;
+      const checkedIn = !!checkin && !checkedOut;
+      return {
+        ...base,
+        status: checkedIn ? 'active' : 'scheduled',
+        teacherName: activePeriod.teacher,
+        subject: activePeriod.subject,
+        periodStart: activePeriod.startTime,
+        periodEnd: activePeriod.endTime,
+        checkedIn,
+        outOfFence: !!checkin && !checkin.withinFence,
+      };
+    }
+
+    // Next upcoming period today
+    const upcoming = periods
+      .filter(p => p.startTime && p.startTime > timeStr)
+      .sort((a, b) => (a.startTime ?? '').localeCompare(b.startTime ?? ''))[0];
+
+    if (upcoming) {
+      return {
+        ...base,
+        status: 'scheduled',
+        teacherName: upcoming.teacher,
+        subject: upcoming.subject,
+        periodStart: upcoming.startTime,
+        periodEnd: upcoming.endTime,
+        checkedIn: false,
+        outOfFence: false,
+      };
+    }
+
+    return base;
+  });
+}
+
 export default function AdminDashboard() {
   const { user } = useAuth();
   const { locale, currency } = useSchool();
@@ -123,8 +224,40 @@ export default function AdminDashboard() {
   const [attendanceByDay, setAttendanceByDay] = useState<{ date: string; present: number; absent: number; late: number }[]>([]);
   const [loading, setLoading] = useState(true);
   const [statsLoading, setStatsLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<'overview' | 'academic' | 'finance' | 'admissions'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'today' | 'academic' | 'finance' | 'admissions'>('overview');
   const [lastRefresh, setLastRefresh] = useState(new Date());
+
+  // Live / Today tab
+  const [liveCheckins, setLiveCheckins] = useState<TeacherCheckIn[]>([]);
+  const [timetables, setTimetables] = useState<Timetable[]>([]);
+  const [geofenceEnabled, setGeofenceEnabled] = useState(false);
+  const [liveNow, setLiveNow] = useState(new Date());
+  const [teacherList, setTeacherList] = useState<{ uid: string; displayName: string }[]>([]);
+  const [todayAttendance, setTodayAttendance] = useState<{ class: string; present: number; absent: number; late: number }[]>([]);
+
+  // Notification refs — persist across renders without causing re-renders
+  const mountedAtRef   = useRef(Date.now());
+  const alertedClasses = useRef<Set<string>>(new Set());
+  // Ref snapshot of timetables so the idle-class interval can read latest value
+  const timetablesRef  = useRef<Timetable[]>([]);
+  const checkinsRef    = useRef<TeacherCheckIn[]>([]);
+  useEffect(() => { timetablesRef.current = timetables; }, [timetables]);
+  useEffect(() => { checkinsRef.current = liveCheckins; }, [liveCheckins]);
+
+  // ─── FCM Initialisation ──────────────────────────────────────────────────────
+  useEffect(() => {
+    if (!user?.uid) return;
+    initFCMForUser(user.uid).catch(() => {/* non-fatal */});
+    let unsub: (() => void) | undefined;
+    onForegroundMessage(({ title, body }) => {
+      // FCM foreground messages (sent via Cloud Functions) are surfaced as
+      // browser notifications the same way as the in-app triggers above.
+      if (title) {
+        showBrowserNotificationRaw(title, body ?? '');
+      }
+    }).then(fn => { unsub = fn; });
+    return () => unsub?.();
+  }, [user?.uid]);
 
   // ─── Live Applications Listener ─────────────────────────────────────────────
   useEffect(() => {
@@ -137,6 +270,91 @@ export default function AdminDashboard() {
       err => handleFirestoreError(err, OperationType.LIST, 'applications')
     );
     return () => unsubApps();
+  }, []);
+
+  // ─── Live Class Board Subscriptions ─────────────────────────────────────────
+  useEffect(() => {
+    const today = new Date().toISOString().split('T')[0];
+
+    const unsubFence = onSnapshot(
+      collection(db, 'geofences'),
+      snap => setGeofenceEnabled(!snap.empty),
+    );
+
+    const unsubCheckins = onSnapshot(
+      query(collection(db, 'attendance_checkins'), where('date', '==', today)),
+      snap => {
+        // Update state for all docs
+        setLiveCheckins(snap.docs.map(d => ({ id: d.id, ...d.data() } as TeacherCheckIn)));
+
+        // Fire browser notifications only for truly new events (added after mount)
+        snap.docChanges().forEach(change => {
+          if (change.type !== 'added') return;
+          const ev = change.doc.data() as TeacherCheckIn;
+          const evMs = ev.timestamp?.toMillis?.() ?? 0;
+          if (evMs < mountedAtRef.current) return; // existing doc on initial load
+
+          const timeStr = new Date(evMs).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+          if (ev.type === 'check_in')  notifyCheckIn(ev.teacherName, timeStr, ev.withinFence);
+          if (ev.type === 'check_out') notifyCheckOut(ev.teacherName, timeStr);
+        });
+      },
+    );
+
+    const unsubTimetables = onSnapshot(
+      collection(db, 'timetables'),
+      snap => setTimetables(snap.docs.map(d => ({ id: d.id, ...d.data() } as Timetable))),
+    );
+
+    const unsubTeachers = onSnapshot(
+      query(collection(db, 'users'), where('role', '==', 'teacher')),
+      snap => setTeacherList(
+        snap.docs.map(d => ({ uid: d.id, displayName: (d.data().displayName || d.data().email || 'Unknown') }))
+      ),
+    );
+
+    const unsubStudentAtt = onSnapshot(
+      query(collection(db, 'attendance'), where('date', '==', today)),
+      snap => {
+        const byClass: Record<string, { present: number; absent: number; late: number }> = {};
+        snap.docs.forEach(d => {
+          const { class: cls, status } = d.data();
+          if (!byClass[cls]) byClass[cls] = { present: 0, absent: 0, late: 0 };
+          if (status === 'present') byClass[cls].present++;
+          else if (status === 'absent') byClass[cls].absent++;
+          else if (status === 'late') byClass[cls].late++;
+        });
+        setTodayAttendance(
+          Object.entries(byClass)
+            .map(([cls, counts]) => ({ class: cls, ...counts }))
+            .sort((a, b) => a.class.localeCompare(b.class))
+        );
+      },
+    );
+
+    // ── Idle-class alert: every 5 min check for started-but-unteachered periods ──
+    const idleCheck = setInterval(() => {
+      const now = new Date();
+      const liveClasses = computeLiveClasses(timetablesRef.current, checkinsRef.current, now);
+      liveClasses.forEach(cls => {
+        if (cls.status !== 'scheduled') return;           // only "due but no check-in"
+        if (!cls.periodStart) return;
+        // Calculate how many minutes past the scheduled start
+        const [h, m] = cls.periodStart.split(':').map(Number);
+        const startMs = new Date(now).setHours(h, m, 0, 0);
+        const minutesLate = Math.floor((now.getTime() - startMs) / 60_000);
+        if (minutesLate < 10) return;                     // grace period: 10 minutes
+        const key = `${cls.className}_${cls.periodStart}`;
+        if (alertedClasses.current.has(key)) return;      // already alerted this period
+        alertedClasses.current.add(key);
+        notifyIdleClass(cls.className, cls.subject ?? 'Class', cls.teacherName ?? 'Teacher', minutesLate);
+      });
+    }, 5 * 60_000);
+
+    // Tick every minute to keep the live status fresh
+    const tick = setInterval(() => setLiveNow(new Date()), 60_000);
+
+    return () => { unsubFence(); unsubCheckins(); unsubTimetables(); unsubTeachers(); unsubStudentAtt(); clearInterval(idleCheck); clearInterval(tick); };
   }, []);
 
   // ─── Stats Fetch ────────────────────────────────────────────────────────────
@@ -311,10 +529,11 @@ export default function AdminDashboard() {
   ];
 
   const tabs = [
-    { id: 'overview', label: 'Overview' },
-    { id: 'academic', label: 'Academic' },
-    { id: 'finance', label: 'Finance' },
-    { id: 'admissions', label: 'Admissions' },
+    { id: 'overview',   label: 'Overview',    live: false },
+    { id: 'today',      label: 'Today',       live: true  },
+    { id: 'academic',   label: 'Academic',    live: false },
+    { id: 'finance',    label: 'Finance',     live: false },
+    { id: 'admissions', label: 'Admissions',  live: false },
   ] as const;
 
   // ─── Render ─────────────────────────────────────────────────────────────────
@@ -370,12 +589,21 @@ export default function AdminDashboard() {
           <button
             key={tab.id}
             onClick={() => setActiveTab(tab.id)}
-            className={`px-4 py-2 text-sm font-semibold rounded-t-lg transition-colors border-b-2 -mb-px ${
-              activeTab === tab.id
-                ? 'border-indigo-600 text-indigo-600'
-                : 'border-transparent text-slate-500 hover:text-slate-700'
+            className={`relative px-4 py-2 text-sm font-semibold rounded-t-lg transition-colors border-b-2 -mb-px flex items-center gap-2 ${
+              tab.live
+                ? activeTab === tab.id
+                  ? 'border-emerald-500 text-emerald-700'
+                  : 'border-transparent text-emerald-600 hover:text-emerald-700'
+                : activeTab === tab.id
+                  ? 'border-indigo-600 text-indigo-600'
+                  : 'border-transparent text-slate-500 hover:text-slate-700'
             }`}
           >
+            {tab.live && (
+              <span className="flex items-center">
+                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+              </span>
+            )}
             {tab.label}
           </button>
         ))}
@@ -483,6 +711,184 @@ export default function AdminDashboard() {
             </div>
           </div>
 
+          {/* Live sections moved to the Today tab */}
+          {false && geofenceEnabled && timetables.length > 0 && (() => {
+            const liveClasses = computeLiveClasses(timetables, liveCheckins, liveNow);
+            const activeCount = liveClasses.filter(c => c.status === 'active').length;
+            const scheduledCount = liveClasses.filter(c => c.status === 'scheduled').length;
+            const idleCount = liveClasses.filter(c => c.status === 'idle' || c.status === 'no_timetable').length;
+            return (
+              <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+                <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Radio className="w-4 h-4 text-emerald-500" />
+                    <h3 className="text-sm font-bold text-slate-900">Live Class Status</h3>
+                    <span className="text-xs text-slate-400">
+                      as of {liveNow.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-3 text-xs">
+                    <span className="flex items-center gap-1 text-emerald-600 font-semibold">
+                      <span className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse" />
+                      {activeCount} Active
+                    </span>
+                    <span className="flex items-center gap-1 text-amber-600 font-semibold">
+                      <span className="w-2 h-2 bg-amber-400 rounded-full" />
+                      {scheduledCount} Scheduled
+                    </span>
+                    <span className="flex items-center gap-1 text-slate-400">
+                      <Minus className="w-3 h-3" />
+                      {idleCount} Idle
+                    </span>
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-px bg-slate-100">
+                  {liveClasses.map(cls => (
+                    <div key={cls.className} className="bg-white p-3">
+                      <div className="flex items-center justify-between mb-1.5">
+                        <p className="text-xs font-bold text-slate-800 truncate mr-2">{cls.className}</p>
+                        {cls.status === 'active' && (
+                          <span className="flex items-center gap-1 text-[10px] font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded-full shrink-0">
+                            <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse" />
+                            Live
+                          </span>
+                        )}
+                        {cls.status === 'scheduled' && (
+                          <span className="flex items-center gap-1 text-[10px] font-bold text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded-full shrink-0">
+                            <Clock className="w-2.5 h-2.5" />
+                            Next
+                          </span>
+                        )}
+                        {(cls.status === 'idle' || cls.status === 'no_timetable') && (
+                          <span className="text-[10px] text-slate-400 shrink-0">—</span>
+                        )}
+                      </div>
+                      {cls.subject && (
+                        <p className="text-[11px] text-slate-600 truncate">{cls.subject}</p>
+                      )}
+                      {cls.teacherName && (
+                        <p className="text-[11px] text-slate-500 truncate">{cls.teacherName}</p>
+                      )}
+                      {cls.periodStart && (
+                        <p className="text-[10px] text-slate-400 mt-0.5">{cls.periodStart}–{cls.periodEnd}</p>
+                      )}
+                      {cls.outOfFence && (
+                        <p className="text-[10px] text-amber-600 flex items-center gap-0.5 mt-0.5">
+                          <MapPin className="w-2.5 h-2.5" /> Out-of-fence
+                        </p>
+                      )}
+                      {(cls.status === 'idle' || cls.status === 'no_timetable') && (
+                        <p className="text-[11px] text-slate-400 mt-0.5">No session</p>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* Staff check-ins moved to the Today tab */}
+          {false && geofenceEnabled && (() => {
+            const today = liveNow.toISOString().split('T')[0];
+
+            // Build per-teacher check-in / check-out lookup
+            const ciMap: Record<string, TeacherCheckIn> = {};
+            const coMap: Record<string, TeacherCheckIn> = {};
+            liveCheckins.forEach(c => {
+              if (c.type === 'check_in')  ciMap[c.teacherName] = c;
+              if (c.type === 'check_out') coMap[c.teacherName] = c;
+            });
+
+            // Also include teachers who checked in but aren't in the users list yet
+            const extraNames = liveCheckins
+              .map(c => c.teacherName)
+              .filter(n => !teacherList.some(t => t.displayName === n));
+            const uniqueExtras = [...new Set(extraNames)];
+
+            const rows = [
+              ...teacherList.map(t => ({ name: t.displayName })),
+              ...uniqueExtras.map(n => ({ name: n })),
+            ];
+
+            const checkedInCount  = rows.filter(r => ciMap[r.name]).length;
+            const notCheckedIn    = rows.filter(r => !ciMap[r.name]).length;
+
+            const fmtTime = (ci: TeacherCheckIn | undefined) => {
+              if (!ci?.timestamp?.toDate) return null;
+              return ci.timestamp.toDate().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            };
+
+            return (
+              <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+                <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <UserCheck className="w-4 h-4 text-indigo-500" />
+                    <h3 className="text-sm font-bold text-slate-900">Staff Check-ins Today</h3>
+                    <span className="text-xs text-slate-400">{today}</span>
+                  </div>
+                  <div className="flex items-center gap-3 text-xs font-semibold">
+                    <span className="text-emerald-600">{checkedInCount} in</span>
+                    <span className="text-slate-400">{notCheckedIn} pending</span>
+                  </div>
+                </div>
+
+                {rows.length === 0 ? (
+                  <p className="p-4 text-xs text-slate-400">No teachers found. Add teachers in User Management.</p>
+                ) : (
+                  <div className="divide-y divide-slate-100">
+                    {rows.map(row => {
+                      const ci = ciMap[row.name];
+                      const co = coMap[row.name];
+                      const ciTime = fmtTime(ci);
+                      const coTime = fmtTime(co);
+                      const checked = !!ci;
+                      const outOfFence = !!ci && !ci.withinFence;
+
+                      return (
+                        <div key={row.name} className="flex items-center gap-3 px-4 py-2.5 hover:bg-slate-50">
+                          {/* Avatar initial */}
+                          <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold shrink-0 ${
+                            checked ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-400'
+                          }`}>
+                            {row.name.charAt(0).toUpperCase()}
+                          </div>
+
+                          {/* Name */}
+                          <p className="text-sm font-medium text-slate-800 flex-1 truncate">{row.name}</p>
+
+                          {/* Out-of-fence warning */}
+                          {outOfFence && (
+                            <span className="flex items-center gap-1 text-[10px] font-semibold text-amber-700 bg-amber-50 border border-amber-200 px-1.5 py-0.5 rounded-full">
+                              <MapPin className="w-2.5 h-2.5" /> Out-of-fence
+                            </span>
+                          )}
+
+                          {/* Check-in / Check-out times */}
+                          {checked ? (
+                            <div className="text-right shrink-0">
+                              <p className="text-xs font-semibold text-emerald-700 flex items-center gap-1 justify-end">
+                                <CheckCircle2 className="w-3 h-3" /> {ciTime}
+                              </p>
+                              {coTime ? (
+                                <p className="text-[10px] text-slate-400">Out {coTime}</p>
+                              ) : (
+                                <p className="text-[10px] text-slate-400">Still in</p>
+                              )}
+                            </div>
+                          ) : (
+                            <span className="text-xs text-slate-400 shrink-0 flex items-center gap-1">
+                              <Clock className="w-3 h-3" /> Not yet
+                            </span>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            );
+          })()}
+
           {/* Module Grid — Categorized */}
           <div>
             <h2 className="text-sm font-bold text-slate-700 uppercase tracking-wide mb-3">All Modules</h2>
@@ -548,6 +954,260 @@ export default function AdminDashboard() {
 
         </div>
       )}
+
+      {/* ══════════════════════════════════════════════════════════════ TODAY (LIVE) */}
+      {activeTab === 'today' && (() => {
+        const today = liveNow.toISOString().split('T')[0];
+        const todayFull = liveNow.toLocaleDateString(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+
+        // ── Staff check-in helpers ──────────────────────────────────────────────
+        const ciMap: Record<string, TeacherCheckIn> = {};
+        const coMap: Record<string, TeacherCheckIn> = {};
+        liveCheckins.forEach(c => {
+          if (c.type === 'check_in')  ciMap[c.teacherName] = c;
+          if (c.type === 'check_out') coMap[c.teacherName] = c;
+        });
+        const extraNames = [...new Set(
+          liveCheckins.map(c => c.teacherName).filter(n => !teacherList.some(t => t.displayName === n))
+        )];
+        const staffRows = [
+          ...teacherList.map(t => ({ name: t.displayName })),
+          ...extraNames.map(n => ({ name: n })),
+        ];
+        const checkedInCount = staffRows.filter(r => ciMap[r.name]).length;
+        const fmtTime = (ci: TeacherCheckIn | undefined) =>
+          ci?.timestamp?.toDate
+            ? ci.timestamp.toDate().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+            : null;
+
+        // ── Live class helpers ──────────────────────────────────────────────────
+        const liveClasses = computeLiveClasses(timetables, liveCheckins, liveNow);
+        const activeCount    = liveClasses.filter(c => c.status === 'active').length;
+        const scheduledCount = liveClasses.filter(c => c.status === 'scheduled').length;
+
+        // ── Student attendance helpers ──────────────────────────────────────────
+        const totalPresent = todayAttendance.reduce((s, r) => s + r.present, 0);
+        const totalAbsent  = todayAttendance.reduce((s, r) => s + r.absent, 0);
+        const totalLate    = todayAttendance.reduce((s, r) => s + r.late, 0);
+        const totalMarked  = totalPresent + totalAbsent + totalLate;
+        const presentPct   = totalMarked ? Math.round((totalPresent / totalMarked) * 100) : null;
+
+        return (
+          <div className="space-y-5">
+
+            {/* Live header banner */}
+            <div className="flex items-center justify-between bg-emerald-50 border border-emerald-200 rounded-xl px-5 py-3">
+              <div className="flex items-center gap-3">
+                <span className="flex items-center gap-1.5">
+                  <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
+                  <span className="text-sm font-bold text-emerald-800">Live Activity</span>
+                </span>
+                <span className="text-xs text-emerald-600">{todayFull}</span>
+              </div>
+              <span className="text-xs text-emerald-600 font-medium">
+                Updates automatically · {liveNow.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+              </span>
+            </div>
+
+            {/* KPI strip for today */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              {[
+                { label: 'Classes Active',  value: activeCount,         sub: `${scheduledCount} upcoming`,    color: 'emerald' },
+                { label: 'Staff In',        value: `${checkedInCount}/${staffRows.length}`, sub: geofenceEnabled ? 'GPS verified' : 'No geo-fence set', color: 'indigo' },
+                { label: 'Students Present',value: presentPct !== null ? `${presentPct}%` : '—', sub: `${totalPresent} of ${totalMarked} marked`, color: 'blue' },
+                { label: 'Absent Today',    value: totalAbsent,          sub: `${totalLate} late`,             color: 'rose' },
+              ].map(k => (
+                <div key={k.label} className={`bg-white rounded-xl border border-slate-200 p-4 shadow-sm`}>
+                  <p className={`text-2xl font-bold text-${k.color}-600`}>{k.value}</p>
+                  <p className="text-xs font-semibold text-slate-700 mt-0.5">{k.label}</p>
+                  <p className="text-xs text-slate-400 mt-0.5">{k.sub}</p>
+                </div>
+              ))}
+            </div>
+
+            {/* Two-column: Live Classes + Staff Check-ins */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+
+              {/* ── Live Class Status ── */}
+              {timetables.length > 0 ? (
+                <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+                  <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Radio className="w-4 h-4 text-emerald-500" />
+                      <h3 className="text-sm font-bold text-slate-900">Live Class Status</h3>
+                    </div>
+                    <div className="flex items-center gap-3 text-xs">
+                      <span className="flex items-center gap-1 text-emerald-600 font-semibold">
+                        <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse" />{activeCount} Active
+                      </span>
+                      <span className="flex items-center gap-1 text-amber-600 font-semibold">
+                        <Clock className="w-3 h-3" />{scheduledCount} Next
+                      </span>
+                    </div>
+                  </div>
+                  <div className="divide-y divide-slate-100 max-h-72 overflow-y-auto">
+                    {liveClasses.map(cls => (
+                      <div key={cls.className} className="flex items-center gap-3 px-4 py-2.5 hover:bg-slate-50">
+                        <div className={`w-2 h-2 rounded-full shrink-0 ${
+                          cls.status === 'active' ? 'bg-emerald-500 animate-pulse' :
+                          cls.status === 'scheduled' ? 'bg-amber-400' : 'bg-slate-200'
+                        }`} />
+                        <p className="text-sm font-semibold text-slate-800 w-28 shrink-0 truncate">{cls.className}</p>
+                        <div className="flex-1 min-w-0">
+                          {cls.subject && <p className="text-xs text-slate-600 truncate">{cls.subject}</p>}
+                          {cls.teacherName && <p className="text-xs text-slate-400 truncate">{cls.teacherName}</p>}
+                        </div>
+                        <div className="text-right shrink-0">
+                          {cls.periodStart
+                            ? <p className="text-xs text-slate-500 font-mono">{cls.periodStart}–{cls.periodEnd}</p>
+                            : <p className="text-xs text-slate-300">—</p>}
+                          {cls.outOfFence && (
+                            <p className="text-[10px] text-amber-600 flex items-center gap-0.5 justify-end mt-0.5">
+                              <MapPin className="w-2.5 h-2.5" /> Out-of-fence
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6 flex flex-col items-center justify-center gap-2 text-center">
+                  <Clock className="w-8 h-8 text-slate-200" />
+                  <p className="text-sm font-semibold text-slate-500">No timetables configured</p>
+                  <Link to="/admin/timetable" className="text-xs text-indigo-600 hover:underline">Set up timetable →</Link>
+                </div>
+              )}
+
+              {/* ── Staff Check-ins ── */}
+              <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+                <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <UserCheck className="w-4 h-4 text-indigo-500" />
+                    <h3 className="text-sm font-bold text-slate-900">Staff Check-ins</h3>
+                  </div>
+                  <div className="flex items-center gap-3 text-xs font-semibold">
+                    <span className="text-emerald-600">{checkedInCount} in</span>
+                    <span className="text-slate-400">{staffRows.length - checkedInCount} pending</span>
+                  </div>
+                </div>
+                {!geofenceEnabled ? (
+                  <div className="p-5 flex flex-col items-center gap-2 text-center">
+                    <MapPin className="w-7 h-7 text-slate-200" />
+                    <p className="text-sm font-semibold text-slate-500">Geo-fence not configured</p>
+                    <Link to="/admin/settings" className="text-xs text-indigo-600 hover:underline">Configure in Settings → Geo-fence →</Link>
+                  </div>
+                ) : staffRows.length === 0 ? (
+                  <p className="p-4 text-xs text-slate-400">No teachers found. Add teachers in User Management.</p>
+                ) : (
+                  <div className="divide-y divide-slate-100 max-h-72 overflow-y-auto">
+                    {staffRows.map(row => {
+                      const ci = ciMap[row.name];
+                      const co = coMap[row.name];
+                      const ciTime = fmtTime(ci);
+                      const coTime = fmtTime(co);
+                      const outOfFence = !!ci && !ci.withinFence;
+                      return (
+                        <div key={row.name} className="flex items-center gap-3 px-4 py-2.5 hover:bg-slate-50">
+                          <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold shrink-0 ${
+                            ci ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-400'
+                          }`}>
+                            {row.name.charAt(0).toUpperCase()}
+                          </div>
+                          <p className="text-sm font-medium text-slate-800 flex-1 truncate">{row.name}</p>
+                          {outOfFence && (
+                            <span className="flex items-center gap-1 text-[10px] font-semibold text-amber-700 bg-amber-50 border border-amber-200 px-1.5 py-0.5 rounded-full shrink-0">
+                              <MapPin className="w-2.5 h-2.5" /> Out-of-fence
+                            </span>
+                          )}
+                          {ci ? (
+                            <div className="text-right shrink-0">
+                              <p className="text-xs font-semibold text-emerald-700 flex items-center gap-1 justify-end">
+                                <CheckCircle2 className="w-3 h-3" />{ciTime}
+                              </p>
+                              <p className="text-[10px] text-slate-400">{coTime ? `Out ${coTime}` : 'Still in'}</p>
+                            </div>
+                          ) : (
+                            <span className="text-xs text-slate-400 shrink-0 flex items-center gap-1">
+                              <Clock className="w-3 h-3" /> Not yet
+                            </span>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* ── Student Attendance by Class ── */}
+            {todayAttendance.length > 0 && (
+              <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+                <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <ClipboardList className="w-4 h-4 text-blue-500" />
+                    <h3 className="text-sm font-bold text-slate-900">Student Attendance — Today</h3>
+                  </div>
+                  <Link to="/admin/attendance" className="text-xs text-indigo-600 hover:underline flex items-center gap-0.5">
+                    Full report <ChevronRight className="w-3 h-3" />
+                  </Link>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-xs">
+                    <thead>
+                      <tr className="border-b border-slate-100 bg-slate-50">
+                        <th className="text-left px-4 py-2 font-semibold text-slate-500">Class</th>
+                        <th className="text-center px-3 py-2 font-semibold text-emerald-600">Present</th>
+                        <th className="text-center px-3 py-2 font-semibold text-rose-500">Absent</th>
+                        <th className="text-center px-3 py-2 font-semibold text-amber-500">Late</th>
+                        <th className="text-right px-4 py-2 font-semibold text-slate-500">Rate</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {todayAttendance.map(row => {
+                        const total = row.present + row.absent + row.late;
+                        const rate = total ? Math.round((row.present / total) * 100) : 0;
+                        return (
+                          <tr key={row.class} className="hover:bg-slate-50">
+                            <td className="px-4 py-2 font-medium text-slate-700">{row.class}</td>
+                            <td className="text-center px-3 py-2 text-emerald-700 font-semibold">{row.present}</td>
+                            <td className="text-center px-3 py-2 text-rose-600 font-semibold">{row.absent}</td>
+                            <td className="text-center px-3 py-2 text-amber-600 font-semibold">{row.late}</td>
+                            <td className="text-right px-4 py-2">
+                              <span className={`font-bold ${rate >= 80 ? 'text-emerald-600' : rate >= 60 ? 'text-amber-600' : 'text-rose-600'}`}>
+                                {rate}%
+                              </span>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                    <tfoot>
+                      <tr className="border-t-2 border-slate-200 bg-slate-50">
+                        <td className="px-4 py-2 font-bold text-slate-700">Total</td>
+                        <td className="text-center px-3 py-2 font-bold text-emerald-700">{totalPresent}</td>
+                        <td className="text-center px-3 py-2 font-bold text-rose-600">{totalAbsent}</td>
+                        <td className="text-center px-3 py-2 font-bold text-amber-600">{totalLate}</td>
+                        <td className="text-right px-4 py-2 font-bold text-slate-700">
+                          {presentPct !== null ? `${presentPct}%` : '—'}
+                        </td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+              </div>
+            )}
+            {todayAttendance.length === 0 && (
+              <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6 flex flex-col items-center gap-2 text-center">
+                <ClipboardList className="w-8 h-8 text-slate-200" />
+                <p className="text-sm font-semibold text-slate-500">No attendance recorded yet today</p>
+                <Link to="/admin/attendance" className="text-xs text-indigo-600 hover:underline">Take attendance →</Link>
+              </div>
+            )}
+
+          </div>
+        );
+      })()}
 
       {/* ══════════════════════════════════════════════════════════════ ACADEMIC */}
       {activeTab === 'academic' && (

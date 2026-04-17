@@ -1,11 +1,13 @@
 import React, { useState, useEffect } from 'react';
-import { db, handleFirestoreError, OperationType } from '../firebase';
-import { collection, query, onSnapshot, doc, updateDoc, orderBy, addDoc, serverTimestamp, deleteDoc } from 'firebase/firestore';
+import { db, auth, handleFirestoreError, OperationType } from '../firebase';
+import { collection, query, onSnapshot, doc, updateDoc, orderBy, serverTimestamp, setDoc } from 'firebase/firestore';
+import { createUserWithEmailAndPassword, updateProfile } from 'firebase/auth';
 import { UserProfile } from '../types';
 import { motion, AnimatePresence } from 'motion/react';
+import toast from 'react-hot-toast';
 import {
-  Users, Search, Filter, Mail, User as UserIcon, CheckCircle2,
-  X, AlertCircle, Ban, Power, Edit2, Loader2, Plus, Trash2, ChevronRight, Key
+  Users, Search, Filter, User as UserIcon, CheckCircle2,
+  X, AlertCircle, Ban, Power, Loader2, Plus, ChevronRight, Key
 } from 'lucide-react';
 
 const ROLE_COLORS: Record<string, string> = {
@@ -13,6 +15,7 @@ const ROLE_COLORS: Record<string, string> = {
   School_admin: 'bg-purple-50 text-purple-700 border-purple-100',
   teacher: 'bg-indigo-50 text-indigo-700 border-indigo-100',
   parent: 'bg-emerald-50 text-emerald-700 border-emerald-100',
+  accountant: 'bg-teal-50 text-teal-700 border-teal-100',
   applicant: 'bg-slate-50 text-slate-700 border-slate-100',
 };
 
@@ -32,7 +35,8 @@ export default function UserManagement() {
   const [selectedUser, setSelectedUser] = useState<UserProfile | null>(null);
   const [savingId, setSavingId] = useState<string | null>(null);
   const [showInviteModal, setShowInviteModal] = useState(false);
-  const [inviteForm, setInviteForm] = useState({ email: '', displayName: '', role: 'teacher' });
+  const [creatingUser, setCreatingUser] = useState(false);
+  const [inviteForm, setInviteForm] = useState({ email: '', displayName: '', role: 'teacher', password: '', confirmPassword: '' });
 
   useEffect(() => {
     const q = query(collection(db, 'users'), orderBy('email'));
@@ -68,15 +72,38 @@ export default function UserManagement() {
 
   const handleInviteUser = async (e: React.FormEvent) => {
     e.preventDefault();
-    // Creates a placeholder profile; actual auth would be done via Firebase Admin SDK or email invite
-    await addDoc(collection(db, 'user_invites'), {
-      ...inviteForm,
-      status: 'pending',
-      createdAt: serverTimestamp(),
-    });
-    setShowInviteModal(false);
-    setInviteForm({ email: '', displayName: '', role: 'teacher' });
-    alert(`Invitation queued for ${inviteForm.email}. They will receive an email to set up their account.`);
+    if (inviteForm.password.length < 8) {
+      toast.error('Password must be at least 8 characters');
+      return;
+    }
+    if (inviteForm.password !== inviteForm.confirmPassword) {
+      toast.error('Passwords do not match');
+      return;
+    }
+    setCreatingUser(true);
+    const tid = toast.loading(`Creating ${inviteForm.role} account…`);
+    try {
+      const cred = await createUserWithEmailAndPassword(auth, inviteForm.email, inviteForm.password);
+      await updateProfile(cred.user, { displayName: inviteForm.displayName });
+      await setDoc(doc(db, 'users', cred.user.uid), {
+        uid: cred.user.uid,
+        email: inviteForm.email,
+        displayName: inviteForm.displayName,
+        role: inviteForm.role,
+        disabled: false,
+        createdAt: serverTimestamp(),
+      });
+      toast.success(`${inviteForm.role.charAt(0).toUpperCase() + inviteForm.role.slice(1)} account created for ${inviteForm.displayName}!`, { id: tid });
+      setShowInviteModal(false);
+      setInviteForm({ email: '', displayName: '', role: 'teacher', password: '', confirmPassword: '' });
+    } catch (e: any) {
+      const msg = e.code === 'auth/email-already-in-use' ? 'Email already in use' :
+                  e.code === 'auth/invalid-email' ? 'Invalid email address' :
+                  e.message || 'Failed to create account';
+      toast.error(msg, { id: tid });
+    } finally {
+      setCreatingUser(false);
+    }
   };
 
   const filteredUsers = users.filter(u =>
@@ -100,7 +127,7 @@ export default function UserManagement() {
         </div>
         <button onClick={() => setShowInviteModal(true)}
           className="flex items-center gap-2 px-5 py-2.5 bg-indigo-600 text-white font-bold rounded-xl hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-200">
-          <Plus className="w-4 h-4" /> Invite User
+          <Plus className="w-4 h-4" /> Create User
         </button>
       </div>
 
@@ -111,6 +138,7 @@ export default function UserManagement() {
           { role: 'admin', label: 'Admins', count: roleCounts['admin'] || 0 },
           { role: 'teacher', label: 'Teachers', count: roleCounts['teacher'] || 0 },
           { role: 'parent', label: 'Parents', count: roleCounts['parent'] || 0 },
+          { role: 'accountant', label: 'Accountants', count: roleCounts['accountant'] || 0 },
           { role: 'applicant', label: 'Applicants', count: roleCounts['applicant'] || 0 },
         ].map(s => (
           <button key={s.role} onClick={() => setFilterRole(s.role)}
@@ -138,6 +166,7 @@ export default function UserManagement() {
             <option value="School_admin">School Admin</option>
             <option value="teacher">Teacher</option>
             <option value="parent">Parent</option>
+            <option value="accountant">Accountant</option>
             <option value="applicant">Applicant</option>
           </select>
         </div>
@@ -195,6 +224,7 @@ export default function UserManagement() {
                           <option value="applicant">Applicant</option>
                           <option value="teacher">Teacher</option>
                           <option value="parent">Parent</option>
+                          <option value="accountant">Accountant</option>
                           <option value="admin">Admin</option>
                           <option value="School_admin">School Admin</option>
                         </select>
@@ -265,6 +295,7 @@ export default function UserManagement() {
                       <option value="applicant">Applicant</option>
                       <option value="teacher">Teacher</option>
                       <option value="parent">Parent</option>
+                      <option value="accountant">Accountant</option>
                       <option value="admin">Admin</option>
                       <option value="School_admin">School Admin</option>
                     </select>
@@ -334,14 +365,14 @@ export default function UserManagement() {
         )}
       </AnimatePresence>
 
-      {/* Invite User Modal */}
+      {/* Create User Modal */}
       <AnimatePresence>
         {showInviteModal && (
           <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm">
             <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }}
               className="bg-white rounded-3xl p-8 max-w-md w-full shadow-2xl">
               <div className="flex items-center justify-between mb-6">
-                <h3 className="text-xl font-bold text-slate-900">Invite New User</h3>
+                <h3 className="text-xl font-bold text-slate-900">Create User Account</h3>
                 <button onClick={() => setShowInviteModal(false)} className="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-xl">
                   <X className="w-5 h-5" />
                 </button>
@@ -369,19 +400,44 @@ export default function UserManagement() {
                     <option value="parent">Parent</option>
                     <option value="admin">Admin</option>
                     <option value="School_admin">School Admin</option>
+                    <option value="accountant">Accountant</option>
                     <option value="applicant">Applicant</option>
                   </select>
                 </div>
-                <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 flex items-start gap-2">
-                  <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
-                  <p className="text-xs text-amber-700">An invitation record will be queued. Full email invite requires Firebase Auth Admin SDK setup on the backend.</p>
+                <div>
+                  <label className="text-xs font-bold text-slate-400 uppercase block mb-1.5">Password</label>
+                  <input required type="password" value={inviteForm.password}
+                    onChange={e => setInviteForm({ ...inviteForm, password: e.target.value })}
+                    placeholder="Min. 8 characters"
+                    className="w-full px-4 py-3 rounded-xl border border-slate-200 outline-none focus:ring-2 focus:ring-indigo-500 text-sm" />
+                </div>
+                <div>
+                  <label className="text-xs font-bold text-slate-400 uppercase block mb-1.5">Confirm Password</label>
+                  <input required type="password" value={inviteForm.confirmPassword}
+                    onChange={e => setInviteForm({ ...inviteForm, confirmPassword: e.target.value })}
+                    placeholder="Re-enter password"
+                    className={`w-full px-4 py-3 rounded-xl border outline-none focus:ring-2 focus:ring-indigo-500 text-sm ${
+                      inviteForm.confirmPassword && inviteForm.password !== inviteForm.confirmPassword
+                        ? 'border-rose-300 bg-rose-50'
+                        : 'border-slate-200'
+                    }`} />
+                  {inviteForm.confirmPassword && inviteForm.password !== inviteForm.confirmPassword && (
+                    <p className="text-xs text-rose-600 mt-1 flex items-center gap-1">
+                      <AlertCircle className="w-3 h-3" /> Passwords do not match
+                    </p>
+                  )}
+                </div>
+                <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-3 flex items-start gap-2">
+                  <AlertCircle className="w-4 h-4 text-indigo-600 shrink-0 mt-0.5" />
+                  <p className="text-xs text-indigo-700">A Firebase Auth account will be created immediately. Share the credentials with the user.</p>
                 </div>
                 <div className="flex gap-3 pt-2">
                   <button type="button" onClick={() => setShowInviteModal(false)}
                     className="flex-1 py-3 bg-slate-100 text-slate-700 font-bold rounded-xl hover:bg-slate-200 transition-all">Cancel</button>
-                  <button type="submit"
-                    className="flex-1 py-3 bg-indigo-600 text-white font-bold rounded-xl hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-200">
-                    Send Invitation
+                  <button type="submit" disabled={creatingUser || !inviteForm.displayName || inviteForm.password !== inviteForm.confirmPassword}
+                    className="flex-1 py-3 bg-indigo-600 text-white font-bold rounded-xl hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-200 disabled:opacity-60 flex items-center justify-center gap-2">
+                    {creatingUser && <Loader2 className="w-4 h-4 animate-spin" />}
+                    Create Account
                   </button>
                 </div>
               </form>

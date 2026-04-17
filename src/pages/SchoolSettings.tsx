@@ -1,15 +1,20 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { db } from '../firebase';
-import { doc, getDoc, setDoc, serverTimestamp, collection, getDocs, writeBatch } from 'firebase/firestore';
+import { doc, getDoc, setDoc, serverTimestamp, collection, getDocs, writeBatch, onSnapshot, addDoc, deleteDoc, query } from 'firebase/firestore';
 import { motion } from 'motion/react';
 import toast from 'react-hot-toast';
 import {
   Settings, Save, School, Calendar, Lock, Phone, Loader2,
-  Hash, Layers, BookOpen, Clock, Plus, X, Trash2, AlertTriangle,
+  Hash, BookOpen, Plus, X, Trash2, AlertTriangle,
   Globe, DollarSign, Image as ImageIcon, Award, ChevronUp, ChevronDown,
-  Upload, Eye, EyeOff
+  Upload, Eye, EyeOff, Users, Bell, ShieldCheck, FileText, ClipboardCheck,
+  MapPin, Navigation, CheckCircle2, XCircle, RefreshCw,
 } from 'lucide-react';
-import { SCHOOL_CLASSES, SUBJECTS, TERMS, GradingSystem, CustomGradeScale } from '../types';
+import { GeoFence } from '../types';
+import { haversineDistance } from '../services/geofenceService';
+import { SCHOOL_CLASSES, SUBJECTS, TERMS, GradingSystem, CustomGradeScale, SubjectDefinition, UserProfile } from '../types';
+import { useUnsavedChanges } from '../hooks/useUnsavedChanges';
+import UnsavedChangesDialog from '../components/UnsavedChangesDialog';
 
 export interface SchoolSettings {
   schoolName: string;
@@ -17,6 +22,10 @@ export interface SchoolSettings {
   phone: string;
   email: string;
   logoUrl: string;
+  /** URL of a custom favicon (PNG/ICO/SVG). Displayed in browser tab. */
+  faviconUrl?: string;
+  /** Brand primary colour (hex, e.g. '#4f46e5'). Used for sidebar accents, buttons, etc. */
+  primaryColor?: string;
   currentSession: string;
   currentTerm: '1st Term' | '2nd Term' | '3rd Term';
   examLocked: boolean;
@@ -46,6 +55,81 @@ export interface SchoolSettings {
   // Media / Cloudinary
   cloudinaryCloudName: string;
   cloudinaryUploadPreset: string;
+
+  // ── Admissions & Enrolment ────────────────────────────────────────────────
+  /** Allow new online applications from the /apply portal */
+  admissionsOpen: boolean;
+  /** Maximum number of open applications allowed at one time (0 = unlimited) */
+  maxApplications: number;
+  /** Require document uploads as part of the application */
+  requireDocuments: boolean;
+  /** Auto-approve applications without admin review */
+  autoApproveApplications: boolean;
+  /** Minimum age (years) to enrol in the school */
+  minimumEnrolmentAge: number;
+
+  // ── Attendance ────────────────────────────────────────────────────────────
+  /** Number of minutes late before marking as "Late" rather than "Present" */
+  lateThresholdMinutes: number;
+  /** Minimum attendance percentage required before a warning is triggered */
+  attendanceWarningThreshold: number;
+  /** Minimum attendance percentage required to sit exams */
+  attendanceExamThreshold: number;
+  /** School days per week (Mon–Fri = 5, Mon–Sat = 6) */
+  schoolDaysPerWeek: 5 | 6;
+
+  // ── Assessment & Grading ─────────────────────────────────────────────────
+  /** Maximum CA (continuous assessment) score out of total */
+  caMaxScore: number;
+  /** Maximum exam score out of total */
+  examMaxScore: number;
+  /** Show class/subject position (rank) on report cards */
+  showPositionOnReport: boolean;
+  /** Show teacher comment field on report cards */
+  showTeacherComment: boolean;
+  /** Show psychomotor / skills section on report cards */
+  showSkillsOnReport: boolean;
+  /** Passing / promotion score threshold (percentage) */
+  passMarkPercent: number;
+
+  // ── Notifications & Communication ────────────────────────────────────────
+  /** Send fee-due reminders to parents */
+  feeReminderEnabled: boolean;
+  /** Days before due date to send the reminder */
+  feeReminderDaysBefore: number;
+  /** Send attendance SMS/notification when student is absent */
+  absenceAlertEnabled: boolean;
+  /** Send result/report card notifications to parents */
+  resultNotificationEnabled: boolean;
+  /** WhatsApp sender/API phone number */
+  whatsappSenderPhone: string;
+
+  // ── Portal & Access ───────────────────────────────────────────────────────
+  /** Allow parents to view their children's grades */
+  parentCanViewGrades: boolean;
+  /** Allow parents to view attendance records */
+  parentCanViewAttendance: boolean;
+  /** Allow parents to download report cards */
+  parentCanDownloadReports: boolean;
+  /** Allow teachers to enter/edit grades */
+  teacherCanEnterGrades: boolean;
+  /** Allow teachers to manage their own timetable view */
+  teacherCanViewTimetable: boolean;
+  /** Session timeout in minutes for all portal users (0 = never) */
+  sessionTimeoutMinutes: number;
+
+  // ── Report Card & Printing ────────────────────────────────────────────────
+  /** Show school watermark / stamp on printed report cards */
+  reportWatermarkEnabled: boolean;
+  /** Paper size for printed reports */
+  reportPaperSize: 'A4' | 'Letter' | 'A5';
+  /** Show school logo on report card header */
+  reportShowLogo: boolean;
+  /** Custom footer text printed at the bottom of each report card */
+  reportFooterText: string;
+  /** Number of decimal places for score display on reports */
+  reportScoreDecimals: 0 | 1 | 2;
+
   updatedAt?: any;
 }
 
@@ -63,6 +147,8 @@ export const defaultSettings: SchoolSettings = {
   phone: '',
   email: '',
   logoUrl: '',
+  faviconUrl: '',
+  primaryColor: '#4f46e5',
   currentSession: `${new Date().getFullYear()}/${new Date().getFullYear() + 1}`,
   currentTerm: '1st Term',
   examLocked: false,
@@ -90,6 +176,43 @@ export const defaultSettings: SchoolSettings = {
   // Media
   cloudinaryCloudName: '',
   cloudinaryUploadPreset: '',
+  // Admissions
+  admissionsOpen: true,
+  maxApplications: 0,
+  requireDocuments: false,
+  autoApproveApplications: false,
+  minimumEnrolmentAge: 3,
+  // Attendance
+  lateThresholdMinutes: 15,
+  attendanceWarningThreshold: 75,
+  attendanceExamThreshold: 70,
+  schoolDaysPerWeek: 5,
+  // Assessment
+  caMaxScore: 40,
+  examMaxScore: 60,
+  showPositionOnReport: true,
+  showTeacherComment: true,
+  showSkillsOnReport: true,
+  passMarkPercent: 50,
+  // Notifications
+  feeReminderEnabled: true,
+  feeReminderDaysBefore: 7,
+  absenceAlertEnabled: false,
+  resultNotificationEnabled: false,
+  whatsappSenderPhone: '',
+  // Portal & Access
+  parentCanViewGrades: true,
+  parentCanViewAttendance: true,
+  parentCanDownloadReports: false,
+  teacherCanEnterGrades: true,
+  teacherCanViewTimetable: true,
+  sessionTimeoutMinutes: 60,
+  // Report Card
+  reportWatermarkEnabled: false,
+  reportPaperSize: 'A4',
+  reportShowLogo: true,
+  reportFooterText: '',
+  reportScoreDecimals: 1,
 };
 
 export function useSchoolSettings() {
@@ -296,11 +419,164 @@ function previewStudentId(prefix: string, format: SchoolSettings['studentIdForma
   }
 }
 
+// ─── Geo-fence map preview (Leaflet) ─────────────────────────────────────────
+function GeoFenceMapPreview({ lat, lng, radius }: { lat: number | null; lng: number | null; radius: number }) {
+  const containerRef = React.useRef<HTMLDivElement>(null);
+  const mapRef = React.useRef<any>(null);
+  const circleRef = React.useRef<any>(null);
+  const markerRef = React.useRef<any>(null);
+
+  const validCoords = lat !== null && lng !== null && !isNaN(lat) && !isNaN(lng);
+
+  React.useEffect(() => {
+    if (!validCoords || !containerRef.current) return;
+
+    // Dynamically import Leaflet so it doesn't SSR-crash and avoids the
+    // "window is not defined" error in test environments.
+    import('leaflet').then(L => {
+      // Inject Leaflet CSS once
+      if (!document.getElementById('leaflet-css')) {
+        const link = document.createElement('link');
+        link.id = 'leaflet-css';
+        link.rel = 'stylesheet';
+        link.href = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
+        document.head.appendChild(link);
+      }
+
+      // Fix default icon paths broken by bundlers
+      delete (L.Icon.Default.prototype as any)._getIconUrl;
+      L.Icon.Default.mergeOptions({
+        iconRetinaUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png',
+        iconUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png',
+        shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
+      });
+
+      if (!mapRef.current) {
+        mapRef.current = L.map(containerRef.current!).setView([lat!, lng!], 17);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+          attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+          maxZoom: 19,
+        }).addTo(mapRef.current);
+      } else {
+        mapRef.current.setView([lat!, lng!], 17);
+      }
+
+      // Update / create circle
+      if (circleRef.current) {
+        circleRef.current.setLatLng([lat!, lng!]).setRadius(radius);
+      } else {
+        circleRef.current = L.circle([lat!, lng!], {
+          radius,
+          color: '#4f46e5',
+          fillColor: '#4f46e5',
+          fillOpacity: 0.15,
+          weight: 2,
+        }).addTo(mapRef.current);
+      }
+
+      // Update / create marker
+      if (markerRef.current) {
+        markerRef.current.setLatLng([lat!, lng!]);
+      } else {
+        markerRef.current = L.marker([lat!, lng!]).addTo(mapRef.current)
+          .bindPopup('School entrance').openPopup();
+      }
+
+      // Fit map to the circle bounds
+      mapRef.current.fitBounds(circleRef.current.getBounds(), { padding: [30, 30] });
+    });
+
+    return () => {
+      // Do NOT destroy the map on every re-render — only when the component unmounts
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lat, lng, radius]);
+
+  // Destroy map on unmount
+  React.useEffect(() => {
+    return () => {
+      if (mapRef.current) { mapRef.current.remove(); mapRef.current = null; }
+    };
+  }, []);
+
+  if (!validCoords) {
+    return (
+      <div className="w-full h-64 bg-slate-100 rounded-xl border border-slate-200 flex items-center justify-center text-slate-400 text-sm">
+        <MapPin className="w-5 h-5 mr-2" /> Enter coordinates above to preview the boundary
+      </div>
+    );
+  }
+
+  return (
+    <div className="rounded-xl overflow-hidden border border-slate-200 shadow-sm" style={{ height: 280 }}>
+      <div ref={containerRef} style={{ height: '100%', width: '100%' }} />
+    </div>
+  );
+}
+
+// ─── Reusable Toggle row ──────────────────────────────────────────────────────
+function ToggleRow({
+  label, description, checked, onChange,
+}: { label: string; description?: string; checked: boolean; onChange: (v: boolean) => void }) {
+  return (
+    <label className="flex items-start gap-3 cursor-pointer group">
+      <div className="relative mt-0.5 shrink-0">
+        <input type="checkbox" className="sr-only peer" checked={checked} onChange={e => onChange(e.target.checked)} />
+        <div className="w-11 h-6 bg-slate-200 peer-checked:bg-indigo-600 rounded-full transition-colors" />
+        <div className="absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform peer-checked:translate-x-5" />
+      </div>
+      <div>
+        <p className="text-sm font-semibold text-slate-700 group-hover:text-slate-900 transition-colors">{label}</p>
+        {description && <p className="text-xs text-slate-400 mt-0.5 leading-relaxed">{description}</p>}
+      </div>
+    </label>
+  );
+}
+
+type TabId = 'school' | 'academic' | 'subjects' | 'admissions' | 'attendance' | 'notifications' | 'access' | 'geofence';
+
+const TABS: { id: TabId; label: string; icon: React.ReactNode }[] = [
+  { id: 'school',        label: 'School',           icon: <School className="w-4 h-4" /> },
+  { id: 'academic',      label: 'Academic',         icon: <Award className="w-4 h-4" /> },
+  { id: 'subjects',      label: 'Subjects',         icon: <BookOpen className="w-4 h-4" /> },
+  { id: 'admissions',    label: 'Admissions',       icon: <ClipboardCheck className="w-4 h-4" /> },
+  { id: 'attendance',    label: 'Attendance',       icon: <Users className="w-4 h-4" /> },
+  { id: 'notifications', label: 'Notifications',    icon: <Bell className="w-4 h-4" /> },
+  { id: 'access',        label: 'Access & Reports', icon: <ShieldCheck className="w-4 h-4" /> },
+  { id: 'geofence',      label: 'Geo-fence',        icon: <MapPin className="w-4 h-4" /> },
+];
+
 export default function SchoolSettingsPage() {
   const [form, setForm] = useState<SchoolSettings>(defaultSettings);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [showPreset, setShowPreset] = useState(false);
+  const [isDirty, setIsDirty] = useState(false);
+  const [activeTab, setActiveTab] = useState<TabId>('school');
+
+  // Subject Management state
+  const [subjectClassNames, setSubjectClassNames] = useState<string[]>(SCHOOL_CLASSES);
+  const [subjectDefs, setSubjectDefs] = useState<SubjectDefinition[]>([]);
+  const [subjectTeachers, setSubjectTeachers] = useState<UserProfile[]>([]);
+  const [subjectForm, setSubjectForm] = useState<SubjectDefinition>({
+    name: '', code: '', description: '', assignedClasses: [], level: 'All', isBuiltIn: false,
+  });
+  const [editingSubject, setEditingSubject] = useState<SubjectDefinition | null>(null);
+  const [showSubjectForm, setShowSubjectForm] = useState(false);
+  const [savingSubject, setSavingSubject] = useState(false);
+  const [subjectLevelFilter, setSubjectLevelFilter] = useState<'All' | 'Primary' | 'Secondary'>('All');
+
+  // Geo-fence state
+  const [geofence, setGeofence] = useState<GeoFence | null>(null);
+  const [geofenceForm, setGeofenceForm] = useState({ lat: '', lng: '', radius: '200' });
+  const [savingGeofence, setSavingGeofence] = useState(false);
+  const [detectingLocation, setDetectingLocation] = useState(false);
+  const mapContainerRef = useRef<HTMLDivElement>(null);
+  const leafletMapRef = useRef<any>(null);
+  const fenceCircleRef = useRef<any>(null);
+  const fenceMarkerRef = useRef<any>(null);
+
+  const { blocker } = useUnsavedChanges(isDirty);
 
   useEffect(() => {
     getDoc(doc(db, SETTINGS_DOC, SETTINGS_ID)).then(snap => {
@@ -309,11 +585,83 @@ export default function SchoolSettingsPage() {
     });
   }, []);
 
+  // Subscribe to subjects collection and teachers
+  useEffect(() => {
+    const unsubSubjects = onSnapshot(collection(db, 'subjects'), snap => {
+      setSubjectDefs(snap.docs.map(d => ({ id: d.id, ...d.data() } as SubjectDefinition)));
+    });
+    const unsubTeachers = onSnapshot(query(collection(db, 'users')), snap => {
+      setSubjectTeachers(
+        snap.docs.map(d => ({ uid: d.id, ...d.data() } as UserProfile)).filter(u => u.role === 'teacher')
+      );
+    });
+    const unsubClasses = onSnapshot(collection(db, 'classes'), snap => {
+      if (!snap.empty) setSubjectClassNames(snap.docs.map(d => (d.data() as any).name as string));
+    });
+    // Load geo-fence
+    const unsubFence = onSnapshot(doc(db, 'geofences', 'main'), snap => {
+      if (snap.exists()) {
+        const data = { id: snap.id, ...snap.data() } as GeoFence;
+        setGeofence(data);
+        setGeofenceForm({
+          lat: String(data.lat),
+          lng: String(data.lng),
+          radius: String(data.radius),
+        });
+      }
+    });
+    return () => { unsubSubjects(); unsubTeachers(); unsubClasses(); unsubFence(); };
+  }, []);
+
+  const handleDetectLocation = () => {
+    if (!navigator.geolocation) { toast.error('Geolocation not supported by this browser'); return; }
+    setDetectingLocation(true);
+    navigator.geolocation.getCurrentPosition(
+      pos => {
+        setGeofenceForm(f => ({
+          ...f,
+          lat: pos.coords.latitude.toFixed(7),
+          lng: pos.coords.longitude.toFixed(7),
+        }));
+        setDetectingLocation(false);
+        toast.success('Location detected!');
+      },
+      err => {
+        setDetectingLocation(false);
+        toast.error('Could not get location: ' + err.message);
+      },
+      { enableHighAccuracy: true, timeout: 15_000 },
+    );
+  };
+
+  const handleSaveGeofence = async () => {
+    const lat = parseFloat(geofenceForm.lat);
+    const lng = parseFloat(geofenceForm.lng);
+    const radius = parseInt(geofenceForm.radius, 10);
+    if (isNaN(lat) || isNaN(lng)) { toast.error('Enter valid latitude and longitude'); return; }
+    if (isNaN(radius) || radius < 50 || radius > 5000) {
+      toast.error('Radius must be between 50 m and 5 000 m'); return;
+    }
+    setSavingGeofence(true);
+    const tid = toast.loading('Saving geo-fence…');
+    try {
+      await setDoc(doc(db, 'geofences', 'main'), {
+        lat, lng, radius, updatedAt: serverTimestamp(),
+      });
+      toast.success('Geo-fence saved!', { id: tid });
+    } catch (e: any) {
+      toast.error('Failed: ' + (e.message || 'Unknown error'), { id: tid });
+    } finally {
+      setSavingGeofence(false);
+    }
+  };
+
   const handleSave = async () => {
     setSaving(true);
     const tid = toast.loading('Saving settings…');
     try {
       await setDoc(doc(db, SETTINGS_DOC, SETTINGS_ID), { ...form, updatedAt: serverTimestamp() });
+      setIsDirty(false);
       toast.success('Settings saved!', { id: tid });
     } catch (e: any) {
       toast.error('Failed to save: ' + (e.message || 'Unknown'), { id: tid });
@@ -322,8 +670,36 @@ export default function SchoolSettingsPage() {
     }
   };
 
-  const field = (key: keyof SchoolSettings, value: any) =>
+  const field = (key: keyof SchoolSettings, value: any) => {
     setForm(prev => ({ ...prev, [key]: value }));
+    setIsDirty(true);
+  };
+
+  const handleSaveSubject = async () => {
+    if (!subjectForm.name.trim()) { toast.error('Subject name is required'); return; }
+    setSavingSubject(true);
+    try {
+      if (editingSubject?.id) {
+        await setDoc(doc(db, 'subjects', editingSubject.id), { ...subjectForm, isBuiltIn: false });
+      } else {
+        await addDoc(collection(db, 'subjects'), { ...subjectForm, isBuiltIn: false });
+      }
+      setSubjectForm({ name: '', code: '', description: '', assignedClasses: [], level: 'All', isBuiltIn: false });
+      setEditingSubject(null);
+      setShowSubjectForm(false);
+      toast.success(editingSubject ? 'Subject updated!' : 'Subject added!');
+    } catch (e: any) {
+      toast.error('Failed to save subject: ' + (e.message || 'Unknown'));
+    } finally {
+      setSavingSubject(false);
+    }
+  };
+
+  const handleDeleteSubject = async (id: string) => {
+    if (!window.confirm('Delete this subject?')) return;
+    await deleteDoc(doc(db, 'subjects', id)).catch(e => toast.error(e.message));
+    toast.success('Subject deleted');
+  };
 
   const validateTime = (v: string) => {
     if (!/^\d{2}:\d{2}$/.test(v)) return 'Format must be HH:MM (e.g. 08:30)';
@@ -339,324 +715,993 @@ export default function SchoolSettingsPage() {
   );
 
   return (
-    <div className="p-6 lg:p-8 max-w-3xl mx-auto">
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold text-slate-900 flex items-center gap-2">
-          <Settings className="w-6 h-6 text-indigo-600" />
-          School Settings
-        </h1>
-        <p className="text-slate-500 mt-1 text-sm">
-          Configure school identity, regional settings, academic configuration, media uploads, and integrations.
-        </p>
-      </div>
+    <div className="p-6 lg:p-8 max-w-4xl mx-auto">
+      <UnsavedChangesDialog blocker={blocker} />
 
-      <div className="space-y-6">
-
-        {/* ── School Identity */}
-        <section className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
-          <h2 className="font-bold text-slate-800 text-sm flex items-center gap-2 mb-5">
-            <School className="w-4 h-4 text-indigo-600" /> School Identity
-          </h2>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div className="sm:col-span-2">
-              <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">School Name *</label>
-              <input value={form.schoolName} onChange={e => field('schoolName', e.target.value)} placeholder="e.g. Avenir International School"
-                className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm" />
-            </div>
-            <div>
-              <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">Principal / Head Teacher</label>
-              <input value={form.principalName || ''} onChange={e => field('principalName', e.target.value)} placeholder="e.g. Dr. Jana Kovač"
-                className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm" />
-            </div>
-            <div>
-              <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">School Motto</label>
-              <input value={form.motto || ''} onChange={e => field('motto', e.target.value)} placeholder="e.g. Excellence in Education"
-                className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm" />
-            </div>
-          </div>
-        </section>
-
-        {/* ── Contact & Location */}
-        <section className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
-          <h2 className="font-bold text-slate-800 text-sm flex items-center gap-2 mb-5">
-            <Phone className="w-4 h-4 text-indigo-600" /> Contact & Location
-          </h2>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div>
-              <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">Phone</label>
-              <input value={form.phone} onChange={e => field('phone', e.target.value)} placeholder="e.g. +386 1 234 5678"
-                className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm" />
-            </div>
-            <div>
-              <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">Email</label>
-              <input type="email" value={form.email} onChange={e => field('email', e.target.value)} placeholder="school@example.com"
-                className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm" />
-            </div>
-            <div className="sm:col-span-2">
-              <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">Address</label>
-              <textarea value={form.address} onChange={e => field('address', e.target.value)} rows={2} placeholder="Full school address"
-                className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm resize-none" />
-            </div>
-          </div>
-        </section>
-
-        {/* ── Internationalisation */}
-        <section className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
-          <h2 className="font-bold text-slate-800 text-sm flex items-center gap-2 mb-1">
-            <Globe className="w-4 h-4 text-indigo-600" /> Internationalisation
-          </h2>
-          <p className="text-xs text-slate-500 mb-5">
-            Configure country, timezone, locale, and currency. These control date/number formatting, phone validation, and payroll calculations across the system.
+      {/* ── Page header ── */}
+      <div className="mb-6 flex items-center justify-between flex-wrap gap-3">
+        <div>
+          <h1 className="text-2xl font-bold text-slate-900 flex items-center gap-2">
+            <Settings className="w-6 h-6 text-indigo-600" />
+            School Settings
+          </h1>
+          <p className="text-slate-500 mt-1 text-sm">
+            Configure every aspect of your school — identity, academics, admissions, and more.
           </p>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div>
-              <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">Country <span className="font-normal text-slate-400">(ISO 3166-1, e.g. SI, NG, US)</span></label>
-              <input value={form.country} onChange={e => field('country', e.target.value.toUpperCase().slice(0, 2))} placeholder="e.g. SI" maxLength={2}
-                className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm font-mono uppercase" />
-            </div>
-            <div>
-              <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">Timezone <span className="font-normal text-slate-400">(IANA, e.g. Europe/Ljubljana)</span></label>
-              <input value={form.timezone} onChange={e => field('timezone', e.target.value)} placeholder="e.g. Europe/Ljubljana"
-                className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm font-mono" />
-            </div>
-            <div>
-              <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">Locale <span className="font-normal text-slate-400">(BCP 47, e.g. sl-SI)</span></label>
-              <input value={form.locale} onChange={e => field('locale', e.target.value)} placeholder="e.g. sl-SI, en-NG, en-US"
-                className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm font-mono" />
-            </div>
-            <div>
-              <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">Currency <span className="font-normal text-slate-400">(ISO 4217, e.g. EUR)</span></label>
-              <input value={form.currency} onChange={e => field('currency', e.target.value.toUpperCase().slice(0, 3))} placeholder="e.g. EUR, NGN, USD" maxLength={3}
-                className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm font-mono uppercase" />
-            </div>
-            <div>
-              <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">Phone Country Code</label>
-              <input value={form.phoneCountryCode} onChange={e => field('phoneCountryCode', e.target.value)} placeholder="e.g. +386, +234, +1"
-                className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm font-mono" />
-            </div>
-          </div>
-          {form.locale && (
-            <div className="mt-4 p-3 bg-slate-50 rounded-xl border border-slate-100 text-xs text-slate-600">
-              <strong>Formatting preview: </strong>
-              {(() => { try { return new Intl.NumberFormat(form.locale, { style: 'currency', currency: form.currency || 'USD' }).format(12500); } catch { return `${form.currency || '?'} 12,500.00`; } })()}
-              {' · '}
-              {(() => { try { return new Date().toLocaleDateString(form.locale, { dateStyle: 'full' }); } catch { return new Date().toLocaleDateString(); } })()}
-            </div>
-          )}
-        </section>
-
-        {/* ── Academic Period */}
-        <section className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
-          <h2 className="font-bold text-slate-800 text-sm flex items-center gap-2 mb-5">
-            <Calendar className="w-4 h-4 text-indigo-600" /> Academic Period
-          </h2>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            <div>
-              <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">Current Session / Year</label>
-              <input value={form.currentSession} onChange={e => field('currentSession', e.target.value)} placeholder="e.g. 2025/2026"
-                className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm font-mono" />
-            </div>
-            <div>
-              <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">Current Term</label>
-              <select value={form.currentTerm} onChange={e => field('currentTerm', e.target.value)}
-                className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm">
-                {TERMS.map(t => <option key={t}>{t}</option>)}
-              </select>
-            </div>
-            <div>
-              <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">Term Structure</label>
-              <select value={form.termStructure || '3-term'} onChange={e => field('termStructure', e.target.value)}
-                className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm">
-                <option value="3-term">3-Term (UK / Africa)</option>
-                <option value="2-semester">2-Semester (EU / US Universities)</option>
-                <option value="4-quarter">4-Quarter (US K-12)</option>
-              </select>
-            </div>
-          </div>
-        </section>
-
-        {/* ── Academic Configuration */}
-        <section className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
-          <h2 className="font-bold text-slate-800 text-sm flex items-center gap-2 mb-1">
-            <Award className="w-4 h-4 text-indigo-600" /> Academic Configuration
-          </h2>
-          <p className="text-xs text-slate-500 mb-5">Grading system, academic levels, custom subjects, and timetable periods.</p>
-
-          <div className="mb-6">
-            <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">Grading System</label>
-            <select value={form.gradingSystem} onChange={e => field('gradingSystem', e.target.value as GradingSystem)}
-              className="w-full sm:w-72 px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm">
-              <option value="waec">WAEC / NECO (A1–F9) — Nigerian</option>
-              <option value="percentage">Percentage (A+, A, B, C, D, F)</option>
-              <option value="gpa4">GPA 4.0 — US / International</option>
-              <option value="ib">IB Scale (1–7) — International Baccalaureate</option>
-              <option value="custom">Custom Scale</option>
-            </select>
-            {form.gradingSystem === 'custom' && (
-              <div className="mt-4">
-                <CustomGradeScaleEditor scale={form.customGradingScale} onChange={s => field('customGradingScale', s)} />
-              </div>
-            )}
-          </div>
-
-          <div className="mb-6">
-            <OrderableLevelEditor
-              items={form.schoolLevels}
-              onReorder={levels => field('schoolLevels', levels)}
-              onAdd={v => field('schoolLevels', [...form.schoolLevels, v])}
-              onRemove={i => field('schoolLevels', form.schoolLevels.filter((_, idx) => idx !== i))}
-            />
-          </div>
-
-          <div className="mb-6">
-            <TagListEditor label="Additional / Custom Subjects" items={form.customSubjects} placeholder="e.g. Slovenian Language, IB Theory of Knowledge"
-              onAdd={v => field('customSubjects', [...form.customSubjects, v])}
-              onRemove={i => field('customSubjects', form.customSubjects.filter((_, idx) => idx !== i))} />
-          </div>
-
-          <div>
-            <TagListEditor label="Timetable Period Times (HH:MM)" items={form.periodTimes} placeholder="e.g. 08:30"
-              validate={validateTime}
-              onAdd={v => field('periodTimes', [...form.periodTimes, v].sort())}
-              onRemove={i => field('periodTimes', form.periodTimes.filter((_, idx) => idx !== i))} />
-          </div>
-        </section>
-
-        {/* ── Student ID Format */}
-        <section className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
-          <h2 className="font-bold text-slate-800 text-sm flex items-center gap-2 mb-1">
-            <Hash className="w-4 h-4 text-indigo-600" /> Student ID Format
-          </h2>
-          <p className="text-xs text-slate-500 mb-5">Define how student IDs are generated. Changes apply to new students only.</p>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">
-            <div>
-              <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">Prefix</label>
-              <input value={form.studentIdPrefix} onChange={e => field('studentIdPrefix', e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ''))}
-                placeholder="e.g. KIS" maxLength={6}
-                className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm font-mono uppercase" />
-            </div>
-            <div>
-              <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">Format</label>
-              <select value={form.studentIdFormat} onChange={e => field('studentIdFormat', e.target.value)}
-                className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm bg-white">
-                <option value="PREFIX-YEAR-SEQ">PREFIX-YEAR-SEQ</option>
-                <option value="PREFIXYEARSEQ">PREFIXYEARSEQ</option>
-                <option value="PREFIX-SEQ">PREFIX-SEQ</option>
-              </select>
-            </div>
-            <div>
-              <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">Sequence Digits</label>
-              <input type="number" min={2} max={8} value={form.studentIdPadding}
-                onChange={e => field('studentIdPadding', Math.max(2, Math.min(8, Number(e.target.value))))}
-                className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm" />
-            </div>
-          </div>
-          <div className="flex items-center gap-3 p-3 bg-indigo-50 rounded-xl border border-indigo-100">
-            <span className="text-xs font-bold text-indigo-500 uppercase tracking-wide">Preview:</span>
-            <span className="font-mono font-bold text-indigo-700 text-sm">
-              {previewStudentId(form.studentIdPrefix || 'STU', form.studentIdFormat, form.studentIdPadding)}
+        </div>
+        <div className="flex items-center gap-3">
+          {isDirty && (
+            <span className="flex items-center gap-1.5 text-xs font-medium text-amber-600 bg-amber-50 border border-amber-200 px-3 py-1.5 rounded-full">
+              <span className="w-1.5 h-1.5 bg-amber-500 rounded-full animate-pulse" />
+              Unsaved changes
             </span>
-          </div>
-        </section>
-
-        {/* ── Media & Uploads (Cloudinary) */}
-        <section className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
-          <h2 className="font-bold text-slate-800 text-sm flex items-center gap-2 mb-1">
-            <ImageIcon className="w-4 h-4 text-indigo-600" /> Media & Uploads (Cloudinary)
-          </h2>
-          <p className="text-xs text-slate-500 mb-5">
-            Configure Cloudinary for student photos, staff avatars, and school logo. Use an <strong>unsigned upload preset</strong>.
-            Get a free account at <a href="https://cloudinary.com" target="_blank" rel="noopener noreferrer" className="text-indigo-600 underline">cloudinary.com</a>.
-          </p>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
-            <div>
-              <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">Cloud Name</label>
-              <input value={form.cloudinaryCloudName} onChange={e => field('cloudinaryCloudName', e.target.value)} placeholder="e.g. my-school-cloud"
-                className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm font-mono" />
-            </div>
-            <div>
-              <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">Upload Preset (unsigned)</label>
-              <div className="relative">
-                <input type={showPreset ? 'text' : 'password'} value={form.cloudinaryUploadPreset}
-                  onChange={e => field('cloudinaryUploadPreset', e.target.value)} placeholder="e.g. avenir_unsigned"
-                  className="w-full px-3 py-2.5 pr-10 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm font-mono" />
-                <button type="button" onClick={() => setShowPreset(!showPreset)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600">
-                  {showPreset ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                </button>
-              </div>
-            </div>
-          </div>
-          <div className="mb-4">
-            <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">School Logo URL</label>
-            <input value={form.logoUrl} onChange={e => field('logoUrl', e.target.value)} placeholder="Paste a URL or use the upload button below"
-              className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm" />
-            {form.logoUrl && <img src={form.logoUrl} alt="School logo" className="mt-2 h-14 w-14 object-contain rounded-lg border border-slate-200" />}
-          </div>
-          {form.cloudinaryCloudName && form.cloudinaryUploadPreset ? (
-            <CloudinaryLogoUpload cloudName={form.cloudinaryCloudName} uploadPreset={form.cloudinaryUploadPreset} onUploaded={url => field('logoUrl', url)} />
-          ) : (
-            <p className="text-xs text-amber-600 bg-amber-50 border border-amber-100 rounded-xl px-3 py-2">
-              Enter Cloud Name and Upload Preset above to enable direct image uploads.
-            </p>
           )}
-        </section>
-
-        {/* ── Finance & Payroll */}
-        <section className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
-          <h2 className="font-bold text-slate-800 text-sm flex items-center gap-2 mb-1">
-            <DollarSign className="w-4 h-4 text-indigo-600" /> Finance & Payroll
-          </h2>
-          <p className="text-xs text-slate-500 mb-5">Configure the tax / deduction model for staff payroll.</p>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div>
-              <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">Tax / Deduction Model</label>
-              <select value={form.taxModel} onChange={e => field('taxModel', e.target.value as SchoolSettings['taxModel'])}
-                className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm">
-                <option value="none">No Deductions</option>
-                <option value="flat_rate">Flat Rate (%)</option>
-                <option value="nigeria_paye">Nigeria PAYE (Graduated Brackets)</option>
-              </select>
-            </div>
-            {form.taxModel === 'flat_rate' && (
-              <div>
-                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">Tax Rate (%)</label>
-                <input type="number" min={0} max={50} value={form.taxFlatRate} onChange={e => field('taxFlatRate', Number(e.target.value))}
-                  className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm" />
-              </div>
-            )}
-          </div>
-        </section>
-
-        {/* ── Exam Result Access */}
-        <section className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
-          <h2 className="font-bold text-slate-800 text-sm flex items-center gap-2 mb-2">
-            <Lock className="w-4 h-4 text-indigo-600" /> Exam Result Access
-          </h2>
-          <p className="text-xs text-slate-500 mb-4">When locked, students and parents must use a PIN to view results.</p>
-          <label className="flex items-center gap-3 cursor-pointer">
-            <div className="relative">
-              <input type="checkbox" className="sr-only peer" checked={form.examLocked} onChange={e => field('examLocked', e.target.checked)} />
-              <div className="w-11 h-6 bg-slate-200 peer-checked:bg-indigo-600 rounded-full transition-colors" />
-              <div className="absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform peer-checked:translate-x-5" />
-            </div>
-            <span className="text-sm font-semibold text-slate-700">
-              {form.examLocked ? '🔒 Exam results are LOCKED (PIN required)' : '🔓 Exam results are OPEN'}
-            </span>
-          </label>
-        </section>
-
-        <div className="flex justify-end">
           <button onClick={handleSave} disabled={saving}
-            className="flex items-center gap-2 px-6 py-3 bg-indigo-600 text-white font-bold rounded-2xl hover:bg-indigo-700 transition-all shadow-sm disabled:opacity-60 text-sm">
+            className="flex items-center gap-2 px-5 py-2.5 bg-indigo-600 text-white font-bold rounded-xl hover:bg-indigo-700 transition-all shadow-sm disabled:opacity-60 text-sm">
             {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
             Save Settings
           </button>
         </div>
-
-        {/* Danger Zone */}
-        <DangerZone />
       </div>
+
+      {/* ── Tab bar ── */}
+      <div className="flex gap-1 bg-slate-100 p-1 rounded-2xl mb-6 overflow-x-auto">
+        {TABS.map(tab => (
+          <button
+            key={tab.id}
+            onClick={() => setActiveTab(tab.id)}
+            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold whitespace-nowrap transition-all ${
+              activeTab === tab.id
+                ? 'bg-white text-indigo-700 shadow-sm'
+                : 'text-slate-500 hover:text-slate-800 hover:bg-white/60'
+            }`}
+          >
+            {tab.icon}
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
+      {/* ══════════════════════════════════════════════════════════════
+          TAB: SCHOOL
+      ══════════════════════════════════════════════════════════════ */}
+      {activeTab === 'school' && (
+        <div className="space-y-6">
+
+          {/* School Identity */}
+          <section className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
+            <h2 className="font-bold text-slate-800 text-sm flex items-center gap-2 mb-5">
+              <School className="w-4 h-4 text-indigo-600" /> School Identity
+            </h2>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="sm:col-span-2">
+                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">School Name *</label>
+                <input value={form.schoolName} onChange={e => field('schoolName', e.target.value)} placeholder="e.g. Avenir International School"
+                  className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm" />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">Principal / Head Teacher</label>
+                <input value={form.principalName || ''} onChange={e => field('principalName', e.target.value)} placeholder="e.g. Dr. Jana Kovač"
+                  className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm" />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">School Motto</label>
+                <input value={form.motto || ''} onChange={e => field('motto', e.target.value)} placeholder="e.g. Excellence in Education"
+                  className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm" />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">Brand Primary Colour</label>
+                <div className="flex items-center gap-3">
+                  <input type="color" value={form.primaryColor || '#4f46e5'} onChange={e => field('primaryColor', e.target.value)}
+                    className="w-10 h-10 rounded-lg border border-slate-200 cursor-pointer p-0.5 bg-white" />
+                  <input type="text" value={form.primaryColor || '#4f46e5'} onChange={e => field('primaryColor', e.target.value)}
+                    placeholder="#4f46e5" className="flex-1 px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm font-mono" maxLength={7} />
+                  <span className="text-xs text-slate-400">Sidebar & button accents</span>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          {/* Contact & Location */}
+          <section className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
+            <h2 className="font-bold text-slate-800 text-sm flex items-center gap-2 mb-5">
+              <Phone className="w-4 h-4 text-indigo-600" /> Contact & Location
+            </h2>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">Phone</label>
+                <input value={form.phone} onChange={e => field('phone', e.target.value)} placeholder="e.g. +386 1 234 5678"
+                  className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm" />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">Email</label>
+                <input type="email" value={form.email} onChange={e => field('email', e.target.value)} placeholder="school@example.com"
+                  className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm" />
+              </div>
+              <div className="sm:col-span-2">
+                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">Address</label>
+                <textarea value={form.address} onChange={e => field('address', e.target.value)} rows={2} placeholder="Full school address"
+                  className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm resize-none" />
+              </div>
+            </div>
+          </section>
+
+          {/* Internationalisation */}
+          <section className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
+            <h2 className="font-bold text-slate-800 text-sm flex items-center gap-2 mb-1">
+              <Globe className="w-4 h-4 text-indigo-600" /> Internationalisation
+            </h2>
+            <p className="text-xs text-slate-500 mb-5">Controls date/number formatting, phone validation, and payroll calculations.</p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">Country <span className="font-normal text-slate-400">(ISO 3166-1, e.g. SI, NG)</span></label>
+                <input value={form.country} onChange={e => field('country', e.target.value.toUpperCase().slice(0, 2))} placeholder="e.g. NG" maxLength={2}
+                  className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm font-mono uppercase" />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">Timezone <span className="font-normal text-slate-400">(IANA)</span></label>
+                <input value={form.timezone} onChange={e => field('timezone', e.target.value)} placeholder="e.g. Africa/Lagos"
+                  className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm font-mono" />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">Locale <span className="font-normal text-slate-400">(BCP 47)</span></label>
+                <input value={form.locale} onChange={e => field('locale', e.target.value)} placeholder="e.g. en-NG"
+                  className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm font-mono" />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">Currency <span className="font-normal text-slate-400">(ISO 4217)</span></label>
+                <input value={form.currency} onChange={e => field('currency', e.target.value.toUpperCase().slice(0, 3))} placeholder="e.g. NGN" maxLength={3}
+                  className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm font-mono uppercase" />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">Phone Country Code</label>
+                <input value={form.phoneCountryCode} onChange={e => field('phoneCountryCode', e.target.value)} placeholder="e.g. +234"
+                  className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm font-mono" />
+              </div>
+            </div>
+            {form.locale && (
+              <div className="mt-4 p-3 bg-slate-50 rounded-xl border border-slate-100 text-xs text-slate-600">
+                <strong>Preview: </strong>
+                {(() => { try { return new Intl.NumberFormat(form.locale, { style: 'currency', currency: form.currency || 'USD' }).format(12500); } catch { return `${form.currency || '?'} 12,500.00`; } })()}
+                {' · '}
+                {(() => { try { return new Date().toLocaleDateString(form.locale, { dateStyle: 'full' }); } catch { return new Date().toLocaleDateString(); } })()}
+              </div>
+            )}
+          </section>
+
+          {/* Media & Uploads */}
+          <section className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
+            <h2 className="font-bold text-slate-800 text-sm flex items-center gap-2 mb-1">
+              <ImageIcon className="w-4 h-4 text-indigo-600" /> Media & Uploads (Cloudinary)
+            </h2>
+            <p className="text-xs text-slate-500 mb-5">
+              Configure Cloudinary for photos and logos. Use an <strong>unsigned upload preset</strong>.
+              Get a free account at <a href="https://cloudinary.com" target="_blank" rel="noopener noreferrer" className="text-indigo-600 underline">cloudinary.com</a>.
+            </p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
+              <div>
+                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">Cloud Name</label>
+                <input value={form.cloudinaryCloudName} onChange={e => field('cloudinaryCloudName', e.target.value)} placeholder="e.g. my-school-cloud"
+                  className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm font-mono" />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">Upload Preset (unsigned)</label>
+                <div className="relative">
+                  <input type={showPreset ? 'text' : 'password'} value={form.cloudinaryUploadPreset}
+                    onChange={e => field('cloudinaryUploadPreset', e.target.value)} placeholder="e.g. avenir_unsigned"
+                    className="w-full px-3 py-2.5 pr-10 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm font-mono" />
+                  <button type="button" onClick={() => setShowPreset(!showPreset)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600">
+                    {showPreset ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
+              </div>
+            </div>
+            <div className="mb-4">
+              <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">School Logo URL</label>
+              <input value={form.logoUrl} onChange={e => field('logoUrl', e.target.value)} placeholder="Paste a URL or use the upload button"
+                className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm" />
+              {form.logoUrl && <img src={form.logoUrl} alt="School logo" className="mt-2 h-14 w-14 object-contain rounded-lg border border-slate-200" />}
+            </div>
+            <div className="mb-4">
+              <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">Custom Favicon URL</label>
+              <p className="text-xs text-slate-400 mb-1.5">Direct URL to .png, .ico, or .svg — shown in browser tabs.</p>
+              <div className="flex items-center gap-3">
+                <input value={form.faviconUrl || ''} onChange={e => field('faviconUrl', e.target.value)} placeholder="https://example.com/favicon.png"
+                  className="flex-1 px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm" />
+                {form.faviconUrl && <img src={form.faviconUrl} alt="Favicon" className="w-8 h-8 object-contain rounded border border-slate-200 bg-slate-50 p-0.5" />}
+              </div>
+            </div>
+            {form.cloudinaryCloudName && form.cloudinaryUploadPreset ? (
+              <CloudinaryLogoUpload cloudName={form.cloudinaryCloudName} uploadPreset={form.cloudinaryUploadPreset} onUploaded={url => field('logoUrl', url)} />
+            ) : (
+              <p className="text-xs text-amber-600 bg-amber-50 border border-amber-100 rounded-xl px-3 py-2">
+                Enter Cloud Name and Upload Preset above to enable direct image uploads.
+              </p>
+            )}
+          </section>
+        </div>
+      )}
+
+      {/* ══════════════════════════════════════════════════════════════
+          TAB: ACADEMIC
+      ══════════════════════════════════════════════════════════════ */}
+      {activeTab === 'academic' && (
+        <div className="space-y-6">
+
+          {/* Academic Period */}
+          <section className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
+            <h2 className="font-bold text-slate-800 text-sm flex items-center gap-2 mb-5">
+              <Calendar className="w-4 h-4 text-indigo-600" /> Academic Period
+            </h2>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              <div>
+                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">Current Session / Year</label>
+                <input value={form.currentSession} onChange={e => field('currentSession', e.target.value)} placeholder="e.g. 2025/2026"
+                  className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm font-mono" />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">Current Term</label>
+                <select value={form.currentTerm} onChange={e => field('currentTerm', e.target.value)}
+                  className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm">
+                  {TERMS.map(t => <option key={t}>{t}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">Term Structure</label>
+                <select value={form.termStructure || '3-term'} onChange={e => field('termStructure', e.target.value)}
+                  className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm">
+                  <option value="3-term">3-Term (UK / Africa)</option>
+                  <option value="2-semester">2-Semester (EU / US Universities)</option>
+                  <option value="4-quarter">4-Quarter (US K-12)</option>
+                </select>
+              </div>
+            </div>
+          </section>
+
+          {/* Academic Configuration */}
+          <section className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
+            <h2 className="font-bold text-slate-800 text-sm flex items-center gap-2 mb-1">
+              <Award className="w-4 h-4 text-indigo-600" /> Academic Configuration
+            </h2>
+            <p className="text-xs text-slate-500 mb-5">Grading system, academic levels, custom subjects, and timetable periods.</p>
+
+            <div className="mb-6">
+              <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">Grading System</label>
+              <select value={form.gradingSystem} onChange={e => field('gradingSystem', e.target.value as GradingSystem)}
+                className="w-full sm:w-72 px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm">
+                <option value="waec">WAEC / NECO (A1–F9) — Nigerian</option>
+                <option value="percentage">Percentage (A+, A, B, C, D, F)</option>
+                <option value="gpa4">GPA 4.0 — US / International</option>
+                <option value="ib">IB Scale (1–7) — International Baccalaureate</option>
+                <option value="custom">Custom Scale</option>
+              </select>
+              {form.gradingSystem === 'custom' && (
+                <div className="mt-4">
+                  <CustomGradeScaleEditor scale={form.customGradingScale} onChange={s => field('customGradingScale', s)} />
+                </div>
+              )}
+            </div>
+
+            <div className="mb-6">
+              <OrderableLevelEditor
+                items={form.schoolLevels}
+                onReorder={levels => field('schoolLevels', levels)}
+                onAdd={v => field('schoolLevels', [...form.schoolLevels, v])}
+                onRemove={i => field('schoolLevels', form.schoolLevels.filter((_, idx) => idx !== i))}
+              />
+            </div>
+
+            <div className="mb-6">
+              <TagListEditor label="Additional / Custom Subjects" items={form.customSubjects} placeholder="e.g. Slovenian Language, IB Theory of Knowledge"
+                onAdd={v => field('customSubjects', [...form.customSubjects, v])}
+                onRemove={i => field('customSubjects', form.customSubjects.filter((_, idx) => idx !== i))} />
+            </div>
+
+            <div>
+              <TagListEditor label="Timetable Period Times (HH:MM)" items={form.periodTimes} placeholder="e.g. 08:30"
+                validate={validateTime}
+                onAdd={v => field('periodTimes', [...form.periodTimes, v].sort())}
+                onRemove={i => field('periodTimes', form.periodTimes.filter((_, idx) => idx !== i))} />
+            </div>
+          </section>
+
+          {/* Student ID Format */}
+          <section className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
+            <h2 className="font-bold text-slate-800 text-sm flex items-center gap-2 mb-1">
+              <Hash className="w-4 h-4 text-indigo-600" /> Student ID Format
+            </h2>
+            <p className="text-xs text-slate-500 mb-5">Define how student IDs are generated. Changes apply to new students only.</p>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">
+              <div>
+                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">Prefix</label>
+                <input value={form.studentIdPrefix} onChange={e => field('studentIdPrefix', e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ''))}
+                  placeholder="e.g. KIS" maxLength={6}
+                  className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm font-mono uppercase" />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">Format</label>
+                <select value={form.studentIdFormat} onChange={e => field('studentIdFormat', e.target.value)}
+                  className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm bg-white">
+                  <option value="PREFIX-YEAR-SEQ">PREFIX-YEAR-SEQ</option>
+                  <option value="PREFIXYEARSEQ">PREFIXYEARSEQ</option>
+                  <option value="PREFIX-SEQ">PREFIX-SEQ</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">Sequence Digits</label>
+                <input type="number" min={2} max={8} value={form.studentIdPadding}
+                  onChange={e => field('studentIdPadding', Math.max(2, Math.min(8, Number(e.target.value))))}
+                  className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm" />
+              </div>
+            </div>
+            <div className="flex items-center gap-3 p-3 bg-indigo-50 rounded-xl border border-indigo-100">
+              <span className="text-xs font-bold text-indigo-500 uppercase tracking-wide">Preview:</span>
+              <span className="font-mono font-bold text-indigo-700 text-sm">
+                {previewStudentId(form.studentIdPrefix || 'STU', form.studentIdFormat, form.studentIdPadding)}
+              </span>
+            </div>
+          </section>
+
+          {/* Assessment & Grading Rules */}
+          <section className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
+            <h2 className="font-bold text-slate-800 text-sm flex items-center gap-2 mb-1">
+              <BookOpen className="w-4 h-4 text-indigo-600" /> Assessment & Grading Rules
+            </h2>
+            <p className="text-xs text-slate-500 mb-5">Define score allocation, pass marks, and what appears on report cards.</p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-5">
+              <div>
+                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">CA max score</label>
+                <input type="number" min={0} max={100} value={form.caMaxScore}
+                  onChange={e => field('caMaxScore', Math.max(0, Math.min(100, Number(e.target.value))))}
+                  className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm" />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">Exam max score</label>
+                <input type="number" min={0} max={100} value={form.examMaxScore}
+                  onChange={e => field('examMaxScore', Math.max(0, Math.min(100, Number(e.target.value))))}
+                  className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm" />
+                {(form.caMaxScore + form.examMaxScore) !== 100 && (
+                  <p className="text-xs text-amber-600 mt-1">CA + Exam = {form.caMaxScore + form.examMaxScore} (should be 100)</p>
+                )}
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">Pass mark (%)</label>
+                <div className="flex items-center gap-3">
+                  <input type="range" min={30} max={70} step={5} value={form.passMarkPercent}
+                    onChange={e => field('passMarkPercent', Number(e.target.value))} className="flex-1 accent-indigo-600" />
+                  <span className="text-sm font-bold text-indigo-700 w-10 text-right">{form.passMarkPercent}%</span>
+                </div>
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">Score decimal places on reports</label>
+                <select value={form.reportScoreDecimals} onChange={e => field('reportScoreDecimals', Number(e.target.value))}
+                  className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm">
+                  <option value={0}>Whole number (e.g. 74)</option>
+                  <option value={1}>1 decimal place (e.g. 74.5)</option>
+                  <option value={2}>2 decimal places (e.g. 74.50)</option>
+                </select>
+              </div>
+            </div>
+            <div className="space-y-4">
+              <ToggleRow label="Show class position on report cards"
+                description="Displays each student's rank within their class for every subject."
+                checked={form.showPositionOnReport} onChange={v => field('showPositionOnReport', v)} />
+              <ToggleRow label="Show teacher comment field"
+                description="Includes a free-text comment box for the form tutor on each report."
+                checked={form.showTeacherComment} onChange={v => field('showTeacherComment', v)} />
+              <ToggleRow label="Show psychomotor / skills section"
+                description="Appends skills and behaviour ratings to the report card."
+                checked={form.showSkillsOnReport} onChange={v => field('showSkillsOnReport', v)} />
+            </div>
+          </section>
+        </div>
+      )}
+
+      {/* ══════════════════════════════════════════════════════════════
+          TAB: SUBJECTS
+      ══════════════════════════════════════════════════════════════ */}
+      {activeTab === 'subjects' && (
+        <div className="space-y-6">
+          <section className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h2 className="font-bold text-slate-800 text-sm flex items-center gap-2">
+                  <BookOpen className="w-4 h-4 text-indigo-600" /> Subject Management
+                </h2>
+                <p className="text-xs text-slate-500 mt-0.5">Manage your school's subjects, assign them to classes and teachers.</p>
+              </div>
+              <button
+                onClick={() => { setSubjectForm({ name: '', code: '', description: '', assignedClasses: [], level: 'All', isBuiltIn: false }); setEditingSubject(null); setShowSubjectForm(true); }}
+                className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white font-bold rounded-xl hover:bg-indigo-700 transition-all text-sm shadow-sm">
+                <Plus className="w-4 h-4" /> New Subject
+              </button>
+            </div>
+
+            {/* Level filter */}
+            <div className="flex gap-2 mb-4">
+              {(['All', 'Primary', 'Secondary'] as const).map(lvl => (
+                <button key={lvl} onClick={() => setSubjectLevelFilter(lvl)}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${subjectLevelFilter === lvl ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>
+                  {lvl}
+                </button>
+              ))}
+            </div>
+
+            {/* Built-in subjects */}
+            <div className="mb-6">
+              <p className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-2">Built-in Subjects ({SUBJECTS.length})</p>
+              <div className="flex flex-wrap gap-2">
+                {SUBJECTS.map(s => (
+                  <span key={s} className="px-3 py-1 bg-slate-100 text-slate-600 rounded-lg text-xs font-medium">{s}</span>
+                ))}
+              </div>
+            </div>
+
+            {/* Custom subjects from Firestore */}
+            <div>
+              <p className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-2">
+                Custom Subjects ({subjectDefs.filter(s => subjectLevelFilter === 'All' || s.level === subjectLevelFilter).length})
+              </p>
+              {subjectDefs.filter(s => subjectLevelFilter === 'All' || s.level === subjectLevelFilter).length === 0 ? (
+                <p className="text-slate-400 text-sm text-center py-8">No custom subjects yet. Click "New Subject" to add one.</p>
+              ) : (
+                <div className="space-y-2">
+                  {subjectDefs
+                    .filter(s => subjectLevelFilter === 'All' || s.level === subjectLevelFilter)
+                    .map(s => (
+                      <div key={s.id} className="flex items-start justify-between p-3 bg-slate-50 rounded-xl border border-slate-200">
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="font-bold text-slate-800 text-sm">{s.name}</span>
+                            {s.code && <span className="px-2 py-0.5 bg-indigo-100 text-indigo-700 rounded text-xs font-mono">{s.code}</span>}
+                            {s.level && s.level !== 'All' && <span className="px-2 py-0.5 bg-emerald-100 text-emerald-700 rounded text-xs">{s.level}</span>}
+                          </div>
+                          {s.description && <p className="text-xs text-slate-500 mt-0.5">{s.description}</p>}
+                          {s.assignedClasses.length > 0 && (
+                            <div className="flex flex-wrap gap-1 mt-1">
+                              {s.assignedClasses.map(c => (
+                                <span key={c} className="px-2 py-0.5 bg-amber-100 text-amber-700 rounded text-xs">{c}</span>
+                              ))}
+                            </div>
+                          )}
+                          {s.assignedTeacherName && (
+                            <p className="text-xs text-slate-400 mt-0.5">Teacher: {s.assignedTeacherName}</p>
+                          )}
+                        </div>
+                        <div className="flex gap-1 ml-3">
+                          <button onClick={() => { setSubjectForm({ ...s }); setEditingSubject(s); setShowSubjectForm(true); }}
+                            className="p-1.5 hover:bg-slate-200 rounded-lg transition-colors">
+                            <Hash className="w-3.5 h-3.5 text-slate-500" />
+                          </button>
+                          <button onClick={() => handleDeleteSubject(s.id!)}
+                            className="p-1.5 hover:bg-rose-100 rounded-lg transition-colors">
+                            <Trash2 className="w-3.5 h-3.5 text-rose-500" />
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                </div>
+              )}
+            </div>
+          </section>
+
+          {/* Add / Edit Subject Modal */}
+          {showSubjectForm && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm">
+              <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-6">
+                <div className="flex items-center justify-between mb-5">
+                  <h2 className="font-bold text-slate-900">{editingSubject ? 'Edit Subject' : 'New Subject'}</h2>
+                  <button onClick={() => setShowSubjectForm(false)} className="p-1.5 hover:bg-slate-100 rounded-lg">
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+                <div className="space-y-4">
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="text-xs font-bold text-slate-500 uppercase tracking-wide block mb-1">Subject Name *</label>
+                      <input value={subjectForm.name} onChange={e => setSubjectForm(p => ({ ...p, name: e.target.value }))}
+                        className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm"
+                        placeholder="e.g. French" />
+                    </div>
+                    <div>
+                      <label className="text-xs font-bold text-slate-500 uppercase tracking-wide block mb-1">Code (optional)</label>
+                      <input value={subjectForm.code || ''} onChange={e => setSubjectForm(p => ({ ...p, code: e.target.value }))}
+                        className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm font-mono"
+                        placeholder="e.g. FRN" />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="text-xs font-bold text-slate-500 uppercase tracking-wide block mb-1">Description (optional)</label>
+                    <textarea value={subjectForm.description || ''} onChange={e => setSubjectForm(p => ({ ...p, description: e.target.value }))}
+                      rows={2}
+                      className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm resize-none"
+                      placeholder="Brief description of the subject" />
+                  </div>
+                  <div>
+                    <label className="text-xs font-bold text-slate-500 uppercase tracking-wide block mb-1">Level</label>
+                    <select value={subjectForm.level || 'All'} onChange={e => setSubjectForm(p => ({ ...p, level: e.target.value as any }))}
+                      className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none bg-white text-sm">
+                      <option value="All">All Levels</option>
+                      <option value="Primary">Primary</option>
+                      <option value="Secondary">Secondary</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-xs font-bold text-slate-500 uppercase tracking-wide block mb-1">Assigned Classes</label>
+                    <div className="border border-slate-200 rounded-xl max-h-40 overflow-y-auto p-2 space-y-1">
+                      {subjectClassNames.map(cn => (
+                        <label key={cn} className="flex items-center gap-2 px-2 py-1 hover:bg-slate-50 rounded-lg cursor-pointer">
+                          <input type="checkbox"
+                            checked={subjectForm.assignedClasses.includes(cn)}
+                            onChange={e => setSubjectForm(p => ({
+                              ...p,
+                              assignedClasses: e.target.checked
+                                ? [...p.assignedClasses, cn]
+                                : p.assignedClasses.filter(c => c !== cn)
+                            }))}
+                            className="rounded" />
+                          <span className="text-sm text-slate-700">{cn}</span>
+                        </label>
+                      ))}
+                    </div>
+                    <p className="text-xs text-slate-400 mt-1">Leave empty to show in all classes.</p>
+                  </div>
+                  <div>
+                    <label className="text-xs font-bold text-slate-500 uppercase tracking-wide block mb-1">Assigned Teacher (optional)</label>
+                    <select
+                      value={subjectForm.assignedTeacherId || ''}
+                      onChange={e => {
+                        const t = subjectTeachers.find(x => x.uid === e.target.value);
+                        setSubjectForm(p => ({ ...p, assignedTeacherId: t?.uid || '', assignedTeacherName: t?.displayName || '' }));
+                      }}
+                      className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none bg-white text-sm">
+                      <option value="">Unassigned</option>
+                      {subjectTeachers.map(t => <option key={t.uid} value={t.uid}>{t.displayName}</option>)}
+                    </select>
+                  </div>
+                </div>
+                <div className="flex justify-end gap-2 mt-6">
+                  <button onClick={() => setShowSubjectForm(false)} className="px-4 py-2 text-sm text-slate-600 hover:bg-slate-100 rounded-xl">Cancel</button>
+                  <button onClick={handleSaveSubject} disabled={savingSubject || !subjectForm.name.trim()}
+                    className="px-5 py-2 bg-indigo-600 text-white font-bold rounded-xl hover:bg-indigo-700 text-sm disabled:opacity-50 flex items-center gap-2">
+                    {savingSubject && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                    {editingSubject ? 'Update Subject' : 'Add Subject'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ══════════════════════════════════════════════════════════════
+          TAB: ADMISSIONS
+      ══════════════════════════════════════════════════════════════ */}
+      {activeTab === 'admissions' && (
+        <div className="space-y-6">
+          <section className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
+            <h2 className="font-bold text-slate-800 text-sm flex items-center gap-2 mb-1">
+              <ClipboardCheck className="w-4 h-4 text-indigo-600" /> Admissions & Enrolment
+            </h2>
+            <p className="text-xs text-slate-500 mb-5">Control online application intake and enrolment rules.</p>
+            <div className="space-y-4 mb-6">
+              <ToggleRow label="Admissions portal open"
+                description="When off, the /apply page shows a 'Closed' message and new applications cannot be submitted."
+                checked={form.admissionsOpen} onChange={v => field('admissionsOpen', v)} />
+              <ToggleRow label="Require document uploads"
+                description="Applicants must attach supporting documents before submitting."
+                checked={form.requireDocuments} onChange={v => field('requireDocuments', v)} />
+              <ToggleRow label="Auto-approve applications"
+                description="Newly submitted applications are automatically set to Approved without admin review."
+                checked={form.autoApproveApplications} onChange={v => field('autoApproveApplications', v)} />
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">
+                  Max open applications <span className="font-normal text-slate-400">(0 = unlimited)</span>
+                </label>
+                <input type="number" min={0} max={9999} value={form.maxApplications}
+                  onChange={e => field('maxApplications', Math.max(0, Number(e.target.value)))}
+                  className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm" />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">
+                  Minimum enrolment age (years)
+                </label>
+                <input type="number" min={1} max={21} value={form.minimumEnrolmentAge}
+                  onChange={e => field('minimumEnrolmentAge', Math.max(1, Math.min(21, Number(e.target.value))))}
+                  className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm" />
+              </div>
+            </div>
+          </section>
+        </div>
+      )}
+
+      {/* ══════════════════════════════════════════════════════════════
+          TAB: ATTENDANCE
+      ══════════════════════════════════════════════════════════════ */}
+      {activeTab === 'attendance' && (
+        <div className="space-y-6">
+          <section className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
+            <h2 className="font-bold text-slate-800 text-sm flex items-center gap-2 mb-1">
+              <Users className="w-4 h-4 text-indigo-600" /> Attendance
+            </h2>
+            <p className="text-xs text-slate-500 mb-5">Set thresholds and rules that govern how attendance is recorded and enforced.</p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+              <div>
+                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">Late threshold (minutes)</label>
+                <input type="number" min={1} max={120} value={form.lateThresholdMinutes}
+                  onChange={e => field('lateThresholdMinutes', Math.max(1, Math.min(120, Number(e.target.value))))}
+                  className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm" />
+                <p className="text-xs text-slate-400 mt-1">Arrivals after this many minutes are marked "Late".</p>
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">School days per week</label>
+                <select value={form.schoolDaysPerWeek} onChange={e => field('schoolDaysPerWeek', Number(e.target.value))}
+                  className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm">
+                  <option value={5}>5 days (Mon – Fri)</option>
+                  <option value={6}>6 days (Mon – Sat)</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">Attendance warning threshold (%)</label>
+                <div className="flex items-center gap-3">
+                  <input type="range" min={50} max={95} step={5} value={form.attendanceWarningThreshold}
+                    onChange={e => field('attendanceWarningThreshold', Number(e.target.value))} className="flex-1 accent-indigo-600" />
+                  <span className="text-sm font-bold text-indigo-700 w-12 text-right">{form.attendanceWarningThreshold}%</span>
+                </div>
+                <p className="text-xs text-slate-400 mt-1">Triggers a warning flag on the student profile.</p>
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">Exam eligibility threshold (%)</label>
+                <div className="flex items-center gap-3">
+                  <input type="range" min={50} max={95} step={5} value={form.attendanceExamThreshold}
+                    onChange={e => field('attendanceExamThreshold', Number(e.target.value))} className="flex-1 accent-indigo-600" />
+                  <span className="text-sm font-bold text-indigo-700 w-12 text-right">{form.attendanceExamThreshold}%</span>
+                </div>
+                <p className="text-xs text-slate-400 mt-1">Students below this cannot sit exams.</p>
+              </div>
+            </div>
+          </section>
+        </div>
+      )}
+
+      {/* ══════════════════════════════════════════════════════════════
+          TAB: NOTIFICATIONS
+      ══════════════════════════════════════════════════════════════ */}
+      {activeTab === 'notifications' && (
+        <div className="space-y-6">
+          <section className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
+            <h2 className="font-bold text-slate-800 text-sm flex items-center gap-2 mb-1">
+              <Bell className="w-4 h-4 text-indigo-600" /> Notifications & Communication
+            </h2>
+            <p className="text-xs text-slate-500 mb-5">Configure automated alerts sent to parents and staff.</p>
+            <div className="space-y-4 mb-6">
+              <ToggleRow label="Fee due reminders"
+                description="Automatically notify parents when a fee invoice is approaching its due date."
+                checked={form.feeReminderEnabled} onChange={v => field('feeReminderEnabled', v)} />
+              {form.feeReminderEnabled && (
+                <div className="ml-14">
+                  <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">Days before due date</label>
+                  <div className="flex items-center gap-3">
+                    <input type="range" min={1} max={30} step={1} value={form.feeReminderDaysBefore}
+                      onChange={e => field('feeReminderDaysBefore', Number(e.target.value))} className="w-48 accent-indigo-600" />
+                    <span className="text-sm font-bold text-indigo-700">{form.feeReminderDaysBefore} day{form.feeReminderDaysBefore !== 1 ? 's' : ''}</span>
+                  </div>
+                </div>
+              )}
+              <ToggleRow label="Absence alerts"
+                description="Send a notification to the parent when their child is marked absent."
+                checked={form.absenceAlertEnabled} onChange={v => field('absenceAlertEnabled', v)} />
+              <ToggleRow label="Result / report card notifications"
+                description="Notify parents when a new term result is published."
+                checked={form.resultNotificationEnabled} onChange={v => field('resultNotificationEnabled', v)} />
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">WhatsApp sender phone number</label>
+              <input value={form.whatsappSenderPhone} onChange={e => field('whatsappSenderPhone', e.target.value)}
+                placeholder="e.g. +2348012345678"
+                className="w-full sm:w-72 px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm font-mono" />
+              <p className="text-xs text-slate-400 mt-1">Used by the WhatsApp Notifications module as the sender ID.</p>
+            </div>
+          </section>
+        </div>
+      )}
+
+      {/* ══════════════════════════════════════════════════════════════
+          TAB: ACCESS & REPORTS
+      ══════════════════════════════════════════════════════════════ */}
+      {activeTab === 'access' && (
+        <div className="space-y-6">
+
+          {/* Portal & Access Control */}
+          <section className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
+            <h2 className="font-bold text-slate-800 text-sm flex items-center gap-2 mb-1">
+              <ShieldCheck className="w-4 h-4 text-indigo-600" /> Portal & Access Control
+            </h2>
+            <p className="text-xs text-slate-500 mb-5">Choose what parents and teachers can see and do in their portals.</p>
+
+            <p className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-3">Parent Portal</p>
+            <div className="space-y-4 mb-6">
+              <ToggleRow label="Parents can view grades"
+                description="Shows subject scores and grade letters in the parent portal."
+                checked={form.parentCanViewGrades} onChange={v => field('parentCanViewGrades', v)} />
+              <ToggleRow label="Parents can view attendance"
+                description="Shows daily attendance history for linked children."
+                checked={form.parentCanViewAttendance} onChange={v => field('parentCanViewAttendance', v)} />
+              <ToggleRow label="Parents can download report cards"
+                description="Enables the PDF download button on report cards in the parent portal."
+                checked={form.parentCanDownloadReports} onChange={v => field('parentCanDownloadReports', v)} />
+            </div>
+
+            <p className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-3">Teacher Portal</p>
+            <div className="space-y-4 mb-6">
+              <ToggleRow label="Teachers can enter & edit grades"
+                description="Allows teachers to input CA and exam scores for their classes."
+                checked={form.teacherCanEnterGrades} onChange={v => field('teacherCanEnterGrades', v)} />
+              <ToggleRow label="Teachers can view their timetable"
+                description="Shows the class timetable for each teacher in the teacher portal."
+                checked={form.teacherCanViewTimetable} onChange={v => field('teacherCanViewTimetable', v)} />
+            </div>
+
+            <div className="sm:w-64">
+              <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">
+                Session timeout <span className="font-normal text-slate-400">(0 = never)</span>
+              </label>
+              <select value={form.sessionTimeoutMinutes} onChange={e => field('sessionTimeoutMinutes', Number(e.target.value))}
+                className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm">
+                <option value={0}>Never</option>
+                <option value={15}>15 minutes</option>
+                <option value={30}>30 minutes</option>
+                <option value={60}>1 hour</option>
+                <option value={120}>2 hours</option>
+                <option value={480}>8 hours</option>
+              </select>
+            </div>
+          </section>
+
+          {/* Report Card & Printing */}
+          <section className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
+            <h2 className="font-bold text-slate-800 text-sm flex items-center gap-2 mb-1">
+              <FileText className="w-4 h-4 text-indigo-600" /> Report Card & Printing
+            </h2>
+            <p className="text-xs text-slate-500 mb-5">Customise the layout and content of printed report cards.</p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-5">
+              <div>
+                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">Paper size</label>
+                <select value={form.reportPaperSize} onChange={e => field('reportPaperSize', e.target.value as SchoolSettings['reportPaperSize'])}
+                  className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm">
+                  <option value="A4">A4 (210 × 297 mm)</option>
+                  <option value="Letter">Letter (8.5 × 11 in)</option>
+                  <option value="A5">A5 (148 × 210 mm)</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">Report card footer text</label>
+                <input value={form.reportFooterText} onChange={e => field('reportFooterText', e.target.value)}
+                  placeholder="e.g. This report is computer generated."
+                  className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm" />
+              </div>
+            </div>
+            <div className="space-y-4">
+              <ToggleRow label="Show school logo on report header"
+                description="Prints the school logo at the top of every report card."
+                checked={form.reportShowLogo} onChange={v => field('reportShowLogo', v)} />
+              <ToggleRow label="Show watermark / official stamp"
+                description="Overlays a faint school stamp watermark on the printed page."
+                checked={form.reportWatermarkEnabled} onChange={v => field('reportWatermarkEnabled', v)} />
+            </div>
+          </section>
+
+          {/* Finance & Payroll */}
+          <section className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
+            <h2 className="font-bold text-slate-800 text-sm flex items-center gap-2 mb-1">
+              <DollarSign className="w-4 h-4 text-indigo-600" /> Finance & Payroll
+            </h2>
+            <p className="text-xs text-slate-500 mb-5">Configure the tax / deduction model for staff payroll.</p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">Tax / Deduction Model</label>
+                <select value={form.taxModel} onChange={e => field('taxModel', e.target.value as SchoolSettings['taxModel'])}
+                  className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm">
+                  <option value="none">No Deductions</option>
+                  <option value="flat_rate">Flat Rate (%)</option>
+                  <option value="nigeria_paye">Nigeria PAYE (Graduated Brackets)</option>
+                </select>
+              </div>
+              {form.taxModel === 'flat_rate' && (
+                <div>
+                  <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">Tax Rate (%)</label>
+                  <input type="number" min={0} max={50} value={form.taxFlatRate}
+                    onChange={e => field('taxFlatRate', Number(e.target.value))}
+                    className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm" />
+                </div>
+              )}
+            </div>
+          </section>
+
+          {/* Exam Result Access */}
+          <section className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
+            <h2 className="font-bold text-slate-800 text-sm flex items-center gap-2 mb-2">
+              <Lock className="w-4 h-4 text-indigo-600" /> Exam Result Access
+            </h2>
+            <p className="text-xs text-slate-500 mb-4">When locked, students and parents must use a PIN to view results.</p>
+            <ToggleRow
+              label={form.examLocked ? '🔒 Exam results are LOCKED (PIN required)' : '🔓 Exam results are OPEN'}
+              checked={form.examLocked} onChange={v => field('examLocked', v)} />
+          </section>
+
+          {/* Danger Zone */}
+          <DangerZone />
+        </div>
+      )}
+
+      {/* ══════════════════════════════════════════════════════════════
+          TAB: GEO-FENCE
+      ══════════════════════════════════════════════════════════════ */}
+      {activeTab === 'geofence' && (
+        <div className="space-y-6">
+
+          {/* Info banner */}
+          <section className="bg-indigo-50 border border-indigo-200 rounded-2xl p-5 flex gap-4 items-start">
+            <MapPin className="w-5 h-5 text-indigo-600 mt-0.5 shrink-0" />
+            <div>
+              <p className="font-semibold text-indigo-900 text-sm">GPS-based Teacher Attendance</p>
+              <p className="text-indigo-700 text-xs mt-1 leading-relaxed">
+                Define a circular boundary around the school campus. Teachers must check in from within
+                this boundary for their attendance to be marked automatically. Set the centre to the
+                school's main entrance and choose a radius that covers the full campus.
+              </p>
+            </div>
+          </section>
+
+          {/* Current fence status */}
+          <section className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
+            <h2 className="font-bold text-slate-800 text-sm flex items-center gap-2 mb-1">
+              <Navigation className="w-4 h-4 text-indigo-600" /> Current Geo-fence
+            </h2>
+            {geofence ? (
+              <div className="mt-4 grid grid-cols-2 sm:grid-cols-4 gap-4">
+                {[
+                  { label: 'Latitude',  value: geofence.lat.toFixed(6) },
+                  { label: 'Longitude', value: geofence.lng.toFixed(6) },
+                  { label: 'Radius',    value: `${geofence.radius} m` },
+                  { label: 'Status',    value: 'Active', color: 'text-emerald-600' },
+                ].map(c => (
+                  <div key={c.label} className="bg-slate-50 rounded-xl p-4">
+                    <p className="text-xs text-slate-500 uppercase tracking-wide mb-1">{c.label}</p>
+                    <p className={`font-bold text-slate-800 text-sm font-mono ${c.color ?? ''}`}>{c.value}</p>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="mt-4 flex items-center gap-3 text-amber-700 bg-amber-50 border border-amber-200 rounded-xl p-4 text-sm">
+                <AlertTriangle className="w-4 h-4 shrink-0" />
+                No geo-fence configured yet. Set one below to enable GPS check-in for teachers.
+              </div>
+            )}
+          </section>
+
+          {/* Configure fence */}
+          <section className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
+            <h2 className="font-bold text-slate-800 text-sm flex items-center gap-2 mb-5">
+              <MapPin className="w-4 h-4 text-indigo-600" /> Configure Boundary
+            </h2>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-5">
+              <div>
+                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">
+                  Centre Latitude
+                </label>
+                <input
+                  type="number" step="0.0000001"
+                  value={geofenceForm.lat}
+                  onChange={e => setGeofenceForm(f => ({ ...f, lat: e.target.value }))}
+                  placeholder="e.g. 6.5244"
+                  className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm font-mono"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">
+                  Centre Longitude
+                </label>
+                <input
+                  type="number" step="0.0000001"
+                  value={geofenceForm.lng}
+                  onChange={e => setGeofenceForm(f => ({ ...f, lng: e.target.value }))}
+                  placeholder="e.g. 3.3792"
+                  className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm font-mono"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">
+                  Radius (metres)
+                </label>
+                <input
+                  type="number" min={50} max={5000} step={10}
+                  value={geofenceForm.radius}
+                  onChange={e => setGeofenceForm(f => ({ ...f, radius: e.target.value }))}
+                  className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm"
+                />
+              </div>
+            </div>
+
+            {/* Radius presets */}
+            <div className="flex flex-wrap gap-2 mb-6">
+              <p className="w-full text-xs text-slate-500 mb-1">Quick radius presets:</p>
+              {[100, 200, 300, 500, 1000].map(r => (
+                <button key={r}
+                  onClick={() => setGeofenceForm(f => ({ ...f, radius: String(r) }))}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors ${
+                    geofenceForm.radius === String(r)
+                      ? 'bg-indigo-600 text-white border-indigo-600'
+                      : 'bg-slate-50 text-slate-600 border-slate-200 hover:border-indigo-300'
+                  }`}>
+                  {r} m
+                </button>
+              ))}
+            </div>
+
+            {/* Map preview */}
+            <GeoFenceMapPreview
+              lat={parseFloat(geofenceForm.lat) || null}
+              lng={parseFloat(geofenceForm.lng) || null}
+              radius={parseInt(geofenceForm.radius, 10) || 200}
+            />
+
+            <div className="flex gap-3 mt-6">
+              <button
+                onClick={handleDetectLocation}
+                disabled={detectingLocation}
+                className="flex items-center gap-2 px-4 py-2.5 border border-slate-200 text-slate-700 font-semibold rounded-xl hover:bg-slate-50 transition-colors text-sm disabled:opacity-60">
+                {detectingLocation
+                  ? <Loader2 className="w-4 h-4 animate-spin" />
+                  : <Navigation className="w-4 h-4" />}
+                {detectingLocation ? 'Detecting…' : 'Use My Current Location'}
+              </button>
+              <button
+                onClick={handleSaveGeofence}
+                disabled={savingGeofence}
+                className="flex items-center gap-2 px-5 py-2.5 bg-indigo-600 text-white font-bold rounded-xl hover:bg-indigo-700 transition-all shadow-sm disabled:opacity-60 text-sm">
+                {savingGeofence ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                {savingGeofence ? 'Saving…' : 'Save Geo-fence'}
+              </button>
+            </div>
+          </section>
+
+          {/* Tips */}
+          <section className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
+            <h2 className="font-bold text-slate-800 text-sm mb-4">Setup Tips</h2>
+            <ul className="space-y-3 text-sm text-slate-600">
+              {[
+                'Walk to the school main entrance and click "Use My Current Location" to auto-fill the coordinates.',
+                'A radius of 150–300 m works well for most school campuses. Increase it for larger multi-building sites.',
+                'Teachers will see a "Check In" button on their portal only when a geo-fence is configured.',
+                'If a teacher checks in from outside the boundary, the check-in is still recorded but flagged as out-of-fence.',
+                'Coordinates are stored in decimal degrees (WGS-84). You can copy them from Google Maps.',
+              ].map((tip, i) => (
+                <li key={i} className="flex items-start gap-2.5">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-500 mt-0.5 shrink-0" />
+                  {tip}
+                </li>
+              ))}
+            </ul>
+          </section>
+
+        </div>
+      )}
+
+      {/* ── Sticky bottom save bar (visible on all tabs when dirty) ── */}
+      {isDirty && (
+        <div className="fixed bottom-6 right-6 z-50">
+          <button onClick={handleSave} disabled={saving}
+            className="flex items-center gap-2 px-6 py-3 bg-indigo-600 text-white font-bold rounded-2xl hover:bg-indigo-700 transition-all shadow-xl disabled:opacity-60 text-sm">
+            {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+            Save Settings
+          </button>
+        </div>
+      )}
     </div>
   );
 }

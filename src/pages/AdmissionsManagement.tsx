@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { db } from '../firebase';
 import {
   collection, onSnapshot, addDoc, updateDoc, doc,
-  serverTimestamp, query, orderBy, getDocs, where, writeBatch
+  serverTimestamp, query, orderBy, getDocs, where, writeBatch, arrayUnion
 } from 'firebase/firestore';
 import { generateStudentId } from '../services/firestoreService';
 import { motion, AnimatePresence } from 'motion/react';
@@ -88,8 +88,8 @@ function DirectAdmitModal({
     setForm(prev => ({ ...prev, [field]: val }));
 
   useEffect(() => {
-    // load parent-role users for linking
-    getDocs(query(collection(db, 'users'), where('role', '==', 'parent'))).then(snap => {
+    // load parent/guardian-role users for linking
+    getDocs(query(collection(db, 'users'), where('role', 'in', ['parent', 'guardian']))).then(snap => {
       setParentUsers(snap.docs.map(d => ({ uid: d.id, ...(d.data() as any) })));
     });
   }, []);
@@ -200,7 +200,19 @@ function DirectAdmitModal({
       };
       batch.set(studentRef, stripUndefined(studentData as Record<string, unknown>) as Omit<Student, 'id'>);
 
-      // 5. Guardian doc
+      // Build denormalized child entry for one-to-many tracking
+      const newChildEntry = {
+        studentId: studentRef.id,
+        studentName: form.studentName,
+        currentClass: form.classApplyingFor,
+      };
+      const siblingChildEntries = selectedSiblings.map(s => ({
+        studentId: s.id!,
+        studentName: s.studentName,
+        currentClass: s.currentClass,
+      }));
+
+      // 5. Guardian doc — includes linkedChildren for clear per-child identification
       batch.set(guardianRef, {
         fullName: form.g1Name,
         email: form.g1Email,
@@ -210,6 +222,7 @@ function DirectAdmitModal({
         homeAddress: form.g1Address || form.homeAddress,
         userId: form.linkExistingParent ? form.g1UserId : null,
         studentIds: [studentRef.id, ...siblingIds],
+        linkedChildren: [newChildEntry, ...siblingChildEntries],
         createdAt: serverTimestamp(),
       } as Omit<Guardian, 'id'>);
 
@@ -224,10 +237,11 @@ function DirectAdmitModal({
         }
       }
 
-      // 7. If linking existing parent user, update their profile with studentId
+      // 7. If linking existing parent user, append studentId + denormalized child name
       if (form.linkExistingParent && form.g1UserId) {
         batch.update(doc(db, 'users', form.g1UserId), {
-          linkedStudentIds: [studentRef.id, ...siblingIds],
+          linkedStudentIds: arrayUnion(studentRef.id, ...siblingIds),
+          linkedChildren: arrayUnion(newChildEntry, ...siblingChildEntries),
         });
       }
 

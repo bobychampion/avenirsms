@@ -6,12 +6,15 @@ import {
   XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer
 } from 'recharts';
 import { BarChart3, RefreshCw, Download } from 'lucide-react';
-import { formatNaira } from '../types';
+import { useSchool } from '../components/SchoolContext';
+import { formatCurrency } from '../utils/formatCurrency';
 
 const COLORS = ['#6366f1','#10b981','#f59e0b','#ef4444','#8b5cf6','#06b6d4','#f97316','#84cc16','#ec4899'];
 const GRADE_ORDER = ['A1','B2','B3','C4','C5','C6','D7','E8','F9'];
 
 export default function AnalyticsDashboard() {
+  const { locale, currency } = useSchool();
+  const fmt = (amount: number) => formatCurrency(amount, locale, currency);
   const [enrollment, setEnrollment] = useState<{month:string;count:number}[]>([]);
   const [gradeDist, setGradeDist] = useState<{grade:string;count:number}[]>([]);
   const [finance, setFinance] = useState<{name:string;value:number}[]>([]);
@@ -65,7 +68,7 @@ export default function AnalyticsDashboard() {
   const kpiCards = [
     { label:'Total Students', value: kpi.students, color:'bg-indigo-500' },
     { label:'Total Staff', value: kpi.staff, color:'bg-purple-500' },
-    { label:'Total Revenue', value: formatNaira(kpi.revenue), color:'bg-emerald-500' },
+    { label:'Total Revenue', value: fmt(kpi.revenue), color:'bg-emerald-500' },
     { label:'Avg Attendance', value: `${kpi.attendance}%`, color:'bg-amber-500' },
   ];
 
@@ -147,7 +150,7 @@ export default function AnalyticsDashboard() {
                 <Pie data={finance.filter(f=>f.value>0)} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={80} label={({name,percent})=>`${name} ${(percent*100).toFixed(0)}%`}>
                   {finance.filter(f=>f.value>0).map((_,i)=><Cell key={i} fill={COLORS[i]} />)}
                 </Pie>
-                <Tooltip formatter={(v:any)=>formatNaira(v)} />
+                <Tooltip formatter={(v:any)=>fmt(v)} />
                 <Legend />
               </PieChart>
             </ResponsiveContainer>
@@ -158,7 +161,7 @@ export default function AnalyticsDashboard() {
                     <div className="w-3 h-3 rounded-full" style={{background:COLORS[i]}} />
                     <span className="text-sm text-slate-600">{f.name}</span>
                   </div>
-                  <span className="font-bold text-slate-900 text-sm">{formatNaira(f.value)}</span>
+                  <span className="font-bold text-slate-900 text-sm">{fmt(f.value)}</span>
                 </div>
               ))}
             </div>

@@ -1,10 +1,9 @@
 import React, { useEffect } from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from 'react-router-dom';
-import { DOCUMENT_TITLE_DEFAULT } from './constants/appMeta';
+import { createBrowserRouter, RouterProvider, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { FirebaseProvider, useAuth } from './components/FirebaseProvider';
 import ErrorBoundary from './components/ErrorBoundary';
 import { AppToaster } from './components/Toast';
-import { SchoolProvider } from './components/SchoolContext';
+import { SchoolProvider, useSchool } from './components/SchoolContext';
 import LandingPage from './pages/LandingPage';
 import Home from './pages/Home';
 import Apply from './pages/Apply';
@@ -36,14 +35,25 @@ import NotificationsManagement from './pages/NotificationsManagement';
 import BulkStudentImport from './pages/BulkStudentImport';
 import WhatsAppNotifications from './pages/WhatsAppNotifications';
 import SeedData from './pages/SeedData';
+import OnboardingTutorial from './pages/OnboardingTutorial';
+import CBTExamEngine from './pages/CBTExamEngine';
+import AdminMobileDashboard from './pages/mobile/AdminMobileDashboard';
+import TeacherMobileAttendance from './pages/mobile/TeacherMobileAttendance';
+import ParentMobileHome from './pages/mobile/ParentMobileHome';
 import { Layout } from './components/Layout';
+
+// Roles that have access to admin-level finance/payroll/analytics routes
+const FINANCE_ROLES = ['admin', 'School_admin', 'accountant'] as const;
 
 function ProtectedRoute({
   children,
   role,
+  allowFinanceRoles,
 }: {
   children: React.ReactNode;
   role?: 'admin' | 'applicant' | 'teacher' | 'parent';
+  /** When true, accountant + admin + School_admin may access this route */
+  allowFinanceRoles?: boolean;
 }) {
   const { user, profile, loading, isAdmin } = useAuth();
 
@@ -57,9 +67,19 @@ function ProtectedRoute({
   );
   if (!user) return <Navigate to="/" />;
 
+  // Finance routes: allow admin, School_admin, and accountant
+  if (allowFinanceRoles) {
+    if (!profile?.role || !FINANCE_ROLES.includes(profile.role as any)) return <Navigate to="/" />;
+    return <>{children}</>;
+  }
+
   // Teachers trying to access admin routes → redirect to their portal
   if (role === 'admin' && profile?.role === 'teacher') {
     return <Navigate to="/teacher" replace />;
+  }
+  // Accountants trying to access admin routes → redirect to finance
+  if (role === 'admin' && profile?.role === 'accountant') {
+    return <Navigate to="/admin/finance" replace />;
   }
 
   if (role === 'admin') {
@@ -71,18 +91,46 @@ function ProtectedRoute({
   return <>{children}</>;
 }
 
-/** Keeps the browser tab title correct (overrides stale deploys / defaults like “AI Studio”). */
-function SyncDocumentTitle() {
+/**
+ * Keeps the browser tab title and favicon in sync with the school's
+ * branding settings stored in Firestore (school_settings/main).
+ */
+function ScrollToTop() {
   const { pathname } = useLocation();
   useEffect(() => {
-    document.title = DOCUMENT_TITLE_DEFAULT;
+    window.scrollTo(0, 0);
   }, [pathname]);
+  return null;
+}
+
+function SyncDocumentTitle() {
+  const { pathname } = useLocation();
+  const { schoolName, faviconUrl } = useSchool();
+
+  // Update tab title whenever the route or school name changes
+  useEffect(() => {
+    document.title = schoolName ? `${schoolName} — School Management` : 'School Management';
+  }, [pathname, schoolName]);
+
+  // Swap the <link rel="icon"> whenever the favicon URL changes
+  useEffect(() => {
+    if (!faviconUrl) return;
+    let link = document.querySelector<HTMLLinkElement>('link[rel~="icon"]');
+    if (!link) {
+      link = document.createElement('link');
+      link.rel = 'icon';
+      document.head.appendChild(link);
+    }
+    link.href = faviconUrl;
+  }, [faviconUrl]);
+
   return null;
 }
 
 function AppContent() {
   return (
     <>
+      <ScrollToTop />
       <SyncDocumentTitle />
     <Routes>
       {/* ── Standalone promotional landing page (no Layout wrapper) ── */}
@@ -106,12 +154,12 @@ function AppContent() {
       <Route path="/admin/exams" element={<Layout><ProtectedRoute role="admin"><ExamManagement /></ProtectedRoute></Layout>} />
       <Route path="/admin/timetable" element={<Layout><ProtectedRoute role="admin"><TimetableManagement /></ProtectedRoute></Layout>} />
       <Route path="/admin/application/:id" element={<Layout><ProtectedRoute role="admin"><ApplicationDetail /></ProtectedRoute></Layout>} />
-      <Route path="/admin/finance" element={<Layout><ProtectedRoute role="admin"><FinancialManagement /></ProtectedRoute></Layout>} />
+      <Route path="/admin/finance" element={<Layout><ProtectedRoute allowFinanceRoles><FinancialManagement /></ProtectedRoute></Layout>} />
       <Route path="/admin/classes" element={<Layout><ProtectedRoute role="admin"><ClassManagement /></ProtectedRoute></Layout>} />
       <Route path="/admin/attendance" element={<Layout><ProtectedRoute role="admin"><AttendancePage /></ProtectedRoute></Layout>} />
       <Route path="/admin/staff" element={<Layout><ProtectedRoute role="admin"><StaffManagement /></ProtectedRoute></Layout>} />
-      <Route path="/admin/payroll" element={<Layout><ProtectedRoute role="admin"><PayrollManagement /></ProtectedRoute></Layout>} />
-      <Route path="/admin/analytics" element={<Layout><ProtectedRoute role="admin"><AnalyticsDashboard /></ProtectedRoute></Layout>} />
+      <Route path="/admin/payroll" element={<Layout><ProtectedRoute allowFinanceRoles><PayrollManagement /></ProtectedRoute></Layout>} />
+      <Route path="/admin/analytics" element={<Layout><ProtectedRoute allowFinanceRoles><AnalyticsDashboard /></ProtectedRoute></Layout>} />
       <Route path="/admin/curriculum" element={<Layout><ProtectedRoute role="admin"><CurriculumMapping /></ProtectedRoute></Layout>} />
       <Route path="/admin/promotion" element={<Layout><ProtectedRoute role="admin"><StudentPromotion /></ProtectedRoute></Layout>} />
       <Route path="/admin/pins" element={<Layout><ProtectedRoute role="admin"><PinManagement /></ProtectedRoute></Layout>} />
@@ -121,30 +169,47 @@ function AppContent() {
       <Route path="/admin/whatsapp" element={<Layout><ProtectedRoute role="admin"><WhatsAppNotifications /></ProtectedRoute></Layout>} />
       <Route path="/admin/seed" element={<Layout><ProtectedRoute role="admin"><SeedData /></ProtectedRoute></Layout>} />
 
+      {/* Onboarding Tutorial — accessible to admin, teacher, parent */}
+      <Route path="/onboarding" element={<Layout><ProtectedRoute><OnboardingTutorial /></ProtectedRoute></Layout>} />
+
       {/* Portals */}
       <Route path="/teacher" element={<Layout><ProtectedRoute role="teacher"><TeacherPortal /></ProtectedRoute></Layout>} />
       <Route path="/parent" element={<Layout><ProtectedRoute role="parent"><ParentPortal /></ProtectedRoute></Layout>} />
 
       {/* Calendar (all roles) */}
       <Route path="/calendar" element={<Layout><ProtectedRoute><SchoolCalendar /></ProtectedRoute></Layout>} />
+
+      {/* CBT Exam Engine — standalone full-screen (no Layout) */}
+      <Route path="/cbt/:sessionId" element={<ProtectedRoute><CBTExamEngine /></ProtectedRoute>} />
+
+      {/* ── Mobile PWA Quick-Action Pages (no Layout — MobileShell embedded) ── */}
+      <Route path="/mobile/admin" element={<ProtectedRoute role="admin"><AdminMobileDashboard /></ProtectedRoute>} />
+      <Route path="/mobile/teacher" element={<ProtectedRoute role="teacher"><TeacherMobileAttendance /></ProtectedRoute>} />
+      <Route path="/mobile/parent" element={<ProtectedRoute role="parent"><ParentMobileHome /></ProtectedRoute>} />
     </Routes>
     </>
   );
 }
 
-function App() {
+function AppShell() {
   return (
     <ErrorBoundary>
       <FirebaseProvider>
         <SchoolProvider>
-          <Router>
-            <AppToaster />
-            <AppContent />
-          </Router>
+          <AppToaster />
+          <AppContent />
         </SchoolProvider>
       </FirebaseProvider>
     </ErrorBoundary>
   );
+}
+
+const router = createBrowserRouter([
+  { path: '*', element: <AppShell /> },
+]);
+
+function App() {
+  return <RouterProvider router={router} />;
 }
 
 export default App;

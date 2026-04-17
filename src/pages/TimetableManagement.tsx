@@ -8,7 +8,7 @@ import { useClassSelectOptions, useSchool } from '../components/SchoolContext';
 
 export default function TimetableManagement() {
   const classSelectOptions = useClassSelectOptions();
-  const { subjects, periodTimes, currentSession } = useSchool();
+  const { subjects, periodTimes, currentSession, getSubjectsForClass } = useSchool();
 
   const [timetables, setTimetables] = useState<Timetable[]>([]);
   const [teachers, setTeachers] = useState<UserProfile[]>([]);
@@ -32,6 +32,30 @@ export default function TimetableManagement() {
   const [customEnd, setCustomEnd] = useState('');
   const [useCustomStart, setUseCustomStart] = useState(false);
   const [useCustomEnd, setUseCustomEnd] = useState(false);
+  const [inlineConflict, setInlineConflict] = useState<string | null>(null);
+
+  const resolveTime = (val: string, custom: string, useCustom: boolean) =>
+    useCustom ? custom.trim() : val;
+
+  // Real-time inline conflict check while filling in the add-period modal
+  useEffect(() => {
+    if (!timetable || !addTarget || !periodForm.teacher) {
+      setInlineConflict(null);
+      return;
+    }
+    const resolvedStart = resolveTime(periodForm.startTime, customStart, useCustomStart);
+    if (!resolvedStart) { setInlineConflict(null); return; }
+    const conflict = (timetable.schedule[addTarget.day] || []).find(
+      p => p.teacher === periodForm.teacher && p.startTime === resolvedStart
+    );
+    if (conflict) {
+      setInlineConflict(
+        `${periodForm.teacher} is already assigned to ${conflict.subject} at ${resolvedStart} on ${addTarget.day}`
+      );
+    } else {
+      setInlineConflict(null);
+    }
+  }, [periodForm.teacher, periodForm.startTime, customStart, useCustomStart, addTarget, timetable]);
 
   useEffect(() => {
     const unsub = onSnapshot(collection(db, 'timetables'), snap => {
@@ -80,9 +104,6 @@ export default function TimetableManagement() {
     });
     return [...new Set(issues)];
   };
-
-  const resolveTime = (val: string, custom: string, useCustom: boolean) =>
-    useCustom ? custom.trim() : val;
 
   const addPeriod = () => {
     if (!timetable || !addTarget) return;
@@ -164,6 +185,7 @@ export default function TimetableManagement() {
       {useCustom ? (
         <div className="flex gap-1">
           <input
+            autoFocus
             value={custom}
             onChange={e => onCustomChange(e.target.value)}
             placeholder="HH:MM"
@@ -297,12 +319,12 @@ export default function TimetableManagement() {
         {isAddModal && (
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
             className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4"
-            onClick={e => e.target === e.currentTarget && setIsAddModal(false)}>
+            onClick={e => { if (e.target === e.currentTarget) { setIsAddModal(false); setInlineConflict(null); } }}>
             <motion.div initial={{ scale: 0.95 }} animate={{ scale: 1 }}
               className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6">
               <div className="flex items-center justify-between mb-5">
                 <h2 className="font-bold text-slate-900">Add Period — {addTarget?.day}</h2>
-                <button onClick={() => setIsAddModal(false)} className="p-1.5 hover:bg-slate-100 rounded-lg">
+                <button onClick={() => { setIsAddModal(false); setInlineConflict(null); }} className="p-1.5 hover:bg-slate-100 rounded-lg">
                   <X className="w-4 h-4" />
                 </button>
               </div>
@@ -311,7 +333,7 @@ export default function TimetableManagement() {
                   <label className="text-xs font-bold text-slate-500 uppercase tracking-wide block mb-1">Subject</label>
                   <select value={periodForm.subject} onChange={e => setPeriodForm(p => ({ ...p, subject: e.target.value }))}
                     className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none bg-white text-sm">
-                    {subjects.map(s => <option key={s}>{s}</option>)}
+                    {(selectedClass ? getSubjectsForClass(selectedClass) : subjects).map(s => <option key={s}>{s}</option>)}
                   </select>
                 </div>
                 <div className="grid grid-cols-2 gap-3">
@@ -341,10 +363,16 @@ export default function TimetableManagement() {
                     <option value="">Unassigned</option>
                     {teachers.map(t => <option key={t.uid} value={t.displayName}>{t.displayName}</option>)}
                   </select>
+                  {inlineConflict && (
+                    <p className="mt-1.5 flex items-start gap-1.5 text-xs text-amber-700">
+                      <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+                      {inlineConflict}
+                    </p>
+                  )}
                 </div>
               </div>
               <div className="flex justify-end gap-2 mt-6">
-                <button onClick={() => setIsAddModal(false)} className="px-4 py-2 text-sm text-slate-600 hover:bg-slate-100 rounded-xl">Cancel</button>
+                <button onClick={() => { setIsAddModal(false); setInlineConflict(null); }} className="px-4 py-2 text-sm text-slate-600 hover:bg-slate-100 rounded-xl">Cancel</button>
                 <button onClick={addPeriod}
                   disabled={!resolveTime(periodForm.startTime, customStart, useCustomStart) || !resolveTime(periodForm.endTime, customEnd, useCustomEnd)}
                   className="px-5 py-2 bg-indigo-600 text-white font-bold rounded-xl hover:bg-indigo-700 text-sm disabled:opacity-50">

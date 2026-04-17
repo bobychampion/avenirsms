@@ -7,12 +7,15 @@ import { Application, SCHOOL_CLASSES, NIGERIAN_REGULATIONS } from '../types';
 import { motion, AnimatePresence } from 'motion/react';
 import { User, BookOpen, Phone, FileUp, CheckCircle, AlertTriangle, ArrowRight, ArrowLeft, Loader2 } from 'lucide-react';
 import { differenceInYears, parseISO } from 'date-fns';
+import { useUnsavedChanges } from '../hooks/useUnsavedChanges';
+import UnsavedChangesDialog from '../components/UnsavedChangesDialog';
 
 export default function Apply() {
   const { user } = useAuth();
   const navigate = useNavigate();
   const [step, setStep] = useState(1);
   const [loading, setLoading] = useState(false);
+  const [submitted, setSubmitted] = useState(false);
   const [existingApplication, setExistingApplication] = useState<Application | null>(null);
   const [formData, setFormData] = useState<Partial<Application>>({
     applicantName: '',
@@ -29,6 +32,16 @@ export default function Apply() {
   });
 
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [isDirty, setIsDirty] = useState(false);
+
+  // Guard navigation away from partially filled form
+  const { blocker } = useUnsavedChanges(isDirty && !submitted && !existingApplication);
+
+  /** Update form field and mark as dirty */
+  const updateForm = (patch: Partial<Application>) => {
+    setFormData(prev => ({ ...prev, ...patch }));
+    setIsDirty(true);
+  };
 
   useEffect(() => {
     if (!user) return;
@@ -84,6 +97,8 @@ export default function Apply() {
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       });
+      setSubmitted(true);
+      setIsDirty(false);
       setStep(6); // Success step
     } catch (error) {
       handleFirestoreError(error, OperationType.CREATE, 'applications');
@@ -126,6 +141,14 @@ export default function Apply() {
 
   return (
     <div className="max-w-4xl mx-auto px-4 py-12">
+      {/* Unsaved changes guard */}
+      <UnsavedChangesDialog
+        blocker={blocker}
+        title="Leave Application Form?"
+        message="You have started filling out your application. If you leave now, your progress will be lost."
+        discardLabel="Leave and discard"
+        stayLabel="Stay and continue"
+      />
       {/* Progress Bar */}
       <div className="mb-12">
         <div className="flex items-center justify-between mb-4">
@@ -173,7 +196,7 @@ export default function Apply() {
                     label="Full Name of Applicant" 
                     error={errors.applicantName}
                     value={formData.applicantName}
-                    onChange={v => setFormData({...formData, applicantName: v})}
+                    onChange={v => updateForm({ applicantName: v })}
                     placeholder="John Doe"
                   />
                   <FormField 
@@ -181,14 +204,14 @@ export default function Apply() {
                     type="date"
                     error={errors.dob}
                     value={formData.dob}
-                    onChange={v => setFormData({...formData, dob: v})}
+                    onChange={v => updateForm({ dob: v })}
                   />
                   <div className="space-y-2">
                     <label className="text-sm font-semibold text-slate-700">Gender</label>
                     <select 
                       className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition-all"
                       value={formData.gender}
-                      onChange={e => setFormData({...formData, gender: e.target.value as any})}
+                      onChange={e => updateForm({ gender: e.target.value as any })}
                     >
                       <option value="male">Male</option>
                       <option value="female">Female</option>
@@ -199,7 +222,7 @@ export default function Apply() {
                     label="National ID (NIN)" 
                     error={errors.nin}
                     value={formData.nin}
-                    onChange={v => setFormData({...formData, nin: v})}
+                    onChange={v => updateForm({ nin: v })}
                     placeholder="11-digit number"
                     maxLength={11}
                   />
@@ -225,7 +248,7 @@ export default function Apply() {
                     <select 
                       className={`w-full px-4 py-3 rounded-xl border focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition-all ${errors.classApplyingFor ? 'border-rose-300 ring-1 ring-rose-200' : 'border-slate-200'}`}
                       value={formData.classApplyingFor}
-                      onChange={e => setFormData({...formData, classApplyingFor: e.target.value})}
+                      onChange={e => updateForm({ classApplyingFor: e.target.value })}
                     >
                       <option value="">Select class…</option>
                       {SCHOOL_CLASSES.map(c => <option key={c} value={c}>{c}</option>)}
@@ -239,7 +262,7 @@ export default function Apply() {
                   <FormField 
                     label="Previous School Attended" 
                     value={formData.previousSchool}
-                    onChange={v => setFormData({...formData, previousSchool: v})}
+                    onChange={v => updateForm({ previousSchool: v })}
                     placeholder="Name of school"
                   />
                   {formData.classApplyingFor?.startsWith('SSS') && (
@@ -247,7 +270,7 @@ export default function Apply() {
                       label="WAEC/NECO Examination Number" 
                       error={errors.waecNecoNumber}
                       value={formData.waecNecoNumber}
-                      onChange={v => setFormData({...formData, waecNecoNumber: v})}
+                      onChange={v => updateForm({ waecNecoNumber: v })}
                       placeholder="Verification ID"
                     />
                   )}
@@ -278,7 +301,7 @@ export default function Apply() {
                     label="Phone Number" 
                     error={errors.phone}
                     value={formData.phone}
-                    onChange={v => setFormData({...formData, phone: v})}
+                    onChange={v => updateForm({ phone: v })}
                     placeholder="+234..."
                   />
                 </div>

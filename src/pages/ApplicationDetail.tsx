@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { db, handleFirestoreError, OperationType } from '../firebase';
 import {
   doc, onSnapshot, updateDoc, serverTimestamp, addDoc,
-  collection, query, where, getDocs, writeBatch
+  collection, query, where, getDocs, writeBatch, arrayUnion
 } from 'firebase/firestore';
 import { Application, ApplicationStatus, NIGERIAN_REGULATIONS, Student, SCHOOL_CLASSES, Guardian, formatDate } from '../types';
 import { generateStudentId } from '../services/firestoreService';
@@ -220,9 +220,31 @@ export default function ApplicationDetail() {
     getDocs(collection(db, 'students')).then(snap => {
       setExistingStudents(snap.docs.map(d => ({ id: d.id, ...(d.data() as Student) })));
     });
-    // Load parent accounts
-    getDocs(query(collection(db, 'users'), where('role', '==', 'parent'))).then(snap => {
+    // Load parent accounts (include both 'parent' and 'guardian' roles)
+    getDocs(query(collection(db, 'users'), where('role', 'in', ['parent', 'guardian']))).then(snap => {
       setParentUsers(snap.docs.map(d => ({ uid: d.id, ...(d.data() as any) })));
+    });
+    // Pre-populate guardian form from existing enrolled student (if already approved)
+    getDocs(query(collection(db, 'students'), where('applicationId', '==', id))).then(snap => {
+      if (!snap.empty) {
+        const s = snap.docs[0].data() as Student;
+        setGuardianForm(prev => ({
+          ...prev,
+          g1Name: s.guardianName || '',
+          g1Phone: s.guardianPhone || '',
+          g1Email: s.guardianEmail || '',
+          g1Relationship: s.guardianRelationship || 'father',
+          g1Occupation: '',
+          g2Name: s.guardian2Name || '',
+          g2Phone: s.guardian2Phone || '',
+          g2Relationship: s.guardian2Relationship || 'mother',
+          g2Email: s.guardian2Email || '',
+        }));
+        if (s.guardianUserId) {
+          setLinkExistingParent(true);
+          setLinkedUserId(s.guardianUserId);
+        }
+      }
     });
 
     return () => unsubscribe();
@@ -249,6 +271,7 @@ export default function ApplicationDetail() {
         if (studentSnap.empty) {
           const studentId = await generateStudentId();
           const siblingIds = selectedSiblings.map(s => s.id!).filter(Boolean);
+          const assignedClass = guardianForm.classAssignment || application.classApplyingFor;
 
           const studentRef = doc(collection(db, 'students'));
           const newStudent: Omit<Student, 'id'> = {
@@ -258,7 +281,7 @@ export default function ApplicationDetail() {
             dob: application.dob,
             gender: application.gender,
             nin: application.nin,
-            currentClass: guardianForm.classAssignment || application.classApplyingFor,
+            currentClass: assignedClass,
             studentId,
             enrolledAt: serverTimestamp(),
             applicationId: id,
@@ -278,7 +301,19 @@ export default function ApplicationDetail() {
           };
           batch.set(studentRef, stripUndefined(newStudent as Record<string, unknown>) as Omit<Student, 'id'>);
 
-          // Create Guardian document
+          // Denormalized child entry for one-to-many tracking
+          const newChildEntry = {
+            studentId: studentRef.id,
+            studentName: application.applicantName,
+            currentClass: assignedClass,
+          };
+          const siblingChildEntries = selectedSiblings.map(s => ({
+            studentId: s.id!,
+            studentName: s.studentName,
+            currentClass: s.currentClass,
+          }));
+
+          // Create Guardian document — includes linkedChildren
           if (guardianForm.g1Name) {
             const guardianRef = doc(collection(db, 'guardians'));
             batch.set(guardianRef, {
@@ -289,6 +324,7 @@ export default function ApplicationDetail() {
               occupation: guardianForm.g1Occupation,
               userId: (linkExistingParent && linkedUserId) ? linkedUserId : null,
               studentIds: [studentRef.id, ...siblingIds],
+              linkedChildren: [newChildEntry, ...siblingChildEntries],
               createdAt: serverTimestamp(),
             } as Omit<Guardian, 'id'>);
           }
@@ -304,16 +340,56 @@ export default function ApplicationDetail() {
             }
           }
 
-          // Link parent portal account
+          // Link parent portal account — append, never overwrite existing children
           if (linkExistingParent && linkedUserId) {
             batch.update(doc(db, 'users', linkedUserId), {
-              linkedStudentIds: [studentRef.id, ...siblingIds],
+              linkedStudentIds: arrayUnion(studentRef.id, ...siblingIds),
+              linkedChildren: arrayUnion(newChildEntry, ...siblingChildEntries),
             });
           }
 
           await batch.commit();
           alert(`✓ Student admitted!\nStudent ID: ${studentId}\nClass: ${newStudent.currentClass}`);
           return;
+        } else {
+          // Student already exists — update guardian link on the existing student record
+          const existingStudentDoc = studentSnap.docs[0];
+          const existingStudentId = existingStudentDoc.id;
+          const existingStudentData = existingStudentDoc.data() as Student;
+          const siblingIds = selectedSiblings.map(s => s.id!).filter(Boolean);
+
+          const guardianUpdates: Record<string, unknown> = {};
+          if (guardianForm.g1Name) guardianUpdates.guardianName = guardianForm.g1Name;
+          if (guardianForm.g1Phone) guardianUpdates.guardianPhone = guardianForm.g1Phone;
+          if (guardianForm.g1Email) guardianUpdates.guardianEmail = guardianForm.g1Email;
+          if (guardianForm.g1Relationship) guardianUpdates.guardianRelationship = guardianForm.g1Relationship;
+          if (linkExistingParent && linkedUserId) guardianUpdates.guardianUserId = linkedUserId;
+          if (guardianForm.g2Name) guardianUpdates.guardian2Name = guardianForm.g2Name;
+          if (guardianForm.g2Phone) guardianUpdates.guardian2Phone = guardianForm.g2Phone;
+          if (guardianForm.g2Relationship) guardianUpdates.guardian2Relationship = guardianForm.g2Relationship;
+          if (guardianForm.g2Email) guardianUpdates.guardian2Email = guardianForm.g2Email;
+
+          if (Object.keys(guardianUpdates).length > 0) {
+            batch.update(doc(db, 'students', existingStudentId), guardianUpdates);
+          }
+
+          // Link parent portal account on existing student
+          if (linkExistingParent && linkedUserId) {
+            const existingChildEntry = {
+              studentId: existingStudentId,
+              studentName: existingStudentData.studentName,
+              currentClass: existingStudentData.currentClass,
+            };
+            const siblingChildEntries = selectedSiblings.map(s => ({
+              studentId: s.id!,
+              studentName: s.studentName,
+              currentClass: s.currentClass,
+            }));
+            batch.update(doc(db, 'users', linkedUserId), {
+              linkedStudentIds: arrayUnion(existingStudentId, ...siblingIds),
+              linkedChildren: arrayUnion(existingChildEntry, ...siblingChildEntries),
+            });
+          }
         }
       }
 

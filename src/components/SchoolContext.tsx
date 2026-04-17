@@ -11,7 +11,7 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { db } from '../firebase';
 import { collection, onSnapshot, orderBy, query, doc } from 'firebase/firestore';
-import { SchoolClass, SCHOOL_CLASSES, SUBJECTS, CURRENT_SESSION, TERMS, GradingSystem, CustomGradeScale } from '../types';
+import { SchoolClass, SCHOOL_CLASSES, SUBJECTS, CURRENT_SESSION, TERMS, GradingSystem, CustomGradeScale, SubjectDefinition } from '../types';
 import { SchoolSettings, defaultSettings } from '../pages/SchoolSettings';
 
 const DEFAULT_PERIOD_TIMES = [
@@ -54,6 +54,14 @@ interface SchoolContextValue {
   taxModel: 'nigeria_paye' | 'flat_rate' | 'none';
   taxFlatRate: number;
   cloudinaryConfig: { cloudName: string; uploadPreset: string };
+  // School branding
+  schoolName: string;
+  logoUrl: string;
+  faviconUrl: string;
+  primaryColor: string;
+  // Subject management
+  subjectDefinitions: SubjectDefinition[];
+  getSubjectsForClass: (className: string) => string[];
 }
 
 const SchoolContext = createContext<SchoolContextValue>({
@@ -79,6 +87,12 @@ const SchoolContext = createContext<SchoolContextValue>({
   taxModel: 'none',
   taxFlatRate: 0,
   cloudinaryConfig: { cloudName: '', uploadPreset: '' },
+  schoolName: 'Avenir SIS',
+  logoUrl: '',
+  faviconUrl: '',
+  primaryColor: '#4f46e5',
+  subjectDefinitions: [],
+  getSubjectsForClass: () => SUBJECTS,
 });
 
 export function SchoolProvider({ children }: { children: React.ReactNode }) {
@@ -107,6 +121,15 @@ export function SchoolProvider({ children }: { children: React.ReactNode }) {
   const [taxFlatRate, setTaxFlatRate] = useState(0);
   const [cloudinaryConfig, setCloudinaryConfig] = useState({ cloudName: '', uploadPreset: '' });
 
+  // Subject definitions from Firestore subjects collection
+  const [subjectDefinitions, setSubjectDefinitions] = useState<SubjectDefinition[]>([]);
+
+  // School branding state
+  const [schoolName, setSchoolName] = useState('Avenir SIS');
+  const [logoUrl, setLogoUrl] = useState('');
+  const [faviconUrl, setFaviconUrl] = useState('');
+  const [primaryColor, setPrimaryColor] = useState('#4f46e5');
+
   // Subscribe to school_settings/main for dynamic configuration
   useEffect(() => {
     const unsub = onSnapshot(
@@ -134,6 +157,11 @@ export function SchoolProvider({ children }: { children: React.ReactNode }) {
             cloudName: data.cloudinaryCloudName || '',
             uploadPreset: data.cloudinaryUploadPreset || '',
           });
+          // Branding
+          setSchoolName(data.schoolName || 'Avenir SIS');
+          setLogoUrl(data.logoUrl || '');
+          setFaviconUrl(data.faviconUrl || '');
+          setPrimaryColor(data.primaryColor || '#4f46e5');
         }
       },
       () => { /* silently fall back to defaults on error */ }
@@ -166,11 +194,32 @@ export function SchoolProvider({ children }: { children: React.ReactNode }) {
     return () => unsub();
   }, [tick]);
 
+  // Subscribe to /subjects collection (custom SubjectDefinitions)
+  useEffect(() => {
+    const unsub = onSnapshot(
+      collection(db, 'subjects'),
+      snap => {
+        setSubjectDefinitions(snap.docs.map(d => ({ id: d.id, ...d.data() } as SubjectDefinition)));
+      },
+      () => { /* silently ignore on error */ }
+    );
+    return () => unsub();
+  }, []);
+
   // Merge built-in subjects with custom subjects (deduplicated)
   const mergedSubjects = [...SUBJECTS, ...customSubjects.filter(s => !SUBJECTS.includes(s))];
 
   // Dynamic term labels derived from termStructure
   const terms = getTermLabels(termStructure);
+
+  // Helper: get subjects for a specific class (from SubjectDefinitions, falling back to all merged subjects)
+  const getSubjectsForClass = (className: string): string[] => {
+    const custom = subjectDefinitions.filter(s => s.assignedClasses.includes(className));
+    if (custom.length > 0) return custom.map(s => s.name);
+    // Fallback: return built-in + custom subjects that haven't been assigned to specific classes
+    const unassigned = subjectDefinitions.filter(s => s.assignedClasses.length === 0).map(s => s.name);
+    return [...mergedSubjects, ...unassigned.filter(n => !mergedSubjects.includes(n))];
+  };
 
   return (
     <SchoolContext.Provider value={{
@@ -196,6 +245,12 @@ export function SchoolProvider({ children }: { children: React.ReactNode }) {
       taxModel,
       taxFlatRate,
       cloudinaryConfig,
+      schoolName,
+      logoUrl,
+      faviconUrl,
+      primaryColor,
+      subjectDefinitions,
+      getSubjectsForClass,
     }}>
       {children}
     </SchoolContext.Provider>

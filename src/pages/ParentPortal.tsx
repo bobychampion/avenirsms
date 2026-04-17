@@ -47,58 +47,163 @@ export default function ParentPortal() {
   useEffect(() => {
     if (!user) return;
 
-    const qChildren = query(collection(db, 'students'), where('guardianEmail', '==', user.email));
-    const unsubChildren = onSnapshot(qChildren, snap => {
-      const list = snap.docs.map(d => ({ id: d.id, ...d.data() } as Student));
-      setChildren(list);
-      if (list.length > 0 && !selectedChild) setSelectedChild(list[0]);
+    // ── Strategy 1: match by guardianEmail (email typed by admin during enrollment)
+    const qByEmail = query(
+      collection(db, 'students'),
+      where('guardianEmail', '==', user.email)
+    );
+
+    // ── Strategy 2: match by guardianUserId (UID written when admin selected "Link to existing parent account")
+    const qByUid = query(
+      collection(db, 'students'),
+      where('guardianUserId', '==', user.uid)
+    );
+
+    // Merge both result sets, de-duplicate by student document ID
+    const mergeChildren = (byEmail: Student[], byUid: Student[]): Student[] => {
+      const map = new Map<string, Student>();
+      [...byEmail, ...byUid].forEach(s => { if (s.id) map.set(s.id, s); });
+      return Array.from(map.values());
+    };
+
+    let emailResults: Student[] = [];
+    let uidResults: Student[] = [];
+
+    const updateChildren = () => {
+      const merged = mergeChildren(emailResults, uidResults);
+      setChildren(merged);
+      if (merged.length > 0) {
+        setSelectedChild(prev => {
+          // Keep current selection if still in the list; else pick first
+          if (prev && merged.find(s => s.id === prev.id)) return prev;
+          return merged[0];
+        });
+      }
       setLoading(false);
-    });
+    };
 
-    const qNotif = query(collection(db, 'notifications'),
+    const unsubByEmail = onSnapshot(
+      qByEmail,
+      snap => {
+        emailResults = snap.docs.map(d => ({ id: d.id, ...d.data() } as Student));
+        console.debug('[ParentPortal] guardianEmail match:', emailResults.length, 'student(s)');
+        updateChildren();
+      },
+      err => {
+        console.error('[ParentPortal] guardianEmail query failed:', err.code, err.message);
+        handleFirestoreError(err, OperationType.LIST, 'students[guardianEmail]');
+        setLoading(false);
+      }
+    );
+
+    const unsubByUid = onSnapshot(
+      qByUid,
+      snap => {
+        uidResults = snap.docs.map(d => ({ id: d.id, ...d.data() } as Student));
+        console.debug('[ParentPortal] guardianUserId match:', uidResults.length, 'student(s)');
+        updateChildren();
+      },
+      err => {
+        console.error('[ParentPortal] guardianUserId query failed:', err.code, err.message);
+        // Non-fatal: email query may still return results
+      }
+    );
+
+    const qNotif = query(
+      collection(db, 'notifications'),
       where('recipientId', 'in', [user.uid, 'all']),
-      orderBy('createdAt', 'desc'));
-    const unsubNotif = onSnapshot(qNotif, snap => {
-      setNotifications(snap.docs.map(d => ({ id: d.id, ...d.data() } as Notification)));
-    });
+      orderBy('createdAt', 'desc')
+    );
+    const unsubNotif = onSnapshot(
+      qNotif,
+      snap => {
+        setNotifications(snap.docs.map(d => ({ id: d.id, ...d.data() } as Notification)));
+      },
+      err => {
+        console.error('[ParentPortal] notifications query failed:', err.code, err.message);
+      }
+    );
 
-    const qMsgs = query(collection(db, 'messages'), where('receiverId', 'in', [user.uid, user.email!]), orderBy('timestamp', 'desc'));
-    const qSent = query(collection(db, 'messages'), where('senderId', '==', user.uid), orderBy('timestamp', 'desc'));
+    const qMsgs = query(
+      collection(db, 'messages'),
+      where('receiverId', 'in', [user.uid, user.email!]),
+      orderBy('timestamp', 'desc')
+    );
+    const qSent = query(
+      collection(db, 'messages'),
+      where('senderId', '==', user.uid),
+      orderBy('timestamp', 'desc')
+    );
 
-    const unsubMsgs = onSnapshot(qMsgs, snap => {
-      const received = snap.docs.map(d => ({ id: d.id, ...d.data() } as Message));
-      setMessages(prev => {
-        const sent = prev.filter(m => m.senderId === user.uid);
-        const all = [...received, ...sent].sort((a, b) => (b.timestamp?.seconds || 0) - (a.timestamp?.seconds || 0));
-        return Array.from(new Map(all.map(m => [m.id, m])).values());
-      });
-    });
-    const unsubSent = onSnapshot(qSent, snap => {
-      const sent = snap.docs.map(d => ({ id: d.id, ...d.data() } as Message));
-      setMessages(prev => {
-        const received = prev.filter(m => m.receiverId === user.uid || m.receiverId === user.email);
-        const all = [...received, ...sent].sort((a, b) => (b.timestamp?.seconds || 0) - (a.timestamp?.seconds || 0));
-        return Array.from(new Map(all.map(m => [m.id, m])).values());
-      });
-    });
+    const unsubMsgs = onSnapshot(
+      qMsgs,
+      snap => {
+        const received = snap.docs.map(d => ({ id: d.id, ...d.data() } as Message));
+        setMessages(prev => {
+          const sent = prev.filter(m => m.senderId === user.uid);
+          const all = [...received, ...sent].sort((a, b) => (b.timestamp?.seconds || 0) - (a.timestamp?.seconds || 0));
+          return Array.from(new Map(all.map(m => [m.id, m])).values());
+        });
+      },
+      err => {
+        console.error('[ParentPortal] messages(received) query failed:', err.code, err.message);
+      }
+    );
 
-    return () => { unsubChildren(); unsubNotif(); unsubMsgs(); unsubSent(); };
+    const unsubSent = onSnapshot(
+      qSent,
+      snap => {
+        const sent = snap.docs.map(d => ({ id: d.id, ...d.data() } as Message));
+        setMessages(prev => {
+          const received = prev.filter(m => m.receiverId === user.uid || m.receiverId === user.email);
+          const all = [...received, ...sent].sort((a, b) => (b.timestamp?.seconds || 0) - (a.timestamp?.seconds || 0));
+          return Array.from(new Map(all.map(m => [m.id, m])).values());
+        });
+      },
+      err => {
+        console.error('[ParentPortal] messages(sent) query failed:', err.code, err.message);
+      }
+    );
+
+    return () => { unsubByEmail(); unsubByUid(); unsubNotif(); unsubMsgs(); unsubSent(); };
   }, [user]);
 
   useEffect(() => {
     if (!selectedChild) return;
 
+    // Clear stale data immediately when switching children
+    setGrades([]);
+    setAttendance([]);
+    setAssignments([]);
+    setInvoices([]);
+
     const qGrades = query(collection(db, 'grades'), where('studentId', '==', selectedChild.id));
-    const unsubGrades = onSnapshot(qGrades, snap => setGrades(snap.docs.map(d => ({ id: d.id, ...d.data() } as Grade))));
+    const unsubGrades = onSnapshot(
+      qGrades,
+      snap => setGrades(snap.docs.map(d => ({ id: d.id, ...d.data() } as Grade))),
+      err => console.error('[ParentPortal] grades query failed:', err.code, err.message)
+    );
 
     const qAtt = query(collection(db, 'attendance'), where('studentId', '==', selectedChild.id), orderBy('date', 'desc'));
-    const unsubAtt = onSnapshot(qAtt, snap => setAttendance(snap.docs.map(d => ({ id: d.id, ...d.data() } as Attendance))));
+    const unsubAtt = onSnapshot(
+      qAtt,
+      snap => setAttendance(snap.docs.map(d => ({ id: d.id, ...d.data() } as Attendance))),
+      err => console.error('[ParentPortal] attendance query failed:', err.code, err.message)
+    );
 
     const qAssign = query(collection(db, 'assignments'), where('class', '==', selectedChild.currentClass));
-    const unsubAssign = onSnapshot(qAssign, snap => setAssignments(snap.docs.map(d => ({ id: d.id, ...d.data() } as Assignment))));
+    const unsubAssign = onSnapshot(
+      qAssign,
+      snap => setAssignments(snap.docs.map(d => ({ id: d.id, ...d.data() } as Assignment))),
+      err => console.error('[ParentPortal] assignments query failed:', err.code, err.message)
+    );
 
     const qInv = query(collection(db, 'invoices'), where('studentId', '==', selectedChild.id), orderBy('createdAt', 'desc'));
-    const unsubInv = onSnapshot(qInv, snap => setInvoices(snap.docs.map(d => ({ id: d.id, ...d.data() } as Invoice))));
+    const unsubInv = onSnapshot(
+      qInv,
+      snap => setInvoices(snap.docs.map(d => ({ id: d.id, ...d.data() } as Invoice))),
+      err => console.error('[ParentPortal] invoices query failed:', err.code, err.message)
+    );
 
     return () => { unsubGrades(); unsubAtt(); unsubAssign(); unsubInv(); };
   }, [selectedChild]);
@@ -106,15 +211,23 @@ export default function ParentPortal() {
   const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!user || !profile || !newMessage.receiverId) return;
-    await addDoc(collection(db, 'messages'), {
-      ...newMessage, senderId: user.uid, senderName: profile.displayName,
-      timestamp: serverTimestamp(), read: false
-    });
-    setNewMessage({ ...newMessage, content: '' });
+    try {
+      await addDoc(collection(db, 'messages'), {
+        ...newMessage, senderId: user.uid, senderName: profile.displayName,
+        timestamp: serverTimestamp(), read: false
+      });
+      setNewMessage({ ...newMessage, content: '' });
+    } catch (err: any) {
+      console.error('[ParentPortal] sendMessage failed:', err.code, err.message);
+    }
   };
 
   const markNotifRead = async (id: string) => {
-    await updateDoc(doc(db, 'notifications', id), { read: true });
+    try {
+      await updateDoc(doc(db, 'notifications', id), { read: true });
+    } catch (err: any) {
+      console.error('[ParentPortal] markNotifRead failed:', err.code, err.message);
+    }
   };
 
   // Derived stats
@@ -138,14 +251,19 @@ export default function ParentPortal() {
   useEffect(() => {
     if (!selectedChild || activeTab !== 'report_card') return;
     const fetchSkills = async () => {
-      const snap = await getDocs(query(
-        collection(db, 'student_skills'),
-        where('studentId', '==', selectedChild.id),
-        where('term', '==', reportCardTerm),
-        where('session', '==', CURRENT_SESSION)
-      ));
-      if (!snap.empty) setReportCardSkills(snap.docs[0].data().skills);
-      else setReportCardSkills(null);
+      try {
+        const snap = await getDocs(query(
+          collection(db, 'student_skills'),
+          where('studentId', '==', selectedChild.id),
+          where('term', '==', reportCardTerm),
+          where('session', '==', CURRENT_SESSION)
+        ));
+        if (!snap.empty) setReportCardSkills(snap.docs[0].data().skills);
+        else setReportCardSkills(null);
+      } catch (err: any) {
+        console.error('[ParentPortal] student_skills fetch failed:', err.code, err.message);
+        setReportCardSkills(null);
+      }
     };
     fetchSkills();
   }, [selectedChild, activeTab, reportCardTerm]);
@@ -171,7 +289,15 @@ export default function ParentPortal() {
       <div className="max-w-3xl mx-auto px-4 py-20 text-center">
         <AlertCircle className="w-16 h-16 text-slate-200 mx-auto mb-6" />
         <h2 className="text-2xl font-bold text-slate-900">No student records found</h2>
-        <p className="text-slate-500 mt-2">Your email ({user?.email}) is not linked to any enrolled student. Please contact the school administration.</p>
+        <p className="text-slate-500 mt-2 mb-4">
+          No enrolled student is linked to your account. This can happen if:
+        </p>
+        <ul className="text-slate-400 text-sm text-left max-w-md mx-auto space-y-1.5 mb-6 list-disc list-inside">
+          <li>Your email <span className="font-mono text-indigo-500">{user?.email}</span> does not match the <em>Guardian Email</em> entered during enrollment</li>
+          <li>The school administrator has not yet linked your account to your child's record</li>
+          <li>Your child's admission is still pending approval</li>
+        </ul>
+        <p className="text-slate-400 text-sm">Please contact the school administration to resolve this.</p>
       </div>
     );
   }
@@ -182,40 +308,86 @@ export default function ParentPortal() {
       <div className="flex flex-col md:flex-row md:items-center justify-between mb-8 gap-4">
         <div>
           <h1 className="text-3xl font-bold text-slate-900 tracking-tight">Parent Portal</h1>
-          <p className="text-slate-500 mt-1">Welcome back, {profile?.displayName}. Monitor your child's progress.</p>
+          <p className="text-slate-500 mt-1">
+            Welcome back, {profile?.displayName}.
+            {children.length === 1
+              ? ` Monitoring ${children[0].studentName}'s progress.`
+              : ` You have ${children.length} children enrolled.`}
+          </p>
         </div>
-        {children.length > 1 && (
-          <div className="flex items-center gap-3">
-            <User className="w-5 h-5 text-slate-400" />
-            <select
-              value={selectedChild?.id}
-              onChange={e => setSelectedChild(children.find(c => c.id === e.target.value) || null)}
-              className="px-4 py-2 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none bg-white font-medium text-sm"
-            >
-              {children.map(c => <option key={c.id} value={c.id}>{c.studentName}</option>)}
-            </select>
-          </div>
-        )}
       </div>
+
+      {/* ── MY CHILDREN — always visible when multiple children ── */}
+      {children.length > 1 && (
+        <div className="mb-8">
+          <h2 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3 flex items-center gap-2">
+            <User className="w-3.5 h-3.5" /> My Children ({children.length})
+          </h2>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+            {children.map(child => {
+              const isSelected = selectedChild?.id === child.id;
+              return (
+                <button
+                  key={child.id}
+                  onClick={() => setSelectedChild(child)}
+                  className={`text-left p-4 rounded-2xl border-2 transition-all ${
+                    isSelected
+                      ? 'border-indigo-500 bg-indigo-50 shadow-md shadow-indigo-100'
+                      : 'border-slate-200 bg-white hover:border-indigo-300 hover:shadow-sm'
+                  }`}
+                >
+                  <div className="flex items-center gap-3">
+                    <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${isSelected ? 'bg-indigo-600' : 'bg-slate-100'}`}>
+                      <User className={`w-5 h-5 ${isSelected ? 'text-white' : 'text-slate-400'}`} />
+                    </div>
+                    <div className="min-w-0">
+                      <p className={`font-bold text-sm truncate ${isSelected ? 'text-indigo-900' : 'text-slate-900'}`}>{child.studentName}</p>
+                      <p className="text-xs text-slate-500 truncate">{child.currentClass}</p>
+                      <p className="text-[10px] font-mono text-slate-400 mt-0.5">{child.studentId}</p>
+                    </div>
+                    {isSelected && (
+                      <div className="ml-auto shrink-0">
+                        <CheckCircle2 className="w-4 h-4 text-indigo-600" />
+                      </div>
+                    )}
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Child Overview Cards */}
       {selectedChild && (
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
-          {[
-            { label: 'Class', value: selectedChild.currentClass, Icon: User, color: 'indigo' },
-            { label: `${filterTerm} Avg Score`, value: avgScore ? `${avgScore}%` : 'N/A', Icon: Award, color: 'emerald' },
-            { label: 'Attendance Rate', value: `${attendanceRate}%`, Icon: Activity, color: attendanceRate >= 75 ? 'emerald' : 'amber' },
-            { label: 'Outstanding Fees', value: `₦${unpaidInvoices.reduce((s, i) => s + i.amount, 0).toLocaleString()}`, Icon: DollarSign, color: unpaidInvoices.length > 0 ? 'rose' : 'emerald' },
-          ].map(card => (
-            <div key={card.label} className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
-              <div className={`w-9 h-9 rounded-xl bg-${card.color}-50 flex items-center justify-center mb-3`}>
-                <card.Icon className={`w-5 h-5 text-${card.color}-600`} />
-              </div>
-              <p className="text-xl font-bold text-slate-900">{card.value}</p>
-              <p className="text-xs text-slate-500 font-medium mt-0.5">{card.label}</p>
+        <>
+          {/* Selected child name badge (only when multiple children) */}
+          {children.length > 1 && (
+            <div className="flex items-center gap-2 mb-4">
+              <div className="w-2 h-2 rounded-full bg-indigo-500" />
+              <p className="text-sm font-bold text-slate-700">
+                Viewing: <span className="text-indigo-600">{selectedChild.studentName}</span>
+                <span className="ml-2 text-xs font-normal text-slate-400">({selectedChild.currentClass} · {selectedChild.studentId})</span>
+              </p>
             </div>
-          ))}
-        </div>
+          )}
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+            {[
+              { label: 'Class', value: selectedChild.currentClass, Icon: User, color: 'indigo' },
+              { label: `${filterTerm} Avg Score`, value: avgScore ? `${avgScore}%` : 'N/A', Icon: Award, color: 'emerald' },
+              { label: 'Attendance Rate', value: `${attendanceRate}%`, Icon: Activity, color: attendanceRate >= 75 ? 'emerald' : 'amber' },
+              { label: 'Outstanding Fees', value: `₦${unpaidInvoices.reduce((s, i) => s + i.amount, 0).toLocaleString()}`, Icon: DollarSign, color: unpaidInvoices.length > 0 ? 'rose' : 'emerald' },
+            ].map(card => (
+              <div key={card.label} className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
+                <div className={`w-9 h-9 rounded-xl bg-${card.color}-50 flex items-center justify-center mb-3`}>
+                  <card.Icon className={`w-5 h-5 text-${card.color}-600`} />
+                </div>
+                <p className="text-xl font-bold text-slate-900">{card.value}</p>
+                <p className="text-xs text-slate-500 font-medium mt-0.5">{card.label}</p>
+              </div>
+            ))}
+          </div>
+        </>
       )}
 
       {/* Tab Bar */}

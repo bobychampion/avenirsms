@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useState, ReactNode } from 'react';
 import { onAuthStateChanged, User, signInWithPopup, GoogleAuthProvider, signOut, signInWithEmailAndPassword, createUserWithEmailAndPassword } from 'firebase/auth';
-import { doc, setDoc, getDoc } from 'firebase/firestore';
+import { doc, setDoc, getDoc, updateDoc } from 'firebase/firestore';
 import { auth, db, handleFirestoreError, OperationType } from '../firebase';
 import { UserProfile } from '../types';
 
@@ -48,7 +48,17 @@ export function FirebaseProvider({ children }: { children: ReactNode }) {
       try {
         const profileSnap = await getDoc(profileRef);
         if (profileSnap.exists()) {
-          setProfile(profileSnap.data() as UserProfile);
+          let profileData = profileSnap.data() as UserProfile;
+          // One-time role upgrade: if this is a bootstrap super_admin email but
+          // the Firestore doc still has the old 'admin' role, promote it now.
+          if (
+            SUPER_ADMIN_EMAILS.includes(currentUser.email ?? '') &&
+            profileData.role !== 'super_admin'
+          ) {
+            await updateDoc(profileRef, { role: 'super_admin' });
+            profileData = { ...profileData, role: 'super_admin' };
+          }
+          setProfile(profileData);
         } else {
           // Bootstrap first-time profile
           const isSuperAdminEmail = SUPER_ADMIN_EMAILS.includes(currentUser.email ?? '');

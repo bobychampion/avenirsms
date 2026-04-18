@@ -6,10 +6,10 @@ import {
   collection, query, onSnapshot, where, addDoc, serverTimestamp,
   orderBy, updateDoc, doc, deleteDoc, getDocs, writeBatch, setDoc, getDoc,
 } from 'firebase/firestore';
-import { Student, Assignment, Message, SUBJECTS, TERMS, Grade, calculateGrade, StudentSkills, SKILL_LABELS, SkillRating, StudentSkillRecord, Timetable, DAYS_OF_WEEK, GeoFence, TeacherCheckIn } from '../types';
+import { Student, Assignment, Message, SUBJECTS, TERMS, Grade, calculateGrade, StudentSkills, SKILL_LABELS, SkillRating, StudentSkillRecord, Timetable, DAYS_OF_WEEK, GeoFence, TeacherCheckIn, CurriculumDocument, ClassSubject, SchoolClass } from '../types';
 import { getCurrentPosition, isWithinFence, isAccuracyAcceptable, isSpoofedVelocity } from '../services/geofenceService';
 import { batchUpsertAttendance } from '../services/firestoreService';
-import { generateLessonNotes, generateExamQuestions } from '../services/geminiService';
+import { generateLessonNotes, generateExamQuestions, generateQuestionsFromCurriculum } from '../services/geminiService';
 import { motion, AnimatePresence } from 'motion/react';
 import ReactMarkdown from 'react-markdown';
 import toast from 'react-hot-toast';
@@ -20,7 +20,7 @@ import {
   Calendar, CheckCircle2, Clock, Filter, Search,
   Edit2, Trash2, X, AlertCircle, ClipboardList, CheckSquare,
   Sparkles, FileText, Copy, ChevronDown, Star, Award,
-  MapPin, Navigation, LogIn, LogOut, ShieldAlert,
+  MapPin, Navigation, LogIn, LogOut, ShieldAlert, Lock,
 } from 'lucide-react';
 
 type TabType = 'students' | 'attendance' | 'assignments' | 'grades' | 'skills' | 'messages' | 'ai_tools' | 'timetable';
@@ -43,6 +43,13 @@ export default function TeacherPortal() {
   const allClasses = classNames.length > 0 ? classNames : ['—'];
   const allSubjects = subjects.length > 0 ? subjects : SUBJECTS;
 
+  // ── Teacher assignment state ─────────────────────────────────────────────────
+  // myAssignedClasses: classes this teacher is assigned to (as form tutor OR subject teacher)
+  // myAssignedSubjectsByClass: for each class, which subjects this teacher can grade
+  const [myAssignedClasses, setMyAssignedClasses] = useState<string[]>([]);
+  const [myAssignedSubjectsByClass, setMyAssignedSubjectsByClass] = useState<Record<string, string[]>>({});
+  const [assignmentLoading, setAssignmentLoading] = useState(true);
+
   const [students, setStudents] = useState<Student[]>([]);
   const [assignments, setAssignments] = useState<Assignment[]>([]);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -64,7 +71,7 @@ export default function TeacherPortal() {
     setSearchParams({ tab });
   };
 
-  const [selectedClass, setSelectedClass] = useState(allClasses[0]);
+  const [selectedClass, setSelectedClass] = useState('');
   const [assignmentSearch, setAssignmentSearch] = useState('');
   const [editingAssignment, setEditingAssignment] = useState<Assignment | null>(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState<string | null>(null);
@@ -91,6 +98,8 @@ export default function TeacherPortal() {
   const [aiQuestionCount, setAiQuestionCount] = useState(10);
   const [aiLoading, setAiLoading] = useState(false);
   const [aiOutput, setAiOutput] = useState('');
+  const [curriculumDocs, setCurriculumDocs] = useState<CurriculumDocument[]>([]);
+  const [selectedCurriculumDocId, setSelectedCurriculumDocId] = useState<string>('');
 
   // Gradebook state
   const [gradeSubject, setGradeSubject] = useState(allSubjects[0]);
@@ -125,6 +134,59 @@ export default function TeacherPortal() {
   useEffect(() => { geofenceRef.current  = geofence;      }, [geofence]);
   useEffect(() => { checkInRef.current   = todayCheckIn;  }, [todayCheckIn]);
   useEffect(() => { checkOutRef.current  = todayCheckOut; }, [todayCheckOut]);
+
+  // ── Load teacher's assigned classes from Firestore ───────────────────────────
+  // A teacher is assigned to a class if:
+  //   A) They appear as teacherId in any class_subjects document for that class
+  //   B) They are the formTutorId of that class
+  useEffect(() => {
+    if (!user || !schoolId) return;
+    setAssignmentLoading(true);
+
+    const loadAssignments = async () => {
+      try {
+        const [subjectSnap, tutorSnap, classSnap] = await Promise.all([
+          getDocs(query(collection(db, 'class_subjects'), where('schoolId', '==', schoolId), where('teacherId', '==', user.uid))),
+          getDocs(query(collection(db, 'classes'), where('schoolId', '==', schoolId), where('formTutorId', '==', user.uid))),
+          getDocs(query(collection(db, 'classes'), where('schoolId', '==', schoolId))),
+        ]);
+
+        const idToName: Record<string, string> = {};
+        classSnap.docs.forEach(d => { idToName[d.id] = (d.data().name as string) || ''; });
+
+        // className -> subjects this teacher can grade
+        // '__all__' means form tutor (access to all subjects)
+        const finalByName: Record<string, string[]> = {};
+
+        subjectSnap.docs.forEach(d => {
+          const sa = d.data() as ClassSubject;
+          const name = idToName[sa.classId];
+          if (!name) return;
+          if (!finalByName[name]) finalByName[name] = [];
+          if (sa.subjectName && !finalByName[name].includes(sa.subjectName)) {
+            finalByName[name].push(sa.subjectName);
+          }
+        });
+
+        tutorSnap.docs.forEach(d => {
+          const name = (d.data().name as string) || '';
+          if (name) finalByName[name] = ['__all__'];
+        });
+
+        const allAssigned = Object.keys(finalByName).sort();
+        setMyAssignedClasses(allAssigned);
+        setMyAssignedSubjectsByClass(finalByName);
+        setSelectedClass(prev => allAssigned.includes(prev) ? prev : (allAssigned[0] ?? ''));
+      } catch (e) {
+        console.warn('Failed to load teacher assignments:', e);
+      } finally {
+        setAssignmentLoading(false);
+      }
+    };
+
+    loadAssignments();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.uid, schoolId]);
 
   useEffect(() => {
     if (!user) return;
@@ -203,6 +265,18 @@ export default function TeacherPortal() {
       unsubTimetables(); unsubFence(); unsubCheckins();
     };
   }, [user, selectedClass, profile?.displayName, schoolId]);
+
+  // Load curriculum documents for AI context injection
+  useEffect(() => {
+    if (!schoolId) return;
+    getDocs(query(
+      collection(db, 'curriculum_documents'),
+      where('schoolId', '==', schoolId),
+      orderBy('uploadedAt', 'desc'),
+    )).then(snap => {
+      setCurriculumDocs(snap.docs.map(d => ({ id: d.id, ...d.data() } as CurriculumDocument)));
+    }).catch(() => {});
+  }, [schoolId]);
 
   // ── Auto geo-fence crossing detection via watchPosition ─────────────────────
   useEffect(() => {
@@ -517,6 +591,7 @@ export default function TeacherPortal() {
   };
 
   const handleCreateAssignment = async (e: React.FormEvent) => {
+    e.preventDefault();
     if (!user) return;
     if (editingAssignment) {
       const ref = doc(db, 'assignments', editingAssignment.id!);
@@ -551,7 +626,16 @@ export default function TeacherPortal() {
       if (aiTool === 'lesson') {
         result = await generateLessonNotes(aiSubject, aiTopic, aiLevel);
       } else {
-        result = await generateExamQuestions(aiSubject, aiTopic, aiQuestionCount);
+        const selectedDoc = curriculumDocs.find(d => d.id === selectedCurriculumDocId);
+        const curriculumContext = selectedDoc?.summary?.rawSummary;
+        if (curriculumContext) {
+          const raw = await generateQuestionsFromCurriculum(aiSubject, aiTopic, aiQuestionCount, aiLevel, curriculumContext);
+          result = raw.map((q, i) =>
+            `**${i + 1}. ${q.questionText}**\n${q.options.map(o => `  ${o.label}. ${o.text}`).join('\n')}\n*Answer: ${q.correctAnswer}*`
+          ).join('\n\n');
+        } else {
+          result = await generateExamQuestions(aiSubject, aiTopic, aiQuestionCount);
+        }
       }
       setAiOutput(result || '');
       toast.success('Generated!', { id: tid });
@@ -680,12 +764,23 @@ export default function TeacherPortal() {
     { id: 'ai_tools', label: 'AI Tools', Icon: Sparkles },
   ];
 
+  // Helper: subjects the current teacher can grade in the selected class
+  // '__all__' means form tutor — can grade any subject
+  const mySubjectsForSelectedClass: string[] = (() => {
+    const subs = myAssignedSubjectsByClass[selectedClass] ?? [];
+    if (subs.includes('__all__')) return allSubjects;
+    return subs;
+  })();
+
+  // Whether teacher is assigned to currently selected class (for attendance/grades/skills)
+  const isAssignedToSelectedClass = myAssignedClasses.includes(selectedClass);
+
   const statusColor = (s: string) =>
     s === 'present' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' :
     s === 'absent' ? 'bg-rose-50 text-rose-700 border-rose-200' :
     'bg-amber-50 text-amber-700 border-amber-200';
 
-  if (loading) return (
+  if (loading || assignmentLoading) return (
     <div className="flex items-center justify-center min-h-screen">
       <Loader2 className="w-8 h-8 animate-spin text-indigo-600" />
     </div>
@@ -847,54 +942,71 @@ export default function TeacherPortal() {
       {/* ── STUDENTS TAB ── */}
       {activeTab === 'students' && (
         <div className="space-y-6">
-          <div className="flex items-center gap-4">
-            <Filter className="w-5 h-5 text-slate-400" />
-            <select
-              value={selectedClass}
-              onChange={e => setSelectedClass(e.target.value)}
-              className="px-4 py-2 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none bg-white font-medium text-sm"
-            >
-              {allClasses.map(c => <option key={c} value={c}>{c}</option>)}
-            </select>
-            <span className="text-sm text-slate-400 font-medium">{students.length} students</span>
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-            {students.map(student => (
-              <div key={student.id} className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm hover:shadow-md transition-all">
-                <div className="flex items-center mb-4">
-                  <div className="w-11 h-11 rounded-xl bg-gradient-to-br from-indigo-500 to-violet-600 flex items-center justify-center text-white font-bold text-lg mr-3">
-                    {student.studentName.charAt(0)}
-                  </div>
-                  <div>
-                    <h4 className="font-bold text-slate-900">{student.studentName}</h4>
-                    <p className="text-xs text-slate-400 font-mono">{student.studentId}</p>
-                  </div>
-                </div>
-                <div className="space-y-1.5 text-sm text-slate-600 mb-4">
-                  <p><span className="text-slate-400 text-xs font-bold uppercase">Guardian:</span> {student.guardianName || '—'}</p>
-                  <p><span className="text-slate-400 text-xs font-bold uppercase">Contact:</span> {student.guardianEmail || 'Not set'}</p>
-                </div>
-                <button
-                  onClick={() => { navigateTab('messages'); setNewMessage({ receiverId: student.guardianEmail || '', content: '' }); }}
-                  className="w-full py-2 bg-indigo-50 text-indigo-600 font-bold rounded-xl hover:bg-indigo-100 transition-colors text-xs"
+          {myAssignedClasses.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-20 bg-amber-50 rounded-2xl border border-amber-200">
+              <Lock className="w-12 h-12 text-amber-400 mx-auto mb-3" />
+              <h3 className="font-bold text-slate-900 mb-1">No Classes Assigned</h3>
+              <p className="text-slate-500 text-sm text-center max-w-sm">You haven't been assigned to any class yet. Ask your admin to assign you as a subject teacher or form tutor in Class Management.</p>
+            </div>
+          ) : (
+            <>
+              <div className="flex items-center gap-4">
+                <Filter className="w-5 h-5 text-slate-400" />
+                <select
+                  value={selectedClass}
+                  onChange={e => setSelectedClass(e.target.value)}
+                  className="px-4 py-2 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none bg-white font-medium text-sm"
                 >
-                  Message Parent
-                </button>
+                  {myAssignedClasses.map(c => <option key={c} value={c}>{c}</option>)}
+                </select>
+                <span className="text-sm text-slate-400 font-medium">{students.length} students</span>
               </div>
-            ))}
-            {students.length === 0 && (
-              <div className="col-span-3 text-center py-16 bg-slate-50 rounded-2xl border-2 border-dashed border-slate-200">
-                <Users className="w-12 h-12 text-slate-200 mx-auto mb-3" />
-                <p className="text-slate-500">No students in {selectedClass}</p>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+                {students.map(student => (
+                  <div key={student.id} className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm hover:shadow-md transition-all">
+                    <div className="flex items-center mb-4">
+                      <div className="w-11 h-11 rounded-xl bg-gradient-to-br from-indigo-500 to-violet-600 flex items-center justify-center text-white font-bold text-lg mr-3">
+                        {student.studentName.charAt(0)}
+                      </div>
+                      <div>
+                        <h4 className="font-bold text-slate-900">{student.studentName}</h4>
+                        <p className="text-xs text-slate-400 font-mono">{student.studentId}</p>
+                      </div>
+                    </div>
+                    <div className="space-y-1.5 text-sm text-slate-600 mb-4">
+                      <p><span className="text-slate-400 text-xs font-bold uppercase">Guardian:</span> {student.guardianName || '—'}</p>
+                      <p><span className="text-slate-400 text-xs font-bold uppercase">Contact:</span> {student.guardianEmail || 'Not set'}</p>
+                    </div>
+                    <button
+                      onClick={() => { navigateTab('messages'); setNewMessage({ receiverId: student.guardianEmail || '', content: '' }); }}
+                      className="w-full py-2 bg-indigo-50 text-indigo-600 font-bold rounded-xl hover:bg-indigo-100 transition-colors text-xs"
+                    >
+                      Message Parent
+                    </button>
+                  </div>
+                ))}
+                {students.length === 0 && (
+                  <div className="col-span-3 text-center py-16 bg-slate-50 rounded-2xl border-2 border-dashed border-slate-200">
+                    <Users className="w-12 h-12 text-slate-200 mx-auto mb-3" />
+                    <p className="text-slate-500">No students in {selectedClass}</p>
+                  </div>
+                )}
               </div>
-            )}
-          </div>
+            </>
+          )}
         </div>
       )}
 
       {/* ── ATTENDANCE TAB ── */}
       {activeTab === 'attendance' && (
         <div className="space-y-6">
+          {myAssignedClasses.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-20 bg-amber-50 rounded-2xl border border-amber-200">
+              <Lock className="w-12 h-12 text-amber-400 mx-auto mb-3" />
+              <h3 className="font-bold text-slate-900 mb-1">No Classes Assigned</h3>
+              <p className="text-slate-500 text-sm text-center max-w-sm">You can only take attendance for classes you are assigned to. Contact your admin.</p>
+            </div>
+          ) : (
           <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
             <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-6">
               <div>
@@ -912,7 +1024,7 @@ export default function TeacherPortal() {
                     onChange={e => setSelectedClass(e.target.value)}
                     className="px-3 py-2 rounded-xl border border-slate-200 text-sm font-medium outline-none focus:ring-2 focus:ring-indigo-500"
                   >
-                    {allClasses.map(c => <option key={c} value={c}>{c}</option>)}
+                    {myAssignedClasses.map(c => <option key={c} value={c}>{c}</option>)}
                   </select>
                 </div>
                 <input
@@ -1003,24 +1115,35 @@ export default function TeacherPortal() {
               </div>
             )}
           </div>
+          )}
         </div>
       )}
 
       {/* ── GRADEBOOK TAB ── */}
       {activeTab === 'grades' && (
         <div className="space-y-6">
+          {myAssignedClasses.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-20 bg-amber-50 rounded-2xl border border-amber-200">
+              <Lock className="w-12 h-12 text-amber-400 mx-auto mb-3" />
+              <h3 className="font-bold text-slate-900 mb-1">No Classes Assigned</h3>
+              <p className="text-slate-500 text-sm text-center max-w-sm">You can only grade students in classes you are assigned to teach. Contact your admin.</p>
+            </div>
+          ) : (
           <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
             <div className="flex flex-wrap items-center gap-3 mb-6">
               <div className="flex items-center gap-2">
                 <Filter className="w-4 h-4 text-slate-400" />
                 <select value={selectedClass} onChange={e => setSelectedClass(e.target.value)}
                   className="px-3 py-2 rounded-xl border border-slate-200 text-sm font-medium outline-none focus:ring-2 focus:ring-indigo-500">
-                  {allClasses.map(c => <option key={c}>{c}</option>)}
+                  {myAssignedClasses.map(c => <option key={c}>{c}</option>)}
                 </select>
               </div>
               <select value={gradeSubject} onChange={e => setGradeSubject(e.target.value)}
                 className="px-3 py-2 rounded-xl border border-slate-200 text-sm font-medium outline-none focus:ring-2 focus:ring-indigo-500">
-                {allSubjects.map(s => <option key={s}>{s}</option>)}
+                {mySubjectsForSelectedClass.length > 0
+                  ? mySubjectsForSelectedClass.map(s => <option key={s}>{s}</option>)
+                  : allSubjects.map(s => <option key={s}>{s}</option>)
+                }
               </select>
               <select value={gradeTerm} onChange={e => setGradeTerm(e.target.value)}
                 className="px-3 py-2 rounded-xl border border-slate-200 text-sm font-medium outline-none focus:ring-2 focus:ring-indigo-500">
@@ -1093,19 +1216,27 @@ export default function TeacherPortal() {
               </>
             )}
           </div>
+          )}
         </div>
       )}
 
       {/* ── SKILLS TAB ── */}
       {activeTab === 'skills' && (
         <div className="space-y-6">
+          {myAssignedClasses.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-20 bg-amber-50 rounded-2xl border border-amber-200">
+              <Lock className="w-12 h-12 text-amber-400 mx-auto mb-3" />
+              <h3 className="font-bold text-slate-900 mb-1">No Classes Assigned</h3>
+              <p className="text-slate-500 text-sm text-center max-w-sm">You can only rate skills for students in classes you are assigned to. Contact your admin.</p>
+            </div>
+          ) : (
           <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
             <div className="flex flex-wrap items-center gap-3 mb-2">
               <div className="flex items-center gap-2">
                 <Filter className="w-4 h-4 text-slate-400" />
                 <select value={selectedClass} onChange={e => setSelectedClass(e.target.value)}
                   className="px-3 py-2 rounded-xl border border-slate-200 text-sm font-medium outline-none focus:ring-2 focus:ring-indigo-500">
-                  {allClasses.map(c => <option key={c}>{c}</option>)}
+                  {myAssignedClasses.map(c => <option key={c}>{c}</option>)}
                 </select>
               </div>
               <select value={skillsTerm} onChange={e => setSkillsTerm(e.target.value)}
@@ -1167,6 +1298,7 @@ export default function TeacherPortal() {
               </>
             )}
           </div>
+          )}
         </div>
       )}
 
@@ -1204,14 +1336,17 @@ export default function TeacherPortal() {
                 <label className="text-xs font-bold text-slate-400 uppercase">Subject</label>
                 <select value={newAssignment.subject} onChange={e => setNewAssignment({ ...newAssignment, subject: e.target.value })}
                   className="w-full px-4 py-2 rounded-xl border border-slate-200 outline-none text-sm">
-                  {SUBJECTS.map(s => <option key={s} value={s}>{s}</option>)}
+                  {mySubjectsForSelectedClass.length > 0
+                    ? mySubjectsForSelectedClass.map(s => <option key={s} value={s}>{s}</option>)
+                    : SUBJECTS.map(s => <option key={s} value={s}>{s}</option>)
+                  }
                 </select>
               </div>
               <div className="space-y-1">
                 <label className="text-xs font-bold text-slate-400 uppercase">Class</label>
                 <select value={newAssignment.class} onChange={e => setNewAssignment({ ...newAssignment, class: e.target.value })}
                   className="w-full px-4 py-2 rounded-xl border border-slate-200 outline-none text-sm">
-                  {allClasses.map(c => <option key={c} value={c}>{c}</option>)}
+                  {(myAssignedClasses.length > 0 ? myAssignedClasses : allClasses).map(c => <option key={c} value={c}>{c}</option>)}
                 </select>
               </div>
               <div className="space-y-1">
@@ -1410,6 +1545,35 @@ export default function TeacherPortal() {
                   <input type="number" min={5} max={30} value={aiQuestionCount}
                     onChange={e => setAiQuestionCount(Number(e.target.value))}
                     className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-violet-500 outline-none text-sm" />
+                </div>
+              )}
+
+              {aiTool === 'questions' && curriculumDocs.length > 0 && (
+                <div>
+                  <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block mb-1.5">
+                    Curriculum Document <span className="font-normal normal-case text-slate-400">(optional — for AI context)</span>
+                  </label>
+                  <select
+                    value={selectedCurriculumDocId}
+                    onChange={e => setSelectedCurriculumDocId(e.target.value)}
+                    className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-violet-500 outline-none text-sm"
+                  >
+                    <option value="">None (generic generation)</option>
+                    {curriculumDocs
+                      .filter(d => !aiSubject || d.subject === aiSubject)
+                      .map(d => (
+                        <option key={d.id} value={d.id}>
+                          {d.fileName} — {d.level} · {d.term}
+                        </option>
+                      ))
+                    }
+                  </select>
+                  {selectedCurriculumDocId && (
+                    <p className="text-xs text-violet-600 mt-1 flex items-center gap-1">
+                      <span className="w-1.5 h-1.5 bg-violet-500 rounded-full inline-block" />
+                      AI will use this document's curriculum summary as context.
+                    </p>
+                  )}
                 </div>
               )}
 

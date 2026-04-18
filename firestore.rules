@@ -39,6 +39,26 @@ service cloud.firestore {
       return isAuthenticated() && userProfile().role == 'parent';
     }
 
+    /** School-scoped student (post-enrollment applicant). */
+    function isStudent() {
+      return isAuthenticated() && userProfile().role == 'student';
+    }
+
+    /** School-scoped accountant. */
+    function isAccountant() {
+      return isAuthenticated() && userProfile().role == 'accountant';
+    }
+
+    /** School-scoped HR officer. */
+    function isHr() {
+      return isAuthenticated() && userProfile().role == 'hr';
+    }
+
+    /** School-scoped librarian. */
+    function isLibrarian() {
+      return isAuthenticated() && userProfile().role == 'librarian';
+    }
+
     /** Caller belongs to the given schoolId. */
     function belongsToSchool(sid) {
       return isAuthenticated() && userProfile().schoolId == sid;
@@ -70,8 +90,18 @@ service cloud.firestore {
     // ─── School settings (keyed by schoolId, not 'main') ──────────────────────
 
     match /school_settings/{schoolId} {
-      allow read: if isSuperAdmin() || belongsToSchool(schoolId);
+      // Public read: needed for branded landing pages (/s/:schoolId) accessed without auth
+      allow read: if true;
       allow write: if isSuperAdmin() || (isAdmin() && belongsToSchool(schoolId));
+    }
+
+    // ─── School URL slugs (slug → schoolId reverse lookup) ────────────────────
+    // Public read: needed to resolve slug URLs on landing pages without auth
+    // Write: super_admin only — schools cannot set their own slugs
+
+    match /school_slugs/{slug} {
+      allow read: if true;
+      allow write: if isSuperAdmin();
     }
 
     // ─── Geofences (keyed by schoolId) ────────────────────────────────────────
@@ -94,8 +124,9 @@ service cloud.firestore {
                      resource.data.get('schoolId', null) == userProfile().schoolId);
 
       allow create: if isAuthenticated() && isOwner(userId) &&
-                    request.resource.data.role in ['applicant', 'teacher', 'parent', 'admin',
-                                                   'School_admin', 'accountant', 'super_admin'];
+                    request.resource.data.role in ['applicant', 'student', 'teacher', 'parent', 'admin',
+                                                   'School_admin', 'accountant', 'hr', 'librarian',
+                                                   'staff', 'super_admin'];
 
       allow update: if isSuperAdmin() ||
                     (isAdmin() && resource.data.get('schoolId', null) == userProfile().schoolId) ||
@@ -346,12 +377,16 @@ service cloud.firestore {
         (isAdmin() && docBelongsToCallerSchool()) ||
         resource.data.get('studentId', '') == request.auth.uid
       );
-      allow create: if isAuthenticated();
+      // Only admins/teachers of the same school (or super_admin) may create sessions.
+      // Students only ever do updateDoc (answers + submit) — never addDoc.
+      allow create: if isSuperAdmin() ||
+                    ((isAdmin() || isTeacher()) && newDocBelongsToCallerSchool());
       allow update: if isAuthenticated() && (
         isSuperAdmin() ||
         (isAdmin() && docBelongsToCallerSchool()) ||
         resource.data.get('studentId', '') == request.auth.uid
       );
+      allow delete: if isSuperAdmin() || (isAdmin() && docBelongsToCallerSchool());
     }
 
     // ─── Curriculum ───────────────────────────────────────────────────────────
@@ -380,6 +415,30 @@ service cloud.firestore {
       allow write: if isSuperAdmin() || (isAdmin() && newDocBelongsToCallerSchool());
     }
 
+    // ─── Library (Phase 3 — librarian portal) ─────────────────────────────────
+
+    match /library_books/{bookId} {
+      allow read: if isAuthenticated() && (isSuperAdmin() || docBelongsToCallerSchool());
+      allow write: if isSuperAdmin() ||
+                    ((isAdmin() || isLibrarian()) && newDocBelongsToCallerSchool());
+    }
+
+    match /library_circulation/{circId} {
+      allow read: if isAuthenticated() && (isSuperAdmin() || docBelongsToCallerSchool());
+      allow write: if isSuperAdmin() ||
+                    ((isAdmin() || isLibrarian()) && newDocBelongsToCallerSchool());
+    }
+
+    // ─── Audit log (Phase 4 — RBAC change history) ────────────────────────────
+    // Append-only by admins/super_admin. Readable by admins of the same school.
+
+    match /audit_log/{entryId} {
+      allow read: if isSuperAdmin() || (isAdmin() && docBelongsToCallerSchool());
+      allow create: if isSuperAdmin() ||
+                    (isAdmin() && newDocBelongsToCallerSchool());
+      allow update, delete: if false; // immutable
+    }
+
     // ─── WhatsApp logs ────────────────────────────────────────────────────────
 
     match /whatsapp_logs/{logId} {
@@ -395,9 +454,11 @@ service cloud.firestore {
     }
 
     // ─── Mail (Firebase Trigger Email extension) ──────────────────────────────
-
+    // create: caller must stamp their schoolId on the doc (or be super_admin).
+    // This prevents cross-school mail injection.
     match /mail/{mailId} {
-      allow create: if isAuthenticated();
+      allow create: if isSuperAdmin() ||
+                    (isAuthenticated() && newDocBelongsToCallerSchool());
       allow read: if isSuperAdmin() || (isAdmin() && docBelongsToCallerSchool());
     }
 

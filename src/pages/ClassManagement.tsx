@@ -46,7 +46,11 @@ export default function ClassManagement() {
       setLoading(false);
     }, (error) => handleFirestoreError(error, OperationType.LIST, 'classes'));
 
-    const teachersQuery = query(collection(db, 'users'), where('role', '==', 'teacher'));
+    const teachersQuery = query(
+      collection(db, 'users'),
+      where('role', '==', 'teacher'),
+      where('schoolId', '==', schoolId!),
+    );
     const unsubscribeTeachers = onSnapshot(teachersQuery, (snapshot) => {
       setTeachers(snapshot.docs.map(doc => ({ uid: doc.id, ...doc.data() } as UserProfile)));
     });

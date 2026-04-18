@@ -3,6 +3,7 @@ import { onAuthStateChanged, User, signInWithPopup, GoogleAuthProvider, signOut,
 import { doc, setDoc, getDoc, updateDoc } from 'firebase/firestore';
 import { auth, db, handleFirestoreError, OperationType } from '../firebase';
 import { UserProfile } from '../types';
+import { hasPermission as checkPermission, type Permission } from '../utils/permissions';
 
 // Emails that are automatically bootstrapped as super_admin on first sign-in
 const SUPER_ADMIN_EMAILS = ['jabpa87@gmail.com', 'bobychampion87@gmail.com'];
@@ -16,6 +17,8 @@ interface AuthContextType {
   /** schoolId from the user's profile (null for super_admin) */
   schoolId: string | null;
   authError: string | null;
+  /** Returns true if the current user has the given permission (Phase 4). */
+  hasPermission: (perm: Permission) => boolean;
   login: () => Promise<void>;
   loginWithEmail: (email: string, pass: string) => Promise<void>;
   registerWithEmail: (email: string, pass: string, name: string, role?: UserProfile['role'], schoolId?: string) => Promise<void>;
@@ -183,6 +186,7 @@ export function FirebaseProvider({ children }: { children: ReactNode }) {
       user, profile, loading,
       isAdmin, isSuperAdmin, schoolId,
       authError,
+      hasPermission: (perm: Permission) => checkPermission(profile, perm),
       login, loginWithEmail, registerWithEmail, logout, clearError
     }}>
       {children}

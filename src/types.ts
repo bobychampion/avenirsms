@@ -7,7 +7,7 @@ export interface Application {
   phone: string;
   dob: string;
   gender: 'male' | 'female' | 'other';
-  nin: string;
+  nin?: string;
   classApplyingFor: string;
   previousSchool: string;
   waecNecoNumber?: string;
@@ -17,12 +17,33 @@ export interface Application {
   reviewerNotes?: string;
   applicantUid: string;
   documents?: { name: string; type: string; url: string }[];
+  /** Multi-tenant school identifier */
+  schoolId?: string;
+  /** True when created directly by admin (not via public form) */
+  directAdmission?: boolean;
+  /** Guardian info collected on the public application form */
+  guardianName?: string;
+  guardianPhone?: string;
+  guardianEmail?: string;
+  guardianRelationship?: string;
+  guardianAddress?: string;
 }
 
 export interface UserProfile {
   uid: string;
   email: string;
-  role: 'admin' | 'applicant' | 'teacher' | 'parent' | 'School_admin' | 'accountant' | 'super_admin';
+  role:
+    | 'admin'
+    | 'School_admin'
+    | 'super_admin'
+    | 'applicant'
+    | 'student'
+    | 'teacher'
+    | 'parent'
+    | 'accountant'
+    | 'hr'
+    | 'librarian'
+    | 'staff';
   displayName: string;
   disabled?: boolean;
   /** School this user belongs to. Undefined only for super_admin accounts. */
@@ -35,6 +56,26 @@ export interface UserProfile {
    * their children identified by name without an extra Firestore read.
    */
   linkedChildren?: { studentId: string; studentName: string; currentClass: string }[];
+  /**
+   * Per-user permission overrides (Phase 4). Format: `<resource>.<action>`,
+   * e.g. `finance.write`, `admissions.review`. A user inherits the default
+   * permission set from their `role` (see DEFAULT_ROLE_PERMISSIONS in
+   * src/utils/permissions.ts); entries here grant *additional* capabilities.
+   * Use `hasPermission()` from useAuth() to check.
+   */
+  permissions?: string[];
+  /**
+   * True when the user must change their password before continuing to the
+   * portal. Set by admin-reset or by first-time synthetic student provisioning.
+   */
+  mustChangePassword?: boolean;
+  /**
+   * True when this account was provisioned with a synthetic school email
+   * (e.g. `{studentId}@students.{slug}.local`) rather than a real deliverable
+   * inbox. Used to disable "forgot password" self-service and route admins
+   * to the explicit reset flow instead.
+   */
+  syntheticLogin?: boolean;
 }
 
 /** Platform-level school record (schools collection) */
@@ -53,6 +94,7 @@ export interface School {
   country: string;
   timezone: string;
   notes?: string;
+  urlSlug?: string;
 }
 
 export interface SchoolClass {
@@ -75,6 +117,7 @@ export interface ClassSubject {
 
 export interface Student {
   id?: string;
+  schoolId?: string;
   studentName: string;
   email: string;
   phone: string;
@@ -113,6 +156,8 @@ export interface Student {
   lga?: string;
   nationality?: string;
   admissionStatus?: 'active' | 'graduated' | 'withdrawn' | 'suspended';
+  /** Synthetic school-issued login email, if auto-provisioned at admission. */
+  loginEmail?: string;
 }
 
 // Guardian record (standalone, so one parent can link multiple children)

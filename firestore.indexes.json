@@ -1,6 +1,24 @@
 {
   "indexes": [
     {
+      "collectionGroup": "assignments",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "schoolId", "order": "ASCENDING" },
+        { "fieldPath": "class", "order": "ASCENDING" },
+        { "fieldPath": "dueDate", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "assignments",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "schoolId", "order": "ASCENDING" },
+        { "fieldPath": "class", "order": "ASCENDING" },
+        { "fieldPath": "dueDate", "order": "DESCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "students",
       "queryScope": "COLLECTION",
       "fields": [
@@ -403,6 +421,76 @@
         {
           "fieldPath": "role",
           "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "events",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "schoolId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "date",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "notification_broadcasts",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "schoolId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "createdAt",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "question_bank",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "schoolId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "createdAt",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "cbt_sessions",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "schoolId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "startedAt",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "curriculum_documents",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "schoolId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "uploadedAt",
+          "order": "DESCENDING"
         }
       ]
     }

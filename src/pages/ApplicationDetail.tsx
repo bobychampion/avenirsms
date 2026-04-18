@@ -1,13 +1,18 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { db, handleFirestoreError, OperationType } from '../firebase';
+import { initializeApp, getApps } from 'firebase/app';
+import { getAuth, createUserWithEmailAndPassword, signOut as firebaseSignOut } from 'firebase/auth';
+import firebaseConfig from '../../firebase-applet-config.json';
 import {
-  doc, onSnapshot, updateDoc, serverTimestamp, addDoc,
+  doc, getDoc, onSnapshot, updateDoc, serverTimestamp, addDoc,
   collection, query, where, getDocs, writeBatch, arrayUnion
 } from 'firebase/firestore';
-import { Application, ApplicationStatus, NIGERIAN_REGULATIONS, Student, SCHOOL_CLASSES, Guardian, formatDate } from '../types';
+import { Application, ApplicationStatus, NIGERIAN_REGULATIONS, Student, Guardian, SCHOOL_CLASSES, formatDate } from '../types';
 import { generateStudentId } from '../services/firestoreService';
 import { stripUndefined } from '../utils/firestoreSanitize';
+import { useSchoolSettings } from './SchoolSettings';
+import { shouldProvisionStudentAccount, buildStudentLoginEmail, generateStudentTempPassword } from '../utils/studentAccount';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   ArrowLeft, CheckCircle, XCircle, Clock, ShieldCheck,
@@ -17,6 +22,7 @@ import {
 } from 'lucide-react';
 import { differenceInYears, parseISO } from 'date-fns';
 import { StatusBadge } from './AdminDashboard';
+import { useSchool } from '../components/SchoolContext';
 
 // ─── Guardian panel ───────────────────────────────────────────────────────────
 
@@ -181,6 +187,8 @@ function GuardianPanel({
 export default function ApplicationDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const { schoolId, classNames } = useSchool();
+  const { settings: schoolSettings } = useSchoolSettings();
   const [application, setApplication] = useState<Application | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -203,6 +211,7 @@ export default function ApplicationDetail() {
   const [parentUsers, setParentUsers] = useState<{ uid: string; displayName: string; email: string }[]>([]);
   const [linkExistingParent, setLinkExistingParent] = useState(false);
   const [linkedUserId, setLinkedUserId] = useState('');
+  const [enrolledLoginEmail, setEnrolledLoginEmail] = useState<string | null>(null);
 
   useEffect(() => {
     if (!id) return;
@@ -211,13 +220,24 @@ export default function ApplicationDetail() {
         const data = snapshot.data() as Application;
         setApplication({ id: snapshot.id, ...data });
         setNotes(data.reviewerNotes || '');
-        setGuardianForm(prev => ({ ...prev, classAssignment: data.classApplyingFor }));
+        // Pre-fill guardian from application form submission (if collected via public apply form)
+        setGuardianForm(prev => ({
+          ...prev,
+          classAssignment: data.classApplyingFor,
+          g1Name: prev.g1Name || data.guardianName || '',
+          g1Phone: prev.g1Phone || data.guardianPhone || '',
+          g1Email: prev.g1Email || data.guardianEmail || '',
+          g1Relationship: prev.g1Relationship || data.guardianRelationship || 'father',
+        }));
       }
       setLoading(false);
     }, error => handleFirestoreError(error, OperationType.GET, `applications/${id}`));
 
-    // Load students for sibling search
-    getDocs(collection(db, 'students')).then(snap => {
+    // Load students for sibling search — scoped to this school
+    const studentsQuery = schoolId
+      ? query(collection(db, 'students'), where('schoolId', '==', schoolId))
+      : collection(db, 'students');
+    getDocs(studentsQuery).then(snap => {
       setExistingStudents(snap.docs.map(d => ({ id: d.id, ...(d.data() as Student) })));
     });
     // Load parent accounts (include both 'parent' and 'guardian' roles)
@@ -228,6 +248,7 @@ export default function ApplicationDetail() {
     getDocs(query(collection(db, 'students'), where('applicationId', '==', id))).then(snap => {
       if (!snap.empty) {
         const s = snap.docs[0].data() as Student;
+        if (s.loginEmail) setEnrolledLoginEmail(s.loginEmail);
         setGuardianForm(prev => ({
           ...prev,
           g1Name: s.guardianName || '',
@@ -269,9 +290,64 @@ export default function ApplicationDetail() {
         const studentSnap = await getDocs(studentQuery);
 
         if (studentSnap.empty) {
-          const studentId = await generateStudentId();
+          const studentId = await generateStudentId(application.schoolId ?? schoolId ?? 'main');
           const siblingIds = selectedSiblings.map(s => s.id!).filter(Boolean);
           const assignedClass = guardianForm.classAssignment || application.classApplyingFor;
+
+          // ── Parent account resolution ────────────────────────────────────
+          // Priority: 1) explicitly linked parent, 2) existing user with same email,
+          // 3) create new Firebase Auth account + users/ doc.
+          let resolvedParentUserId: string | undefined;
+          let tempPassword: string | undefined;
+          let parentNewlyCreated = false;
+
+          const normalizedEmail = guardianForm.g1Email.trim().toLowerCase();
+
+          if (linkExistingParent && linkedUserId) {
+            resolvedParentUserId = linkedUserId;
+          } else if (normalizedEmail) {
+            // Look up existing user by email (auto-identify by email)
+            const existingByEmail = await getDocs(
+              query(collection(db, 'users'), where('email', '==', normalizedEmail))
+            );
+            if (!existingByEmail.empty) {
+              resolvedParentUserId = existingByEmail.docs[0].id;
+            } else {
+              // Create new parent Firebase Auth account via secondary app
+              // so the admin's session remains intact.
+              const digits = (guardianForm.g1Phone || '').replace(/\D/g, '').slice(-4) || '0000';
+              tempPassword = `Parent@${digits}${new Date().getFullYear()}`;
+              try {
+                const secondaryApp = getApps().find(a => a.name === 'parent-creator')
+                  || initializeApp(firebaseConfig as any, 'parent-creator');
+                const secondaryAuth = getAuth(secondaryApp);
+                const cred = await createUserWithEmailAndPassword(
+                  secondaryAuth, normalizedEmail, tempPassword
+                );
+                resolvedParentUserId = cred.user.uid;
+                parentNewlyCreated = true;
+                await firebaseSignOut(secondaryAuth);
+              } catch (authErr: any) {
+                console.error('Parent Auth creation failed:', authErr);
+                if (authErr.code === 'auth/email-already-in-use') {
+                  // Auth user exists but no Firestore doc yet — skip profile doc
+                  // but let the admin know they need to recover it manually.
+                  alert(
+                    `Note: A Firebase Auth account for ${normalizedEmail} already exists, ` +
+                    `but no parent profile was found in Firestore. Student will be enrolled, ` +
+                    `but you'll need to manually link the parent later from User Management.`
+                  );
+                } else {
+                  alert(
+                    `⚠ Parent portal account could not be created automatically ` +
+                    `(${authErr.message || authErr.code}). Student will still be enrolled; ` +
+                    `create the parent account manually from User Management afterwards.`
+                  );
+                }
+                tempPassword = undefined;
+              }
+            }
+          }
 
           const studentRef = doc(collection(db, 'students'));
           const newStudent: Omit<Student, 'id'> = {
@@ -287,12 +363,13 @@ export default function ApplicationDetail() {
             applicationId: id,
             previousSchool: application.previousSchool,
             admissionStatus: 'active',
+            schoolId: application.schoolId ?? schoolId ?? undefined,
             // Guardian info
             guardianName: guardianForm.g1Name || undefined,
             guardianPhone: guardianForm.g1Phone || undefined,
             guardianRelationship: guardianForm.g1Relationship || undefined,
-            guardianEmail: guardianForm.g1Email || undefined,
-            guardianUserId: (linkExistingParent && linkedUserId) ? linkedUserId : undefined,
+            guardianEmail: normalizedEmail || undefined,
+            guardianUserId: resolvedParentUserId,
             guardian2Name: guardianForm.g2Name || undefined,
             guardian2Phone: guardianForm.g2Phone || undefined,
             guardian2Relationship: guardianForm.g2Relationship || undefined,
@@ -318,15 +395,36 @@ export default function ApplicationDetail() {
             const guardianRef = doc(collection(db, 'guardians'));
             batch.set(guardianRef, {
               fullName: guardianForm.g1Name,
-              email: guardianForm.g1Email,
+              email: normalizedEmail,
               phone: guardianForm.g1Phone,
               relationship: guardianForm.g1Relationship,
               occupation: guardianForm.g1Occupation,
-              userId: (linkExistingParent && linkedUserId) ? linkedUserId : null,
+              userId: resolvedParentUserId ?? null,
               studentIds: [studentRef.id, ...siblingIds],
               linkedChildren: [newChildEntry, ...siblingChildEntries],
               createdAt: serverTimestamp(),
+              schoolId: application.schoolId ?? schoolId ?? undefined,
             } as Omit<Guardian, 'id'>);
+          }
+
+          // Create users/{uid} profile for newly created parent account
+          if (parentNewlyCreated && resolvedParentUserId) {
+            batch.set(doc(db, 'users', resolvedParentUserId), stripUndefined({
+              uid: resolvedParentUserId,
+              email: normalizedEmail,
+              role: 'parent',
+              displayName: guardianForm.g1Name || normalizedEmail,
+              schoolId: application.schoolId ?? schoolId ?? undefined,
+              linkedStudentIds: [studentRef.id, ...siblingIds],
+              linkedChildren: [newChildEntry, ...siblingChildEntries],
+              createdAt: serverTimestamp(),
+            }) as Record<string, unknown>);
+          } else if (resolvedParentUserId) {
+            // Existing user (either linked explicitly or matched by email) — append child
+            batch.update(doc(db, 'users', resolvedParentUserId), {
+              linkedStudentIds: arrayUnion(studentRef.id, ...siblingIds),
+              linkedChildren: arrayUnion(newChildEntry, ...siblingChildEntries),
+            });
           }
 
           // Update siblings to include this new student
@@ -340,16 +438,108 @@ export default function ApplicationDetail() {
             }
           }
 
-          // Link parent portal account — append, never overwrite existing children
-          if (linkExistingParent && linkedUserId) {
-            batch.update(doc(db, 'users', linkedUserId), {
-              linkedStudentIds: arrayUnion(studentRef.id, ...siblingIds),
-              linkedChildren: arrayUnion(newChildEntry, ...siblingChildEntries),
-            });
+          // ── Applicant → Student role upgrade ──────────────────────────
+          // If the applicant registered their own account via /apply, promote
+          // them from 'applicant' to 'student' and link to the student record.
+          let existingStudentAccount = false;
+          if (application.applicantUid && application.applicantUid !== 'admin') {
+            try {
+              const applicantUserSnap = await getDoc(doc(db, 'users', application.applicantUid));
+              if (applicantUserSnap.exists()) {
+                const applicantRole = applicantUserSnap.data().role;
+                if (applicantRole === 'applicant') {
+                  // Promote applicant → student
+                  batch.update(doc(db, 'users', application.applicantUid), {
+                    role: 'student',
+                    linkedStudentIds: arrayUnion(studentRef.id),
+                    schoolId: application.schoolId ?? schoolId ?? undefined,
+                  });
+                  existingStudentAccount = true;
+                } else if (applicantRole === 'student') {
+                  // Already a student (re-approval or duplicate) — just link
+                  batch.update(doc(db, 'users', application.applicantUid), {
+                    linkedStudentIds: arrayUnion(studentRef.id),
+                  });
+                  existingStudentAccount = true;
+                }
+                // Any other role (parent, teacher, etc.) applied via the form —
+                // do NOT count as an existing student account. A fresh synthetic
+                // login will be provisioned for the child instead.
+              }
+            } catch (upgradeErr) {
+              console.warn('Applicant role upgrade skipped:', upgradeErr);
+            }
+          }
+
+          // ── Synthetic student login provisioning ─────────────────────
+          // If the class passes the configured gate and no account already
+          // exists for this applicant, mint a school-issued login so the
+          // child can sign in. Synthetic emails aren't deliverable — the
+          // temp password is shown to the admin to hand to the family.
+          let studentSyntheticEmail: string | undefined;
+          let studentTempPassword: string | undefined;
+          const ladder = classNames?.length ? classNames : SCHOOL_CLASSES;
+          if (
+            !existingStudentAccount &&
+            shouldProvisionStudentAccount(assignedClass, schoolSettings, ladder)
+          ) {
+            studentSyntheticEmail = buildStudentLoginEmail(studentId, schoolSettings);
+            studentTempPassword = generateStudentTempPassword(studentId);
+            try {
+              const secondaryApp = getApps().find(a => a.name === 'student-creator')
+                || initializeApp(firebaseConfig as any, 'student-creator');
+              const studentAuth = getAuth(secondaryApp);
+              const cred = await createUserWithEmailAndPassword(
+                studentAuth, studentSyntheticEmail, studentTempPassword
+              );
+              batch.set(doc(db, 'users', cred.user.uid), stripUndefined({
+                uid: cred.user.uid,
+                email: studentSyntheticEmail,
+                role: 'student',
+                displayName: application.applicantName,
+                schoolId: application.schoolId ?? schoolId ?? undefined,
+                linkedStudentIds: [studentRef.id],
+                mustChangePassword: true,
+                syntheticLogin: true,
+                createdAt: serverTimestamp(),
+              }) as Record<string, unknown>);
+              // Store login email on the student doc so admin can retrieve it later
+              batch.update(studentRef, { loginEmail: studentSyntheticEmail });
+              await firebaseSignOut(studentAuth);
+            } catch (studentAuthErr: any) {
+              console.error('Student Auth provisioning failed:', studentAuthErr);
+              alert(
+                `⚠ Student portal account could not be created ` +
+                `(${studentAuthErr.message || studentAuthErr.code}). ` +
+                `Student is still enrolled; create the login manually afterwards.`
+              );
+              studentSyntheticEmail = undefined;
+              studentTempPassword = undefined;
+            }
           }
 
           await batch.commit();
-          alert(`✓ Student admitted!\nStudent ID: ${studentId}\nClass: ${newStudent.currentClass}`);
+
+          let successMsg = `✓ Student admitted!\nStudent ID: ${studentId}\nClass: ${assignedClass}`;
+          if (parentNewlyCreated && tempPassword) {
+            successMsg +=
+              `\n\n👤 Parent portal account created` +
+              `\n  • Email: ${normalizedEmail}` +
+              `\n  • Temporary Password: ${tempPassword}` +
+              `\n\nPlease share these credentials with the parent. ` +
+              `They can log in at the Parent Portal and should change their password on first login.`;
+          } else if (resolvedParentUserId) {
+            successMsg += `\n\n✓ Parent portal account linked.`;
+          }
+          if (studentSyntheticEmail && studentTempPassword) {
+            successMsg +=
+              `\n\n🎒 Student portal account created` +
+              `\n  • Login: ${studentSyntheticEmail}` +
+              `\n  • Temporary Password: ${studentTempPassword}` +
+              `\n\nThis is a school-issued login (not a real email inbox). ` +
+              `Share it with the student/family — they'll be prompted to set a new password on first sign-in.`;
+          }
+          alert(successMsg);
           return;
         } else {
           // Student already exists — update guardian link on the existing student record
@@ -496,7 +686,7 @@ export default function ApplicationDetail() {
             <select value={guardianForm.classAssignment} onChange={e => gf('classAssignment', e.target.value)}
               className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm font-medium">
               <option value="">— Use applied class ({application.classApplyingFor}) —</option>
-              {SCHOOL_CLASSES.map(c => <option key={c}>{c}</option>)}
+              {classNames.map(c => <option key={c}>{c}</option>)}
             </select>
           </div>
 
@@ -597,8 +787,8 @@ export default function ApplicationDetail() {
             </div>
           </div>
 
-          {/* Guardian summary */}
-          {(guardianForm.g1Name || selectedSiblings.length > 0) && (
+          {/* Guardian summary — only before approval */}
+          {application.status !== 'approved' && (guardianForm.g1Name || selectedSiblings.length > 0) && (
             <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-5">
               <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3">On Approval Will Create</p>
               {guardianForm.g1Name && (
@@ -626,25 +816,92 @@ export default function ApplicationDetail() {
             </div>
           )}
 
-          {/* Decision */}
-          <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
-            <h3 className="text-lg font-bold text-slate-900 mb-6">Admission Decision</h3>
-            <div className="space-y-3">
-              <button onClick={() => handleStatusUpdate('approved')} disabled={saving}
-                className="w-full flex items-center justify-center px-6 py-3 bg-emerald-600 text-white font-bold rounded-xl hover:bg-emerald-700 transition-all shadow-sm disabled:opacity-50">
-                {saving ? <Loader2 className="w-5 h-5 animate-spin mr-2" /> : <CheckCircle className="w-5 h-5 mr-2" />}
-                Approve & Enroll
+          {/* Decision — state-aware */}
+          {application.status === 'approved' ? (
+            <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-6">
+              <div className="flex items-center gap-3 mb-3">
+                <CheckCircle className="w-6 h-6 text-emerald-600 shrink-0" />
+                <h3 className="text-base font-bold text-emerald-900">Student Enrolled</h3>
+              </div>
+              <p className="text-sm text-emerald-800 leading-relaxed">
+                This application has been <strong>approved</strong> and the applicant is now an
+                enrolled student. To cancel the application, dismiss the student, or make any other
+                changes, please use the <strong>Student Panel</strong>.
+              </p>
+              <button onClick={() => navigate('/admin/students')}
+                className="mt-4 w-full flex items-center justify-center px-4 py-2.5 bg-white border border-emerald-300 text-emerald-700 font-bold rounded-xl hover:bg-emerald-100 transition-all text-sm">
+                <Users className="w-4 h-4 mr-2" /> Go to Student Panel
               </button>
-              <button onClick={() => handleStatusUpdate('rejected')} disabled={saving}
-                className="w-full flex items-center justify-center px-6 py-3 bg-white border border-rose-200 text-rose-600 font-bold rounded-xl hover:bg-rose-50 transition-all disabled:opacity-50">
-                <XCircle className="w-5 h-5 mr-2" /> Reject Application
-              </button>
-              <button onClick={() => handleStatusUpdate('reviewing')} disabled={saving}
-                className="w-full flex items-center justify-center px-6 py-3 bg-indigo-50 text-indigo-700 font-bold rounded-xl hover:bg-indigo-100 transition-all disabled:opacity-50">
-                <Clock className="w-5 h-5 mr-2" /> Mark as Reviewing
+              <button
+                onClick={async () => {
+                  // Try stored loginEmail first, then live-query the student doc
+                  let loginEmail = enrolledLoginEmail;
+                  if (!loginEmail) {
+                    const snap = await getDocs(
+                      query(collection(db, 'students'), where('applicationId', '==', id))
+                    );
+                    if (!snap.empty) loginEmail = (snap.docs[0].data() as Student).loginEmail ?? null;
+                  }
+                  if (loginEmail) {
+                    const localPart = loginEmail.split('@')[0];
+                    const pw = generateStudentTempPassword(localPart);
+                    alert(
+                      `🎒 Student portal credentials\n\n` +
+                      `Login: ${loginEmail}\n` +
+                      `Temporary password: ${pw}\n\n` +
+                      `Note: if the student already changed their password, ` +
+                      `use Admin → Roles & Permissions → Re-provision login instead.`
+                    );
+                  } else {
+                    alert(
+                      `No school-issued login found for this student.\n\n` +
+                      `This happens when:\n` +
+                      `• The student was enrolled before auto-provisioning was enabled, or\n` +
+                      `• Their class was below the configured minimum.\n\n` +
+                      `To create a login now, go to Admin → Roles & Permissions, find the student, and use Re-provision login.`
+                    );
+                  }
+                }}
+                className="mt-2 w-full flex items-center justify-center px-4 py-2.5 bg-white border border-emerald-300 text-emerald-700 font-bold rounded-xl hover:bg-emerald-100 transition-all text-sm"
+              >
+                <ShieldCheck className="w-4 h-4 mr-2" /> Show student login credentials
               </button>
             </div>
-          </div>
+          ) : application.status === 'rejected' ? (
+            <div className="bg-rose-50 border border-rose-200 rounded-2xl p-6">
+              <div className="flex items-center gap-3 mb-3">
+                <XCircle className="w-6 h-6 text-rose-600 shrink-0" />
+                <h3 className="text-base font-bold text-rose-900">Application Rejected</h3>
+              </div>
+              <p className="text-sm text-rose-800 leading-relaxed">
+                This application was rejected. If you'd like to reconsider, you can move it back to
+                reviewing.
+              </p>
+              <button onClick={() => handleStatusUpdate('reviewing')} disabled={saving}
+                className="mt-4 w-full flex items-center justify-center px-4 py-2.5 bg-white border border-rose-200 text-rose-600 font-bold rounded-xl hover:bg-rose-50 transition-all disabled:opacity-50 text-sm">
+                <Clock className="w-4 h-4 mr-2" /> Move Back to Reviewing
+              </button>
+            </div>
+          ) : (
+            <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
+              <h3 className="text-lg font-bold text-slate-900 mb-6">Admission Decision</h3>
+              <div className="space-y-3">
+                <button onClick={() => handleStatusUpdate('approved')} disabled={saving}
+                  className="w-full flex items-center justify-center px-6 py-3 bg-emerald-600 text-white font-bold rounded-xl hover:bg-emerald-700 transition-all shadow-sm disabled:opacity-50">
+                  {saving ? <Loader2 className="w-5 h-5 animate-spin mr-2" /> : <CheckCircle className="w-5 h-5 mr-2" />}
+                  Approve & Enroll
+                </button>
+                <button onClick={() => handleStatusUpdate('rejected')} disabled={saving}
+                  className="w-full flex items-center justify-center px-6 py-3 bg-white border border-rose-200 text-rose-600 font-bold rounded-xl hover:bg-rose-50 transition-all disabled:opacity-50">
+                  <XCircle className="w-5 h-5 mr-2" /> Reject Application
+                </button>
+                <button onClick={() => handleStatusUpdate('reviewing')} disabled={saving}
+                  className="w-full flex items-center justify-center px-6 py-3 bg-indigo-50 text-indigo-700 font-bold rounded-xl hover:bg-indigo-100 transition-all disabled:opacity-50">
+                  <Clock className="w-5 h-5 mr-2" /> Mark as Reviewing
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </div>

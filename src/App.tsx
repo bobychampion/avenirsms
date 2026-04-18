@@ -6,6 +6,7 @@ import { AppToaster } from './components/Toast';
 import { SchoolProvider, useSchool } from './components/SchoolContext';
 import { SuperAdminProvider, useSuperAdmin } from './components/SuperAdminContext';
 import LandingPage from './pages/LandingPage';
+import SchoolLandingPage from './pages/SchoolLandingPage';
 import Home from './pages/Home';
 import Apply from './pages/Apply';
 import AdminDashboard from './pages/AdminDashboard';
@@ -23,6 +24,7 @@ import TimetableManagement from './pages/TimetableManagement';
 import ClassManagement from './pages/ClassManagement';
 import UserManagement from './pages/UserManagement';
 import Login from './pages/Login';
+import ChangePassword from './pages/ChangePassword';
 import AttendancePage from './pages/AttendancePage';
 import StaffManagement from './pages/StaffManagement';
 import PayrollManagement from './pages/PayrollManagement';
@@ -42,6 +44,20 @@ import AdminMobileDashboard from './pages/mobile/AdminMobileDashboard';
 import TeacherMobileAttendance from './pages/mobile/TeacherMobileAttendance';
 import ParentMobileHome from './pages/mobile/ParentMobileHome';
 import { Layout } from './components/Layout';
+import { StudentLayout } from './components/StudentLayout';
+import { StaffLayout } from './components/StaffLayout';
+import AccountantPortal from './pages/AccountantPortal';
+import HrPortal from './pages/HrPortal';
+import LibraryPortal from './pages/LibraryPortal';
+import RolesPermissions from './pages/RolesPermissions';
+import ParentList from './pages/ParentList';
+import {
+  StudentToday,
+  StudentAssignments,
+  StudentGrades,
+  StudentMessages,
+  StudentProfile as StudentPortalProfile,
+} from './pages/StudentPortal';
 
 // Super Admin pages — lazy-loaded (only needed by super_admin users)
 const SuperAdminDashboard = lazy(() => import('./pages/super-admin/SuperAdminDashboard'));
@@ -63,14 +79,30 @@ const PageLoader = () => (
   </div>
 );
 
+type GuardRole =
+  | 'admin'
+  | 'School_admin'
+  | 'applicant'
+  | 'student'
+  | 'teacher'
+  | 'parent'
+  | 'super_admin'
+  | 'accountant'
+  | 'hr'
+  | 'librarian'
+  | 'staff';
+
 function ProtectedRoute({
   children,
   role,
+  roles,
   allowFinanceRoles,
   superAdminOnly,
 }: {
   children: React.ReactNode;
-  role?: 'admin' | 'applicant' | 'teacher' | 'parent' | 'super_admin';
+  role?: GuardRole;
+  /** Multi-role guard — caller's role must be in this list. */
+  roles?: GuardRole[];
   /** When true, accountant + admin + School_admin may access this route */
   allowFinanceRoles?: boolean;
   /** When true, only super_admin can access this route */
@@ -81,6 +113,11 @@ function ProtectedRoute({
 
   if (loading) return <PageLoader />;
   if (!user) return <Navigate to="/" />;
+
+  // Force password change if flagged (synthetic student login, admin reset, etc.)
+  if (profile?.mustChangePassword && window.location.pathname !== '/change-password') {
+    return <Navigate to="/change-password" replace />;
+  }
 
   // Super-admin-only routes (migration tool, platform dashboard, school management)
   if (superAdminOnly) {
@@ -120,6 +157,12 @@ function ProtectedRoute({
     if (!isAdmin) return <Navigate to="/" />;
   } else if (role && profile?.role !== role) {
     return <Navigate to="/" />;
+  }
+
+  if (roles && roles.length > 0) {
+    if (!profile?.role || !roles.includes(profile.role as GuardRole)) {
+      return <Navigate to="/" />;
+    }
   }
 
   return <>{children}</>;
@@ -171,11 +214,19 @@ function AppContent() {
           {/* ── Standalone promotional landing page (no Layout wrapper) ── */}
           <Route path="/" element={<LandingPage />} />
 
+          {/* ── Per-school public pages (no login required) ── */}
+          <Route path="/s/:schoolId" element={<SchoolLandingPage />} />
+          <Route path="/s/:schoolId/apply" element={<Layout><Apply /></Layout>} />
+          <Route path="/s/:schoolId/login" element={<Login />} />
+          <Route path="/s/:schoolId/login/:role" element={<Login />} />
+
           {/* ── All app routes wrapped in Layout ── */}
           <Route path="/home" element={<Layout><Home /></Layout>} />
-          <Route path="/login" element={<Layout><Login /></Layout>} />
+          <Route path="/login" element={<Login />} />
+          <Route path="/login/:role" element={<Login />} />
+          <Route path="/change-password" element={<ChangePassword />} />
 
-          {/* Applicant */}
+          {/* Applicant (legacy — kept for existing logged-in applicant role) */}
           <Route path="/apply" element={<Layout><ProtectedRoute role="applicant"><Apply /></ProtectedRoute></Layout>} />
 
           {/* ── Super Admin platform routes ── */}
@@ -192,6 +243,8 @@ function AppContent() {
           <Route path="/admin/gradebook" element={<Layout><ProtectedRoute role="admin"><Gradebook /></ProtectedRoute></Layout>} />
           <Route path="/admin/report-cards" element={<Layout><ProtectedRoute role="admin"><ReportCards /></ProtectedRoute></Layout>} />
           <Route path="/admin/users" element={<Layout><ProtectedRoute role="admin"><UserManagement /></ProtectedRoute></Layout>} />
+          <Route path="/admin/roles" element={<Layout><ProtectedRoute role="admin"><RolesPermissions /></ProtectedRoute></Layout>} />
+          <Route path="/admin/parents" element={<Layout><ProtectedRoute role="admin"><ParentList /></ProtectedRoute></Layout>} />
           <Route path="/admin/exams" element={<Layout><ProtectedRoute role="admin"><ExamManagement /></ProtectedRoute></Layout>} />
           <Route path="/admin/timetable" element={<Layout><ProtectedRoute role="admin"><TimetableManagement /></ProtectedRoute></Layout>} />
           <Route path="/admin/application/:id" element={<Layout><ProtectedRoute role="admin"><ApplicationDetail /></ProtectedRoute></Layout>} />
@@ -208,7 +261,7 @@ function AppContent() {
           <Route path="/admin/notifications" element={<Layout><ProtectedRoute role="admin"><NotificationsManagement /></ProtectedRoute></Layout>} />
           <Route path="/admin/bulk-import" element={<Layout><ProtectedRoute role="admin"><BulkStudentImport /></ProtectedRoute></Layout>} />
           <Route path="/admin/whatsapp" element={<Layout><ProtectedRoute role="admin"><WhatsAppNotifications /></ProtectedRoute></Layout>} />
-          <Route path="/admin/seed" element={<Layout><ProtectedRoute role="admin"><SeedData /></ProtectedRoute></Layout>} />
+          <Route path="/admin/seed" element={<Layout><ProtectedRoute superAdminOnly><SeedData /></ProtectedRoute></Layout>} />
           <Route path="/admin/migrate" element={<Layout><ProtectedRoute superAdminOnly><DataMigration /></ProtectedRoute></Layout>} />
 
           {/* Onboarding Tutorial — accessible to admin, teacher, parent */}
@@ -217,6 +270,22 @@ function AppContent() {
           {/* Portals */}
           <Route path="/teacher" element={<Layout><ProtectedRoute role="teacher"><TeacherPortal /></ProtectedRoute></Layout>} />
           <Route path="/parent" element={<Layout><ProtectedRoute role="parent"><ParentPortal /></ProtectedRoute></Layout>} />
+
+          {/* Student portal — kid-friendly StudentLayout (no sidebar) */}
+          <Route path="/student" element={<ProtectedRoute role="student"><StudentLayout><StudentToday /></StudentLayout></ProtectedRoute>} />
+          <Route path="/student/assignments" element={<ProtectedRoute role="student"><StudentLayout><StudentAssignments /></StudentLayout></ProtectedRoute>} />
+          <Route path="/student/grades" element={<ProtectedRoute role="student"><StudentLayout><StudentGrades /></StudentLayout></ProtectedRoute>} />
+          <Route path="/student/messages" element={<ProtectedRoute role="student"><StudentLayout><StudentMessages /></StudentLayout></ProtectedRoute>} />
+          <Route path="/student/profile" element={<ProtectedRoute role="student"><StudentLayout><StudentPortalProfile /></StudentLayout></ProtectedRoute>} />
+
+          {/* Accountant portal — dedicated landing + reuses /admin/finance pages */}
+          <Route path="/accountant" element={<ProtectedRoute role="accountant"><StaffLayout role="accountant"><AccountantPortal /></StaffLayout></ProtectedRoute>} />
+
+          {/* HR portal */}
+          <Route path="/hr" element={<ProtectedRoute roles={["hr", "admin", "School_admin"]}><StaffLayout role="hr"><HrPortal /></StaffLayout></ProtectedRoute>} />
+
+          {/* Librarian portal */}
+          <Route path="/library" element={<ProtectedRoute roles={["librarian", "admin", "School_admin"]}><StaffLayout role="librarian"><LibraryPortal /></StaffLayout></ProtectedRoute>} />
 
           {/* Calendar (all roles) */}
           <Route path="/calendar" element={<Layout><ProtectedRoute><SchoolCalendar /></ProtectedRoute></Layout>} />

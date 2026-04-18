@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { db } from '../firebase';
-import { doc, getDoc, setDoc, serverTimestamp, collection, getDocs, writeBatch, onSnapshot, addDoc, deleteDoc, query, where } from 'firebase/firestore';
+import { doc, getDoc, setDoc, updateDoc, serverTimestamp, collection, getDocs, writeBatch, onSnapshot, addDoc, deleteDoc, query, where } from 'firebase/firestore';
 import { motion } from 'motion/react';
 import toast from 'react-hot-toast';
 import {
@@ -8,7 +8,8 @@ import {
   Hash, BookOpen, Plus, X, Trash2, AlertTriangle,
   Globe, DollarSign, Image as ImageIcon, Award, ChevronUp, ChevronDown,
   Upload, Eye, EyeOff, Users, Bell, ShieldCheck, FileText, ClipboardCheck,
-  MapPin, Navigation, CheckCircle2, XCircle, RefreshCw,
+  MapPin, Navigation, CheckCircle2, XCircle, RefreshCw, Brain,
+  Palette, Link as LinkIcon, Monitor, ExternalLink, Brush,
 } from 'lucide-react';
 import { GeoFence } from '../types';
 import { haversineDistance } from '../services/geofenceService';
@@ -16,6 +17,7 @@ import { SCHOOL_CLASSES, SUBJECTS, TERMS, GradingSystem, CustomGradeScale, Subje
 import { useUnsavedChanges } from '../hooks/useUnsavedChanges';
 import UnsavedChangesDialog from '../components/UnsavedChangesDialog';
 import { useSchool } from '../components/SchoolContext';
+import { useAuth } from '../components/FirebaseProvider';
 
 export interface SchoolSettings {
   schoolName: string;
@@ -27,6 +29,42 @@ export interface SchoolSettings {
   faviconUrl?: string;
   /** Brand primary colour (hex, e.g. '#4f46e5'). Used for sidebar accents, buttons, etc. */
   primaryColor?: string;
+  /** Secondary / accent colour (hex). Used for highlights and hover states. */
+  secondaryColor?: string;
+  /** Sidebar style variant */
+  sidebarStyle?: 'dark' | 'light' | 'brand' | 'minimal';
+  /** Sidebar background image URL */
+  sidebarBgImageUrl?: string;
+  /** School watermark / stamp image used on printed reports */
+  stampImageUrl?: string;
+  /** Named colour preset (e.g. 'royal-blue') — sets primaryColor when applied */
+  colorPreset?: string;
+  /** Login page hero/background image */
+  loginBgImageUrl?: string;
+  /** Login page welcome headline */
+  loginWelcomeText?: string;
+  /** Login page tagline below the headline */
+  loginTagline?: string;
+  /** Hero banner image for the public landing page */
+  heroBannerImageUrl?: string;
+  /** School description paragraph shown on the public landing page */
+  schoolDescription?: string;
+  /** Social media links for the public landing page */
+  socialLinks?: { facebook?: string; twitter?: string; instagram?: string; website?: string };
+  /** Intro text shown at the top of the online application form */
+  applicationIntroText?: string;
+  /** Application deadline date (ISO string) */
+  applicationDeadline?: string;
+  /** Welcome banner text on the admin dashboard */
+  dashboardBannerText?: string;
+  /** Custom app name shown in the nav header instead of "AvenirSMS" */
+  appDisplayName?: string;
+  /** Google Font or system font family name */
+  fontFamily?: string;
+  /** Short custom URL slug (e.g. 'greenfield-academy'). Super-admin only. */
+  urlSlug?: string;
+  /** Visual tier for the student portal: 'primary' (playful) or 'secondary' (toned-down) */
+  studentAgeTier?: 'primary' | 'secondary';
   currentSession: string;
   currentTerm: '1st Term' | '2nd Term' | '3rd Term';
   examLocked: boolean;
@@ -36,6 +74,13 @@ export interface SchoolSettings {
   studentIdPrefix: string;
   studentIdFormat: 'PREFIX-YEAR-SEQ' | 'PREFIXYEARSEQ' | 'PREFIX-SEQ';
   studentIdPadding: number;
+  /**
+   * Minimum class at which a synthetic school-email login is auto-provisioned
+   * for a newly admitted student. Classes below this tier skip account
+   * creation (parents use the parent portal on their behalf).
+   * Empty string / undefined disables auto-provisioning for all classes.
+   */
+  studentAccountMinClass?: string;
   // Dynamic lists
   schoolLevels: string[];
   customSubjects: string[];
@@ -131,11 +176,20 @@ export interface SchoolSettings {
   /** Number of decimal places for score display on reports */
   reportScoreDecimals: 0 | 1 | 2;
 
+  // ── AI & CBT ──────────────────────────────────────────────────────────────
+  /** Enable the CBT (Computer-Based Testing) engine school-wide */
+  cbtEnabled: boolean;
+  /** Enable the AI Curriculum Training document upload & summarisation feature */
+  aiCurriculumEnabled: boolean;
+  /** Maximum number of curriculum documents the school can upload (0 = unlimited) */
+  maxCurriculumDocs: number;
+  /** Roles that may sit CBT exams (comma-separated or array-style toggle) */
+  cbtAllowedRoles: ('student' | 'applicant')[];
+
   updatedAt?: any;
 }
 
 const SETTINGS_DOC = 'school_settings';
-const SETTINGS_ID = 'main';
 
 const DEFAULT_PERIOD_TIMES = [
   '07:00', '07:40', '08:20', '09:00', '09:40', '10:20',
@@ -150,6 +204,24 @@ export const defaultSettings: SchoolSettings = {
   logoUrl: '',
   faviconUrl: '',
   primaryColor: '#4f46e5',
+  secondaryColor: '',
+  sidebarStyle: 'dark',
+  sidebarBgImageUrl: '',
+  stampImageUrl: '',
+  colorPreset: '',
+  loginBgImageUrl: '',
+  loginWelcomeText: '',
+  loginTagline: '',
+  heroBannerImageUrl: '',
+  schoolDescription: '',
+  socialLinks: { facebook: '', twitter: '', instagram: '', website: '' },
+  applicationIntroText: '',
+  applicationDeadline: '',
+  dashboardBannerText: '',
+  appDisplayName: '',
+  fontFamily: 'Inter',
+  urlSlug: '',
+  studentAgeTier: 'primary',
   currentSession: `${new Date().getFullYear()}/${new Date().getFullYear() + 1}`,
   currentTerm: '1st Term',
   examLocked: false,
@@ -158,6 +230,7 @@ export const defaultSettings: SchoolSettings = {
   studentIdPrefix: 'STU',
   studentIdFormat: 'PREFIX-YEAR-SEQ',
   studentIdPadding: 3,
+  studentAccountMinClass: 'Primary 1',
   schoolLevels: [...SCHOOL_CLASSES],
   customSubjects: [],
   periodTimes: [...DEFAULT_PERIOD_TIMES],
@@ -214,18 +287,25 @@ export const defaultSettings: SchoolSettings = {
   reportShowLogo: true,
   reportFooterText: '',
   reportScoreDecimals: 1,
+  // AI & CBT
+  cbtEnabled: true,
+  aiCurriculumEnabled: true,
+  maxCurriculumDocs: 50,
+  cbtAllowedRoles: ['student', 'applicant'],
 };
 
 export function useSchoolSettings() {
   const [settings, setSettings] = useState<SchoolSettings>(defaultSettings);
   const [loading, setLoading] = useState(true);
+  const { schoolId } = useSchool();
 
   useEffect(() => {
-    getDoc(doc(db, SETTINGS_DOC, SETTINGS_ID)).then(snap => {
+    if (!schoolId) { setLoading(false); return; }
+    getDoc(doc(db, SETTINGS_DOC, schoolId)).then(snap => {
       if (snap.exists()) setSettings({ ...defaultSettings, ...snap.data() } as SchoolSettings);
       setLoading(false);
     }).catch(() => setLoading(false));
-  }, []);
+  }, [schoolId]);
 
   return { settings, loading };
 }
@@ -534,10 +614,11 @@ function ToggleRow({
   );
 }
 
-type TabId = 'school' | 'academic' | 'subjects' | 'admissions' | 'attendance' | 'notifications' | 'access' | 'geofence';
+type TabId = 'school' | 'academic' | 'subjects' | 'admissions' | 'attendance' | 'notifications' | 'access' | 'geofence' | 'customize';
 
 const TABS: { id: TabId; label: string; icon: React.ReactNode }[] = [
   { id: 'school',        label: 'School',           icon: <School className="w-4 h-4" /> },
+  { id: 'customize',     label: 'Customization',    icon: <Palette className="w-4 h-4" /> },
   { id: 'academic',      label: 'Academic',         icon: <Award className="w-4 h-4" /> },
   { id: 'subjects',      label: 'Subjects',         icon: <BookOpen className="w-4 h-4" /> },
   { id: 'admissions',    label: 'Admissions',       icon: <ClipboardCheck className="w-4 h-4" /> },
@@ -547,14 +628,36 @@ const TABS: { id: TabId; label: string; icon: React.ReactNode }[] = [
   { id: 'geofence',      label: 'Geo-fence',        icon: <MapPin className="w-4 h-4" /> },
 ];
 
+const COLOR_PRESETS = [
+  { name: 'Indigo',       value: '#4f46e5' },
+  { name: 'Royal Blue',   value: '#1d4ed8' },
+  { name: 'Forest Green', value: '#15803d' },
+  { name: 'Crimson',      value: '#be123c' },
+  { name: 'Amber Gold',   value: '#b45309' },
+  { name: 'Teal',         value: '#0f766e' },
+  { name: 'Purple',       value: '#7e22ce' },
+  { name: 'Slate',        value: '#475569' },
+];
+
+const FONT_OPTIONS = ['Inter', 'Poppins', 'Lato', 'Roboto', 'Nunito', 'Playfair Display'];
+
+const SLUG_REGEX = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+
 export default function SchoolSettingsPage() {
   const { schoolId } = useSchool();
+  const { isSuperAdmin } = useAuth();
   const [form, setForm] = useState<SchoolSettings>(defaultSettings);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [showPreset, setShowPreset] = useState(false);
   const [isDirty, setIsDirty] = useState(false);
   const [activeTab, setActiveTab] = useState<TabId>('school');
+
+  // URL slug management (super admin only)
+  const [slugInput, setSlugInput] = useState('');
+  const [slugSaving, setSlugSaving] = useState(false);
+  const [slugChecking, setSlugChecking] = useState(false);
+  const [slugAvailable, setSlugAvailable] = useState<boolean | null>(null);
 
   // Subject Management state
   const [subjectClassNames, setSubjectClassNames] = useState<string[]>(SCHOOL_CLASSES);
@@ -581,11 +684,16 @@ export default function SchoolSettingsPage() {
   const { blocker } = useUnsavedChanges(isDirty);
 
   useEffect(() => {
-    getDoc(doc(db, SETTINGS_DOC, SETTINGS_ID)).then(snap => {
-      if (snap.exists()) setForm({ ...defaultSettings, ...snap.data() } as SchoolSettings);
+    if (!schoolId) return;
+    getDoc(doc(db, SETTINGS_DOC, schoolId)).then(snap => {
+      if (snap.exists()) {
+        const data = { ...defaultSettings, ...snap.data() } as SchoolSettings;
+        setForm(data);
+        setSlugInput(data.urlSlug || '');
+      }
       setLoading(false);
     });
-  }, []);
+  }, [schoolId]);
 
   // Subscribe to subjects collection and teachers
   useEffect(() => {
@@ -614,7 +722,7 @@ export default function SchoolSettingsPage() {
       }
     });
     return () => { unsubSubjects(); unsubTeachers(); unsubClasses(); unsubFence(); };
-  }, []);
+  }, [schoolId]);
 
   const handleDetectLocation = () => {
     if (!navigator.geolocation) { toast.error('Geolocation not supported by this browser'); return; }
@@ -659,11 +767,66 @@ export default function SchoolSettingsPage() {
     }
   };
 
+  const checkSlugAvailability = async (slug: string) => {
+    if (!slug || !SLUG_REGEX.test(slug)) { setSlugAvailable(null); return; }
+    setSlugChecking(true);
+    try {
+      const snap = await getDoc(doc(db, 'school_slugs', slug));
+      setSlugAvailable(!snap.exists() || snap.data()?.schoolId === schoolId);
+    } finally {
+      setSlugChecking(false);
+    }
+  };
+
+  const handleSaveSlug = async () => {
+    const slug = slugInput.trim().toLowerCase();
+    if (!slug) {
+      // Clear the slug
+      if (form.urlSlug) {
+        setSlugSaving(true);
+        try {
+          await deleteDoc(doc(db, 'school_slugs', form.urlSlug));
+          await setDoc(doc(db, SETTINGS_DOC, schoolId!), { ...form, urlSlug: '', updatedAt: serverTimestamp() });
+          await updateDoc(doc(db, 'schools', schoolId!), { urlSlug: '', updatedAt: serverTimestamp() });
+          setForm(f => ({ ...f, urlSlug: '' }));
+          toast.success('URL slug removed');
+        } catch (e: any) { toast.error(e.message); }
+        finally { setSlugSaving(false); }
+      }
+      return;
+    }
+    if (!SLUG_REGEX.test(slug)) { toast.error('Slug must be lowercase letters, numbers, and hyphens only'); return; }
+    if (slug.length < 3 || slug.length > 50) { toast.error('Slug must be 3–50 characters'); return; }
+    setSlugSaving(true);
+    const tid = toast.loading('Saving URL slug…');
+    try {
+      const existing = await getDoc(doc(db, 'school_slugs', slug));
+      if (existing.exists() && existing.data()?.schoolId !== schoolId) {
+        toast.error('This slug is already taken by another school', { id: tid });
+        return;
+      }
+      // Remove old slug if changed
+      if (form.urlSlug && form.urlSlug !== slug) {
+        await deleteDoc(doc(db, 'school_slugs', form.urlSlug));
+      }
+      await setDoc(doc(db, 'school_slugs', slug), { schoolId, schoolName: form.schoolName, updatedAt: serverTimestamp() });
+      await setDoc(doc(db, SETTINGS_DOC, schoolId!), { ...form, urlSlug: slug, updatedAt: serverTimestamp() });
+      await updateDoc(doc(db, 'schools', schoolId!), { urlSlug: slug, updatedAt: serverTimestamp() });
+      setForm(f => ({ ...f, urlSlug: slug }));
+      setSlugAvailable(null);
+      toast.success('URL slug saved!', { id: tid });
+    } catch (e: any) {
+      toast.error('Failed: ' + (e.message || 'Unknown'), { id: tid });
+    } finally {
+      setSlugSaving(false);
+    }
+  };
+
   const handleSave = async () => {
     setSaving(true);
     const tid = toast.loading('Saving settings…');
     try {
-      await setDoc(doc(db, SETTINGS_DOC, SETTINGS_ID), { ...form, updatedAt: serverTimestamp() });
+      await setDoc(doc(db, SETTINGS_DOC, schoolId!), { ...form, updatedAt: serverTimestamp() });
       setIsDirty(false);
       toast.success('Settings saved!', { id: tid });
     } catch (e: any) {
@@ -1043,6 +1206,25 @@ export default function SchoolSettingsPage() {
               <span className="font-mono font-bold text-indigo-700 text-sm">
                 {previewStudentId(form.studentIdPrefix || 'STU', form.studentIdFormat, form.studentIdPadding)}
               </span>
+            </div>
+            <div className="mt-5 pt-5 border-t border-slate-200">
+              <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">
+                Auto-provision student login from class
+              </label>
+              <p className="text-xs text-slate-500 mb-2">
+                On admission approval, students at or above this class get a school email and temp password auto-generated.
+                Younger students rely on their parent's portal account.
+              </p>
+              <select
+                value={form.studentAccountMinClass ?? ''}
+                onChange={e => field('studentAccountMinClass', e.target.value || undefined)}
+                className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm"
+              >
+                <option value="">Disabled — never auto-create student accounts</option>
+                {(form.schoolLevels?.length ? form.schoolLevels : []).map(c => (
+                  <option key={c} value={c}>{c} and above</option>
+                ))}
+              </select>
             </div>
           </section>
 
@@ -1524,6 +1706,64 @@ export default function SchoolSettingsPage() {
             </div>
           </section>
 
+          {/* AI & CBT */}
+          <section className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
+            <h2 className="font-bold text-slate-800 text-sm flex items-center gap-2 mb-1">
+              <Brain className="w-4 h-4 text-indigo-600" /> AI & Computer-Based Testing (CBT)
+            </h2>
+            <p className="text-xs text-slate-500 mb-5">
+              Control AI curriculum document features and the CBT exam engine for your school.
+            </p>
+            <div className="space-y-4 mb-5">
+              <ToggleRow
+                label="Enable AI Curriculum Training"
+                description="Allow admins and teachers to upload curriculum documents for AI summarisation and context-aware question generation."
+                checked={form.aiCurriculumEnabled}
+                onChange={v => field('aiCurriculumEnabled', v)}
+              />
+              <ToggleRow
+                label="Enable CBT Exam Engine"
+                description="Activate the computer-based testing engine for entrance exams and internal assessments."
+                checked={form.cbtEnabled}
+                onChange={v => field('cbtEnabled', v)}
+              />
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">
+                  Max curriculum documents <span className="font-normal normal-case text-slate-400">(0 = unlimited)</span>
+                </label>
+                <input
+                  type="number" min={0} max={500}
+                  value={form.maxCurriculumDocs}
+                  onChange={e => field('maxCurriculumDocs', Number(e.target.value))}
+                  className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">CBT allowed for</label>
+                <div className="flex gap-3 pt-1">
+                  {(['student', 'applicant'] as const).map(role => (
+                    <label key={role} className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={form.cbtAllowedRoles.includes(role)}
+                        onChange={e => {
+                          const next = e.target.checked
+                            ? [...form.cbtAllowedRoles, role]
+                            : form.cbtAllowedRoles.filter(r => r !== role);
+                          field('cbtAllowedRoles', next);
+                        }}
+                        className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                      />
+                      <span className="text-sm text-slate-700 capitalize">{role}s</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </section>
+
           {/* Exam Result Access */}
           <section className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
             <h2 className="font-bold text-slate-800 text-sm flex items-center gap-2 mb-2">
@@ -1691,6 +1931,320 @@ export default function SchoolSettingsPage() {
               ))}
             </ul>
           </section>
+
+        </div>
+      )}
+
+      {/* ══════════════════════════════════════════════════════════════
+          TAB: CUSTOMIZATION
+      ══════════════════════════════════════════════════════════════ */}
+      {activeTab === 'customize' && (
+        <div className="space-y-6">
+
+          {/* Colors & Theme */}
+          <section className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
+            <h2 className="font-bold text-slate-800 text-sm flex items-center gap-2 mb-1">
+              <Palette className="w-4 h-4 text-indigo-600" /> Colors & Theme
+            </h2>
+            <p className="text-xs text-slate-500 mb-5">Set your school's brand colors. These apply across the portal, sidebar, and public pages.</p>
+
+            {/* Preset swatches */}
+            <div className="mb-5">
+              <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-3">Color Presets</p>
+              <div className="flex flex-wrap gap-2">
+                {COLOR_PRESETS.map(preset => (
+                  <button
+                    key={preset.value}
+                    onClick={() => { field('primaryColor', preset.value); field('colorPreset', preset.name); }}
+                    title={preset.name}
+                    className="flex items-center gap-2 px-3 py-1.5 rounded-lg border-2 text-xs font-semibold transition-all"
+                    style={{
+                      borderColor: form.primaryColor === preset.value ? preset.value : 'transparent',
+                      backgroundColor: form.primaryColor === preset.value ? preset.value + '15' : '#f8fafc',
+                      color: preset.value,
+                    }}
+                  >
+                    <span className="w-4 h-4 rounded-full inline-block shrink-0" style={{ backgroundColor: preset.value }} />
+                    {preset.name}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-5">
+              <div>
+                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">Primary Color</label>
+                <div className="flex items-center gap-3">
+                  <input type="color" value={form.primaryColor || '#4f46e5'} onChange={e => { field('primaryColor', e.target.value); field('colorPreset', ''); }}
+                    className="w-12 h-10 rounded-lg border border-slate-200 cursor-pointer p-0.5" />
+                  <input type="text" value={form.primaryColor || '#4f46e5'} onChange={e => { field('primaryColor', e.target.value); field('colorPreset', ''); }}
+                    className="flex-1 px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm font-mono" placeholder="#4f46e5" />
+                </div>
+                <p className="text-xs text-slate-400 mt-1">Used for buttons, active nav items, and accents.</p>
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">Secondary Color</label>
+                <div className="flex items-center gap-3">
+                  <input type="color" value={form.secondaryColor || '#818cf8'} onChange={e => field('secondaryColor', e.target.value)}
+                    className="w-12 h-10 rounded-lg border border-slate-200 cursor-pointer p-0.5" />
+                  <input type="text" value={form.secondaryColor || ''} onChange={e => field('secondaryColor', e.target.value)}
+                    className="flex-1 px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm font-mono" placeholder="#818cf8" />
+                </div>
+                <p className="text-xs text-slate-400 mt-1">Used for highlights and secondary elements.</p>
+              </div>
+            </div>
+
+            {/* Sidebar style */}
+            <div className="mb-2">
+              <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-3">Sidebar Style</p>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                {([
+                  { id: 'dark',    label: 'Dark',    preview: 'bg-slate-900' },
+                  { id: 'light',   label: 'Light',   preview: 'bg-white border border-slate-200' },
+                  { id: 'brand',   label: 'Brand',   preview: '' },
+                  { id: 'minimal', label: 'Minimal', preview: 'bg-slate-100 border border-slate-200' },
+                ] as const).map(style => (
+                  <button
+                    key={style.id}
+                    onClick={() => field('sidebarStyle', style.id)}
+                    className={`flex flex-col items-center gap-2 p-3 rounded-xl border-2 transition-all ${
+                      form.sidebarStyle === style.id ? 'border-indigo-500 bg-indigo-50' : 'border-slate-200 hover:border-slate-300'
+                    }`}
+                  >
+                    <div
+                      className={`w-full h-10 rounded-lg ${style.preview}`}
+                      style={style.id === 'brand' ? { backgroundColor: form.primaryColor || '#4f46e5' } : {}}
+                    >
+                      <div className="h-full flex flex-col justify-center px-2 gap-1">
+                        <div className={`h-1.5 w-3/4 rounded ${style.id === 'dark' ? 'bg-slate-600' : style.id === 'brand' ? 'bg-white/40' : 'bg-slate-200'}`} />
+                        <div className={`h-1.5 w-1/2 rounded ${style.id === 'dark' ? 'bg-indigo-500' : style.id === 'brand' ? 'bg-white/80' : 'bg-indigo-300'}`} />
+                        <div className={`h-1.5 w-2/3 rounded ${style.id === 'dark' ? 'bg-slate-600' : style.id === 'brand' ? 'bg-white/40' : 'bg-slate-200'}`} />
+                      </div>
+                    </div>
+                    <span className={`text-xs font-semibold ${form.sidebarStyle === style.id ? 'text-indigo-700' : 'text-slate-600'}`}>{style.label}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          </section>
+
+          {/* Font */}
+          <section className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
+            <h2 className="font-bold text-slate-800 text-sm flex items-center gap-2 mb-1">
+              <Brush className="w-4 h-4 text-indigo-600" /> Typography
+            </h2>
+            <p className="text-xs text-slate-500 mb-4">Choose a Google Font for the portal interface.</p>
+            <div className="sm:w-64">
+              <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">Font Family</label>
+              <select value={form.fontFamily || 'Inter'} onChange={e => field('fontFamily', e.target.value)}
+                className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm">
+                {FONT_OPTIONS.map(f => <option key={f} value={f}>{f}</option>)}
+              </select>
+            </div>
+          </section>
+
+          {/* Login Page */}
+          <section className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
+            <h2 className="font-bold text-slate-800 text-sm flex items-center gap-2 mb-1">
+              <Monitor className="w-4 h-4 text-indigo-600" /> Login Page Branding
+            </h2>
+            <p className="text-xs text-slate-500 mb-5">Customise the school-branded login page at <code className="text-indigo-600">/s/&#123;slug&#125;/login</code>.</p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="sm:col-span-2">
+                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">Welcome Headline</label>
+                <input value={form.loginWelcomeText || ''} onChange={e => field('loginWelcomeText', e.target.value)}
+                  placeholder="e.g. Welcome to Greenfield Academy Portal"
+                  className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm" />
+              </div>
+              <div className="sm:col-span-2">
+                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">Tagline</label>
+                <input value={form.loginTagline || ''} onChange={e => field('loginTagline', e.target.value)}
+                  placeholder="e.g. Shaping tomorrow's leaders today"
+                  className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm" />
+              </div>
+              <div className="sm:col-span-2">
+                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">Login Background Image URL</label>
+                <input value={form.loginBgImageUrl || ''} onChange={e => field('loginBgImageUrl', e.target.value)}
+                  placeholder="https://..."
+                  className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm font-mono" />
+                <p className="text-xs text-slate-400 mt-1">Upload to Cloudinary and paste the URL here.</p>
+              </div>
+            </div>
+          </section>
+
+          {/* Public Landing Page */}
+          <section className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
+            <h2 className="font-bold text-slate-800 text-sm flex items-center gap-2 mb-1">
+              <Globe className="w-4 h-4 text-indigo-600" /> Public Landing Page
+            </h2>
+            <p className="text-xs text-slate-500 mb-5">Content shown on the school's public-facing admissions portal.</p>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">Hero Banner Image URL</label>
+                <input value={form.heroBannerImageUrl || ''} onChange={e => field('heroBannerImageUrl', e.target.value)}
+                  placeholder="https://..."
+                  className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm font-mono" />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">School Description</label>
+                <textarea value={form.schoolDescription || ''} onChange={e => field('schoolDescription', e.target.value)} rows={3}
+                  placeholder="A short paragraph about your school shown on the landing page…"
+                  className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm resize-none" />
+              </div>
+              <div>
+                <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-3">Social Links</p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {(['website', 'facebook', 'instagram', 'twitter'] as const).map(platform => (
+                    <div key={platform}>
+                      <label className="block text-xs text-slate-500 capitalize mb-1">{platform === 'twitter' ? 'X / Twitter' : platform.charAt(0).toUpperCase() + platform.slice(1)}</label>
+                      <input
+                        value={(form.socialLinks as any)?.[platform] || ''}
+                        onChange={e => field('socialLinks', { ...form.socialLinks, [platform]: e.target.value })}
+                        placeholder={`https://${platform === 'twitter' ? 'x' : platform}.com/…`}
+                        className="w-full px-3 py-2 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm font-mono"
+                      />
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </section>
+
+          {/* Application Form */}
+          <section className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
+            <h2 className="font-bold text-slate-800 text-sm flex items-center gap-2 mb-1">
+              <FileText className="w-4 h-4 text-indigo-600" /> Application Form
+            </h2>
+            <p className="text-xs text-slate-500 mb-5">Personalise what applicants see on the online application form.</p>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">Application Intro Text</label>
+                <textarea value={form.applicationIntroText || ''} onChange={e => field('applicationIntroText', e.target.value)} rows={2}
+                  placeholder="e.g. Thank you for your interest in enrolling at Greenfield Academy…"
+                  className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm resize-none" />
+              </div>
+              <div className="sm:w-64">
+                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">Application Deadline</label>
+                <input type="date" value={form.applicationDeadline || ''} onChange={e => field('applicationDeadline', e.target.value)}
+                  className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm" />
+                <p className="text-xs text-slate-400 mt-1">Shown as a countdown on the landing page.</p>
+              </div>
+            </div>
+          </section>
+
+          {/* Portal Dashboard */}
+          <section className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
+            <h2 className="font-bold text-slate-800 text-sm flex items-center gap-2 mb-1">
+              <Monitor className="w-4 h-4 text-indigo-600" /> Portal Dashboard
+            </h2>
+            <p className="text-xs text-slate-500 mb-5">Personalise the internal portal experience for your staff.</p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">App Display Name</label>
+                <input value={form.appDisplayName || ''} onChange={e => field('appDisplayName', e.target.value)}
+                  placeholder="e.g. Greenfield Academy Portal"
+                  className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm" />
+                <p className="text-xs text-slate-400 mt-1">Shown in the nav header instead of "AvenirSMS".</p>
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">Dashboard Welcome Banner</label>
+                <input value={form.dashboardBannerText || ''} onChange={e => field('dashboardBannerText', e.target.value)}
+                  placeholder="e.g. Welcome back! Have a great term."
+                  className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm" />
+              </div>
+              <div className="sm:col-span-2">
+                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">Student Portal Style</label>
+                <p className="text-xs text-slate-400 mb-2">Choose the visual feel of the student portal based on your students' age group.</p>
+                <div className="grid grid-cols-2 gap-3">
+                  {(['primary', 'secondary'] as const).map(tier => (
+                    <button
+                      key={tier}
+                      type="button"
+                      onClick={() => field('studentAgeTier', tier)}
+                      className={`p-4 rounded-2xl border-2 text-left transition-all ${
+                        (form.studentAgeTier || 'primary') === tier
+                          ? 'border-indigo-500 bg-indigo-50'
+                          : 'border-slate-200 bg-white hover:border-slate-300'
+                      }`}
+                    >
+                      <div className="text-2xl mb-1">{tier === 'primary' ? '🎨' : '📘'}</div>
+                      <p className="text-sm font-bold text-slate-900">
+                        {tier === 'primary' ? 'Primary (Playful)' : 'Secondary (Toned-down)'}
+                      </p>
+                      <p className="text-xs text-slate-500 mt-1">
+                        {tier === 'primary'
+                          ? 'Bright pastels, big emoji icons, illustrated headers — for younger students.'
+                          : 'Cleaner palette, smaller icons, no emoji — for teens.'}
+                      </p>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </section>
+
+          {/* URL Slug — super admin only */}
+          {isSuperAdmin && (
+            <section className="bg-white rounded-2xl border-2 border-purple-200 shadow-sm p-6">
+              <div className="flex items-center gap-2 mb-1">
+                <LinkIcon className="w-4 h-4 text-purple-600" />
+                <h2 className="font-bold text-slate-800 text-sm">Custom URL Slug</h2>
+                <span className="ml-auto text-xs font-bold text-purple-700 bg-purple-100 px-2 py-0.5 rounded-full">Super Admin Only</span>
+              </div>
+              <p className="text-xs text-slate-500 mb-5">
+                Give this school a short, memorable URL. The public landing page will be accessible at
+                {' '}<span className="font-mono text-purple-700">/s/&#123;your-slug&#125;</span> in addition to the raw school ID.
+              </p>
+
+              {form.urlSlug && (
+                <div className="mb-4 flex items-center gap-2 text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 px-3 py-2 rounded-xl">
+                  <CheckCircle2 className="w-4 h-4 shrink-0" />
+                  Current slug: <span className="font-mono font-bold">{form.urlSlug}</span>
+                  <a href={`/s/${form.urlSlug}`} target="_blank" rel="noopener noreferrer" className="ml-auto hover:text-emerald-800">
+                    <ExternalLink className="w-3.5 h-3.5" />
+                  </a>
+                </div>
+              )}
+
+              <div className="flex gap-3 items-start">
+                <div className="flex-1">
+                  <div className="flex items-center rounded-xl border border-slate-200 overflow-hidden focus-within:ring-2 focus-within:ring-indigo-500">
+                    <span className="px-3 py-2.5 bg-slate-50 text-slate-400 text-sm border-r border-slate-200 shrink-0">/s/</span>
+                    <input
+                      value={slugInput}
+                      onChange={e => {
+                        const v = e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, '');
+                        setSlugInput(v);
+                        setSlugAvailable(null);
+                      }}
+                      onBlur={() => checkSlugAvailability(slugInput.trim())}
+                      placeholder="greenfield-academy"
+                      className="flex-1 px-3 py-2.5 outline-none text-sm font-mono bg-white"
+                      maxLength={50}
+                    />
+                    {slugChecking && <Loader2 className="w-4 h-4 animate-spin text-slate-400 mx-2" />}
+                    {!slugChecking && slugAvailable === true && <CheckCircle2 className="w-4 h-4 text-emerald-500 mx-2" />}
+                    {!slugChecking && slugAvailable === false && <XCircle className="w-4 h-4 text-red-500 mx-2" />}
+                  </div>
+                  {slugAvailable === false && (
+                    <p className="text-xs text-red-600 mt-1">This slug is already taken by another school.</p>
+                  )}
+                  {slugAvailable === true && (
+                    <p className="text-xs text-emerald-600 mt-1">This slug is available!</p>
+                  )}
+                  <p className="text-xs text-slate-400 mt-1">Lowercase letters, numbers, and hyphens only. 3–50 characters.</p>
+                </div>
+                <button
+                  onClick={handleSaveSlug}
+                  disabled={slugSaving || slugAvailable === false}
+                  className="flex items-center gap-2 px-4 py-2.5 bg-purple-600 text-white font-bold rounded-xl hover:bg-purple-700 transition-all shadow-sm disabled:opacity-60 text-sm whitespace-nowrap"
+                >
+                  {slugSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                  Save Slug
+                </button>
+              </div>
+            </section>
+          )}
 
         </div>
       )}

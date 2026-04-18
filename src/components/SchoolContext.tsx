@@ -67,6 +67,13 @@ interface SchoolContextValue {
   logoUrl: string;
   faviconUrl: string;
   primaryColor: string;
+  secondaryColor: string;
+  sidebarStyle: 'dark' | 'light' | 'brand' | 'minimal';
+  appDisplayName: string;
+  fontFamily: string;
+  urlSlug: string;
+  /** Visual tier for the student portal: 'primary' = playful, 'secondary' = toned-down */
+  studentAgeTier: 'primary' | 'secondary';
   // Subject management
   subjectDefinitions: SubjectDefinition[];
   getSubjectsForClass: (className: string) => string[];
@@ -100,6 +107,12 @@ const SchoolContext = createContext<SchoolContextValue>({
   logoUrl: '',
   faviconUrl: '',
   primaryColor: '#4f46e5',
+  secondaryColor: '',
+  sidebarStyle: 'dark',
+  appDisplayName: '',
+  fontFamily: 'Inter',
+  urlSlug: '',
+  studentAgeTier: 'primary',
   subjectDefinitions: [],
   getSubjectsForClass: () => SUBJECTS,
 });
@@ -144,6 +157,91 @@ export function SchoolProvider({ children }: { children: React.ReactNode }) {
   const [logoUrl, setLogoUrl] = useState('');
   const [faviconUrl, setFaviconUrl] = useState('');
   const [primaryColor, setPrimaryColor] = useState('#4f46e5');
+  const [secondaryColor, setSecondaryColor] = useState('');
+  const [sidebarStyle, setSidebarStyle] = useState<'dark' | 'light' | 'brand' | 'minimal'>('dark');
+  const [appDisplayName, setAppDisplayName] = useState('');
+  const [fontFamily, setFontFamily] = useState('Inter');
+  const [urlSlug, setUrlSlug] = useState('');
+  const [studentAgeTier, setStudentAgeTier] = useState<'primary' | 'secondary'>('primary');
+
+  // Inject CSS brand variables + load Google Font whenever they change
+  useEffect(() => {
+    const root = document.documentElement.style;
+    root.setProperty('--color-brand', primaryColor);
+    root.setProperty('--color-brand-secondary', secondaryColor || primaryColor);
+
+    // Derive readable variants based on luminance.
+    const m = primaryColor.replace('#', '');
+    if (m.length === 6) {
+      const r = parseInt(m.slice(0, 2), 16);
+      const g = parseInt(m.slice(2, 4), 16);
+      const b = parseInt(m.slice(4, 6), 16);
+      const lum = (r * 299 + g * 587 + b * 114) / 1000;
+      const isLight = lum > 160;
+
+      // Text color to use ON the brand background (auto contrast)
+      root.setProperty('--color-brand-on', isLight ? '#0f172a' : '#ffffff');
+
+      // "Ink" — darkened brand color for use as text/accents on white backgrounds.
+      // For light brand colors, multiply RGB by 0.35 to get a readable dark version.
+      const ink = isLight
+        ? '#' + [r, g, b].map(c => Math.round(c * 0.35).toString(16).padStart(2, '0')).join('')
+        : primaryColor;
+      root.setProperty('--color-brand-ink', ink);
+    }
+  }, [primaryColor, secondaryColor]);
+
+  useEffect(() => {
+    if (!fontFamily || fontFamily === 'Inter') return;
+    const id = 'google-font-link';
+    let link = document.getElementById(id) as HTMLLinkElement | null;
+    if (!link) {
+      link = document.createElement('link');
+      link.id = id;
+      link.rel = 'stylesheet';
+      document.head.appendChild(link);
+    }
+    link.href = `https://fonts.googleapis.com/css2?family=${encodeURIComponent(fontFamily)}:wght@400;500;600;700&display=swap`;
+    document.documentElement.style.setProperty('--font-brand', `'${fontFamily}', sans-serif`);
+  }, [fontFamily]);
+
+  // ── Reset all school-scoped state synchronously when schoolId changes ──────
+  // This prevents stale data from School A briefly appearing in dropdowns/forms
+  // while School B's subscriptions are loading (super_admin school-switching).
+  useEffect(() => {
+    if (!schoolId) {
+      // super_admin returning to platform dashboard — reset everything to defaults
+      setSchoolLevels([...SCHOOL_CLASSES]);
+      setPeriodTimes([...DEFAULT_PERIOD_TIMES]);
+      setCustomSubjects([]);
+      setCurrentSession(CURRENT_SESSION);
+      setTermStructure('3-term');
+      setLocale('en');
+      setCurrency('USD');
+      setCountry('');
+      setTimezone('');
+      setPhoneCountryCode('');
+      setGradingSystem('percentage');
+      setCustomGradingScale([]);
+      setTaxModel('none');
+      setTaxFlatRate(0);
+      setCloudinaryConfig({ cloudName: '', uploadPreset: '' });
+      setSchoolName('Avenir SIS');
+      setLogoUrl('');
+      setFaviconUrl('');
+      setPrimaryColor('#4f46e5');
+      setSecondaryColor('');
+      setSidebarStyle('dark');
+      setAppDisplayName('');
+      setFontFamily('Inter');
+      setUrlSlug('');
+      setSubjectDefinitions([]);
+      setClasses([]);
+      setClassNames(SCHOOL_CLASSES);
+    }
+    // When schoolId is set we intentionally let the onSnapshot subscriptions
+    // below overwrite the state — no reset needed (new school's data arrives fast).
+  }, [schoolId]);
 
   // Subscribe to school_settings/{schoolId}
   useEffect(() => {
@@ -178,6 +276,12 @@ export function SchoolProvider({ children }: { children: React.ReactNode }) {
           setLogoUrl(data.logoUrl || '');
           setFaviconUrl(data.faviconUrl || '');
           setPrimaryColor(data.primaryColor || '#4f46e5');
+          setSecondaryColor(data.secondaryColor || '');
+          setSidebarStyle(data.sidebarStyle || 'dark');
+          setAppDisplayName(data.appDisplayName || '');
+          setFontFamily(data.fontFamily || 'Inter');
+          setUrlSlug(data.urlSlug || '');
+          setStudentAgeTier(data.studentAgeTier === 'secondary' ? 'secondary' : 'primary');
         }
       },
       () => { /* silently fall back to defaults on error */ }
@@ -195,13 +299,15 @@ export function SchoolProvider({ children }: { children: React.ReactNode }) {
     }
     setLoading(true);
     const unsub = onSnapshot(
-      query(collection(db, 'classes'), where('schoolId', '==', schoolId), orderBy('name', 'asc')),
+      query(collection(db, 'classes'), where('schoolId', '==', schoolId)),
       snap => {
         if (snap.empty) {
           setClasses([]);
           setClassNames(SCHOOL_CLASSES);
         } else {
-          const list = snap.docs.map(d => ({ id: d.id, ...d.data() } as SchoolClass));
+          const list = snap.docs
+            .map(d => ({ id: d.id, ...d.data() } as SchoolClass))
+            .sort((a, b) => a.name.localeCompare(b.name));
           setClasses(list);
           setClassNames(list.map(c => c.name));
         }
@@ -276,6 +382,12 @@ export function SchoolProvider({ children }: { children: React.ReactNode }) {
       logoUrl,
       faviconUrl,
       primaryColor,
+      secondaryColor,
+      sidebarStyle,
+      appDisplayName,
+      fontFamily,
+      urlSlug,
+      studentAgeTier,
       subjectDefinitions,
       getSubjectsForClass,
     }}>

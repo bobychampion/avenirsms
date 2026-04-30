@@ -119,6 +119,7 @@ export default function SchoolList() {
               <thead className="bg-slate-50 border-b border-slate-100">
                 <tr>
                   <th className="text-left px-5 py-3 font-semibold text-slate-600">School</th>
+                  <th className="text-left px-4 py-3 font-semibold text-slate-600">Slug</th>
                   <th className="text-left px-4 py-3 font-semibold text-slate-600">Status</th>
                   <th className="text-left px-4 py-3 font-semibold text-slate-600">Plan</th>
                   <th className="text-left px-4 py-3 font-semibold text-slate-600">Admin Email</th>
@@ -131,7 +132,9 @@ export default function SchoolList() {
                   <tr key={school.id} className="hover:bg-slate-50/60 transition-colors">
                     <td className="px-5 py-3">
                       <p className="font-semibold text-slate-800">{school.name}</p>
-                      <p className="text-xs text-slate-400 font-mono">{school.id}</p>
+                    </td>
+                    <td className="px-4 py-3">
+                      <span className="font-mono text-xs bg-slate-100 text-slate-600 px-2 py-0.5 rounded-lg">{school.urlSlug || school.id}</span>
                     </td>
                     <td className="px-4 py-3">{statusBadge(school.status)}</td>
                     <td className="px-4 py-3">{planBadge(school.subscriptionPlan)}</td>

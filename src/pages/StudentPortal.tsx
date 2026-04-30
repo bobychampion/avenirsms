@@ -27,6 +27,7 @@ import {
 import {
   BookOpen, Trophy, Calendar, Clock, MessageCircle, Send,
   CheckCircle2, AlertCircle, Sparkles, User, Mail, Hash,
+  Phone, MapPin, Heart, Pencil, Save, X, Camera,
 } from 'lucide-react';
 
 /* ════════════════════════════════════════════════════════════════════════
@@ -467,7 +468,7 @@ export function StudentMessages() {
         content: reply.trim(),
         timestamp: serverTimestamp(),
         read: false,
-        schoolId: schoolId ?? undefined,
+        schoolId: schoolId ?? 'main',
       });
       setReply('');
     } finally {
@@ -557,49 +558,347 @@ export function StudentMessages() {
 }
 
 /* ════════════════════════════════════════════════════════════════════════
- * 5. PROFILE — student account info
+ * 5. PROFILE — student account info + self-edit
  * ════════════════════════════════════════════════════════════════════════ */
+
+const AVATAR_EMOJIS = [
+  '🦁','🐯','🐻','🦊','🐼','🐨','🐸','🐧','🦋','🦄',
+  '🐬','🦅','🐙','🦀','🌻','🌈','⭐','🚀','🎸','⚽',
+];
+
+const AVATAR_COLORS = [
+  'from-indigo-400 to-purple-500',
+  'from-pink-400 to-rose-500',
+  'from-amber-400 to-orange-500',
+  'from-emerald-400 to-teal-500',
+  'from-sky-400 to-blue-500',
+  'from-violet-400 to-fuchsia-500',
+];
+
 export function StudentProfile() {
-  const { profile } = useAuth();
+  const { user, profile } = useAuth();
   const { student, loading } = useCurrentStudent();
   const { schoolName } = useSchool();
+
+  // Editable fields stored locally (and synced to Firestore)
+  const [editing, setEditing] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [showAvatarPicker, setShowAvatarPicker] = useState(false);
+
+  const [nickname, setNickname] = useState('');
+  const [bio, setBio] = useState('');
+  const [phone, setPhone] = useState('');
+  const [address, setAddress] = useState('');
+  const [avatarEmoji, setAvatarEmoji] = useState('🦁');
+  const [avatarColor, setAvatarColor] = useState(AVATAR_COLORS[0]);
+  const [hobbyList, setHobbyList] = useState('');
+
+  // Hydrate from student doc on load
+  useEffect(() => {
+    if (!student) return;
+    const extra = (student as any).studentExtra ?? {};
+    setNickname(extra.nickname ?? '');
+    setBio(extra.bio ?? '');
+    setPhone(extra.phone ?? student.phone ?? '');
+    setAddress(extra.address ?? student.homeAddress ?? '');
+    setAvatarEmoji(extra.avatarEmoji ?? '🦁');
+    setAvatarColor(extra.avatarColor ?? AVATAR_COLORS[0]);
+    setHobbyList(extra.hobbies ?? '');
+  }, [student]);
+
+  const handleSave = async () => {
+    if (!student?.id) return;
+    setSaving(true);
+    try {
+      await updateDoc(doc(db, 'students', student.id), {
+        studentExtra: {
+          nickname,
+          bio,
+          phone,
+          address,
+          avatarEmoji,
+          avatarColor,
+          hobbies: hobbyList,
+        },
+      });
+      setEditing(false);
+    } catch {
+      // silently fail — non-critical
+    } finally {
+      setSaving(false);
+    }
+  };
 
   if (loading) return <LoadingCard />;
   if (!student) return <NoStudentLinked />;
 
+  const firstName = student.studentName.split(' ')[0];
+  const displayName = nickname ? `${firstName} "${nickname}"` : student.studentName;
+
+  // Attendance badge label
+  const statusColor: Record<string, string> = {
+    active: 'bg-emerald-100 text-emerald-700',
+    graduated: 'bg-blue-100 text-blue-700',
+    suspended: 'bg-red-100 text-red-700',
+    withdrawn: 'bg-slate-100 text-slate-600',
+  };
+
   return (
-    <div className="space-y-5">
-      <div className="rounded-3xl bg-gradient-to-br from-indigo-500 via-purple-500 to-pink-500 text-white p-6 shadow-lg text-center">
-        <div className="w-20 h-20 mx-auto rounded-full bg-white/20 flex items-center justify-center text-3xl font-extrabold ring-4 ring-white/30">
-          {student.studentName?.[0]?.toUpperCase()}
+    <div className="space-y-5 pb-4">
+
+      {/* ── Hero card ── */}
+      <div className={`rounded-3xl bg-gradient-to-br ${avatarColor} text-white p-6 shadow-xl relative overflow-hidden`}>
+        {/* Decorative blobs */}
+        <div className="absolute -top-6 -right-6 w-32 h-32 bg-white/10 rounded-full" />
+        <div className="absolute -bottom-8 -left-4 w-24 h-24 bg-white/10 rounded-full" />
+
+        <div className="relative flex flex-col items-center text-center gap-3">
+          {/* Avatar */}
+          <button
+            onClick={() => setShowAvatarPicker(true)}
+            className="relative group"
+            title="Change avatar"
+          >
+            <div className="w-24 h-24 rounded-full bg-white/20 ring-4 ring-white/40 flex items-center justify-center text-5xl shadow-lg transition-transform group-hover:scale-105">
+              {avatarEmoji}
+            </div>
+            <div className="absolute bottom-0 right-0 w-7 h-7 bg-white rounded-full flex items-center justify-center shadow-md">
+              <Camera className="w-3.5 h-3.5 text-slate-600" />
+            </div>
+          </button>
+
+          <div>
+            <h1 className="text-2xl font-extrabold drop-shadow-sm">{displayName}</h1>
+            {nickname && <p className="text-sm text-white/80 font-medium">{student.studentName}</p>}
+            <div className="mt-1 flex items-center justify-center gap-2 flex-wrap">
+              <span className="text-xs bg-white/20 px-3 py-1 rounded-full font-bold">{student.currentClass}</span>
+              <span className="text-xs bg-white/20 px-3 py-1 rounded-full font-bold">{schoolName}</span>
+            </div>
+          </div>
+
+          {/* Edit / Save button */}
+          <div className="flex gap-2 mt-1">
+            {editing ? (
+              <>
+                <button
+                  onClick={handleSave}
+                  disabled={saving}
+                  className="flex items-center gap-1.5 bg-white text-slate-800 font-bold text-xs px-4 py-2 rounded-full shadow-md hover:shadow-lg transition-all disabled:opacity-60"
+                >
+                  <Save className="w-3.5 h-3.5" />
+                  {saving ? 'Saving…' : 'Save'}
+                </button>
+                <button
+                  onClick={() => setEditing(false)}
+                  className="flex items-center gap-1.5 bg-white/20 text-white font-bold text-xs px-3 py-2 rounded-full transition-all"
+                >
+                  <X className="w-3.5 h-3.5" />
+                  Cancel
+                </button>
+              </>
+            ) : (
+              <button
+                onClick={() => setEditing(true)}
+                className="flex items-center gap-1.5 bg-white/20 hover:bg-white/30 text-white font-bold text-xs px-4 py-2 rounded-full transition-all"
+              >
+                <Pencil className="w-3.5 h-3.5" />
+                Edit Profile
+              </button>
+            )}
+          </div>
         </div>
-        <h1 className="mt-3 text-xl font-extrabold">{student.studentName}</h1>
-        <p className="text-sm text-white/90">{student.currentClass} • {schoolName}</p>
       </div>
 
-      <section className="rounded-3xl bg-white/90 border border-white p-5 shadow-sm space-y-3">
-        <ProfileRow icon={<Hash className="w-4 h-4" />} label="Student ID" value={student.studentId} />
-        <ProfileRow icon={<Mail className="w-4 h-4" />} label="Email" value={profile?.email || student.email || '—'} />
-        <ProfileRow icon={<User className="w-4 h-4" />} label="Guardian" value={student.guardianName || '—'} />
-        <ProfileRow icon={<Sparkles className="w-4 h-4" />} label="Status" value={student.admissionStatus || '—'} />
+      {/* ── Avatar picker modal ── */}
+      {showAvatarPicker && (
+        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-end justify-center p-4">
+          <div className="bg-white rounded-3xl w-full max-w-sm p-6 shadow-2xl">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="font-extrabold text-slate-900 text-lg">Pick your avatar 🎨</h3>
+              <button onClick={() => setShowAvatarPicker(false)} className="p-1.5 rounded-full hover:bg-slate-100">
+                <X className="w-5 h-5 text-slate-600" />
+              </button>
+            </div>
+
+            <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Choose an emoji</p>
+            <div className="grid grid-cols-5 gap-2 mb-4">
+              {AVATAR_EMOJIS.map(e => (
+                <button
+                  key={e}
+                  onClick={() => setAvatarEmoji(e)}
+                  className={`text-3xl p-2 rounded-2xl transition-all ${avatarEmoji === e ? 'bg-indigo-100 ring-2 ring-indigo-400 scale-110' : 'hover:bg-slate-50'}`}
+                >
+                  {e}
+                </button>
+              ))}
+            </div>
+
+            <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Choose a colour</p>
+            <div className="flex gap-2 flex-wrap mb-5">
+              {AVATAR_COLORS.map(c => (
+                <button
+                  key={c}
+                  onClick={() => setAvatarColor(c)}
+                  className={`w-9 h-9 rounded-full bg-gradient-to-br ${c} transition-transform ${avatarColor === c ? 'scale-125 ring-2 ring-offset-1 ring-slate-400' : 'hover:scale-110'}`}
+                />
+              ))}
+            </div>
+
+            <button
+              onClick={() => setShowAvatarPicker(false)}
+              className="w-full py-3 bg-indigo-600 text-white font-bold rounded-2xl hover:bg-indigo-700 transition-colors"
+            >
+              Done ✓
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ── About me card ── */}
+      <section className="rounded-3xl bg-white/90 border border-white p-5 shadow-sm space-y-4">
+        <h2 className="font-extrabold text-slate-800 flex items-center gap-2">
+          <span className="text-xl">✨</span> About Me
+        </h2>
+
+        {editing ? (
+          <div className="space-y-3">
+            <div>
+              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">Nickname (optional)</label>
+              <input
+                value={nickname}
+                onChange={e => setNickname(e.target.value)}
+                placeholder="e.g. Tiger, Champ, Daisy…"
+                maxLength={20}
+                className="w-full px-3 py-2.5 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
+              />
+            </div>
+            <div>
+              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">My Bio 📝</label>
+              <textarea
+                value={bio}
+                onChange={e => setBio(e.target.value)}
+                placeholder="Tell us something cool about yourself…"
+                rows={3}
+                maxLength={150}
+                className="w-full px-3 py-2.5 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 resize-none"
+              />
+              <p className="text-[10px] text-slate-400 text-right">{bio.length}/150</p>
+            </div>
+            <div>
+              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">Hobbies & Interests 🎯</label>
+              <input
+                value={hobbyList}
+                onChange={e => setHobbyList(e.target.value)}
+                placeholder="e.g. Football, Reading, Drawing…"
+                maxLength={80}
+                className="w-full px-3 py-2.5 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
+              />
+            </div>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {bio ? (
+              <p className="text-sm text-slate-700 leading-relaxed bg-indigo-50 rounded-2xl px-4 py-3 border border-indigo-100 italic">
+                "{bio}"
+              </p>
+            ) : (
+              <p className="text-sm text-slate-400 italic">No bio yet — tap Edit Profile to add one! 😊</p>
+            )}
+            {hobbyList && (
+              <div className="flex flex-wrap gap-2">
+                {hobbyList.split(',').map(h => h.trim()).filter(Boolean).map(h => (
+                  <span key={h} className="px-3 py-1 rounded-full bg-pink-50 border border-pink-100 text-xs font-bold text-pink-700">
+                    {h}
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
       </section>
 
+      {/* ── School info card (read-only) ── */}
+      <section className="rounded-3xl bg-white/90 border border-white p-5 shadow-sm space-y-3">
+        <h2 className="font-extrabold text-slate-800 flex items-center gap-2">
+          <span className="text-xl">🏫</span> School Info
+        </h2>
+        <ProfileRow icon="🪪" label="Student ID" value={student.studentId} />
+        <ProfileRow icon="📧" label="Email" value={profile?.email || student.email || '—'} />
+        <ProfileRow icon="🎓" label="Class" value={student.currentClass} />
+        {student.admissionStatus && (
+          <div className="flex items-center gap-3">
+            <div className="w-8 h-8 rounded-lg bg-slate-100 flex items-center justify-center text-base">📋</div>
+            <div className="flex-1">
+              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Status</p>
+              <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${statusColor[student.admissionStatus] ?? 'bg-slate-100 text-slate-600'}`}>
+                {student.admissionStatus}
+              </span>
+            </div>
+          </div>
+        )}
+      </section>
+
+      {/* ── Contact info card (partially editable) ── */}
+      <section className="rounded-3xl bg-white/90 border border-white p-5 shadow-sm space-y-3">
+        <h2 className="font-extrabold text-slate-800 flex items-center gap-2">
+          <span className="text-xl">📱</span> Contact
+        </h2>
+        {editing ? (
+          <div className="space-y-3">
+            <div>
+              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">Phone</label>
+              <input
+                value={phone}
+                onChange={e => setPhone(e.target.value)}
+                placeholder="Your phone number"
+                className="w-full px-3 py-2.5 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
+              />
+            </div>
+            <div>
+              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">Home Address</label>
+              <input
+                value={address}
+                onChange={e => setAddress(e.target.value)}
+                placeholder="Your home address"
+                className="w-full px-3 py-2.5 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
+              />
+            </div>
+          </div>
+        ) : (
+          <>
+            <ProfileRow icon="📞" label="Phone" value={phone || student.phone || '—'} />
+            <ProfileRow icon="🏠" label="Address" value={address || student.homeAddress || '—'} />
+            {student.guardianName && (
+              <ProfileRow icon="👨‍👩‍👦" label="Guardian" value={`${student.guardianName}${student.guardianRelationship ? ` (${student.guardianRelationship})` : ''}`} />
+            )}
+          </>
+        )}
+      </section>
+
+      {/* ── Medical note ── */}
       {student.medicalConditions && (
         <section className="rounded-3xl bg-amber-50 border border-amber-200 p-4">
-          <p className="text-xs font-bold text-amber-700 uppercase tracking-wider flex items-center gap-1">
-            <AlertCircle className="w-3 h-3" /> Medical
+          <p className="text-xs font-bold text-amber-700 uppercase tracking-wider flex items-center gap-1 mb-1">
+            <AlertCircle className="w-3.5 h-3.5" /> Medical Note
           </p>
-          <p className="mt-1 text-sm text-amber-900">{student.medicalConditions}</p>
+          <p className="text-sm text-amber-900 leading-relaxed">{student.medicalConditions}</p>
         </section>
       )}
+
+      {/* ── Fun motivational footer ── */}
+      <div className="rounded-3xl bg-gradient-to-r from-amber-400 to-orange-400 text-white p-5 text-center shadow-lg">
+        <p className="text-3xl mb-1">🌟</p>
+        <p className="font-extrabold text-lg">Keep shining, {firstName}!</p>
+        <p className="text-sm text-white/90 mt-1">Every day is a chance to learn something new.</p>
+      </div>
     </div>
   );
 }
 
-function ProfileRow({ icon, label, value }: { icon: React.ReactNode; label: string; value: React.ReactNode }) {
+function ProfileRow({ icon, label, value }: { icon: string; label: string; value: React.ReactNode }) {
   return (
     <div className="flex items-center gap-3">
-      <div className="w-8 h-8 rounded-lg bg-slate-100 text-slate-500 flex items-center justify-center">{icon}</div>
+      <div className="w-8 h-8 rounded-lg bg-slate-100 flex items-center justify-center text-base">{icon}</div>
       <div className="flex-1">
         <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">{label}</p>
         <p className="text-sm font-bold text-slate-900">{value}</p>

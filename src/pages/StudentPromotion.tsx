@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { db } from '../firebase';
 import {
   collection, query, where, getDocs, onSnapshot,
-  writeBatch, doc, addDoc, serverTimestamp, orderBy,
+  writeBatch, doc, serverTimestamp, orderBy,
   updateDoc, deleteDoc
 } from 'firebase/firestore';
 import { Student, CURRENT_SESSION } from '../types';
@@ -168,10 +168,13 @@ export default function StudentPromotion() {
 
       await batch.commit();
 
-      // Write promotion log records
+      // Write promotion log records atomically in a second batch
+      // (Firestore batch limit is 500 — schools typically have < 500 students per class)
+      const logBatch = writeBatch(db);
       for (const rec of promotionDocs) {
-        await addDoc(collection(db, 'promotions'), rec);
+        logBatch.set(doc(collection(db, 'promotions')), rec);
       }
+      await logBatch.commit();
 
       toast.success(
         `Done! ${promoteCount} promoted · ${detainCount} detained · ${graduateCount} graduated`,

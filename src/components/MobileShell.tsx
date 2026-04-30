@@ -2,11 +2,12 @@ import React, { useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import {
   GraduationCap, LogOut, LayoutDashboard, CheckSquare, Home,
-  Users, Bell, Download, X
+  Users, Bell, Download, X, WifiOff
 } from 'lucide-react';
 import { useAuth } from './FirebaseProvider';
 import { useSchool } from './SchoolContext';
 import { usePWAInstall } from '../hooks/usePWAInstall';
+import { useOfflineStatus } from '../hooks/useOfflineStatus';
 import { cn } from '../lib/utils';
 
 interface TabItem {
@@ -43,6 +44,7 @@ export function MobileShell({ children, role }: MobileShellProps) {
   const location = useLocation();
   const { canInstall, isIOS, isInstalled, promptInstall } = usePWAInstall();
   const [showIOSHint, setShowIOSHint] = useState(() => isIOS && !isInstalled);
+  const isOffline = useOfflineStatus();
 
   const tabs = role === 'admin' ? adminTabs : role === 'teacher' ? teacherTabs : parentTabs;
 
@@ -121,6 +123,14 @@ export function MobileShell({ children, role }: MobileShellProps) {
           <button onClick={() => setShowIOSHint(false)} className="text-indigo-400 hover:text-indigo-600 p-0.5">
             <X className="w-3.5 h-3.5" />
           </button>
+        </div>
+      )}
+
+      {/* ── OFFLINE BANNER ── */}
+      {isOffline && (
+        <div className="mx-3 mt-3 bg-amber-50 border border-amber-200 rounded-2xl p-2.5 flex items-center gap-2">
+          <WifiOff className="w-4 h-4 text-amber-600 flex-shrink-0" />
+          <p className="text-xs text-amber-700 font-semibold">You're offline — showing cached data</p>
         </div>
       )}
 

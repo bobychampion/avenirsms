@@ -24,7 +24,6 @@ const NAV_LINKS = [
   { label: 'Features', href: '#features' },
   { label: 'Modules', href: '#modules' },
   { label: 'Career Discovery', href: '#avenir-career' },
-  { label: 'Pricing', href: '#pricing' },
   { label: 'About', href: '#about' },
   { label: 'Contact', href: '#contact' },
 ];
@@ -679,10 +678,6 @@ export default function LandingPage() {
                   className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold px-8 py-4 rounded-2xl shadow-lg shadow-indigo-900/40 transition-all flex items-center justify-center gap-2 text-sm">
                   Request a Free Demo <ArrowRight className="w-4 h-4" />
                 </button>
-                <button onClick={() => scrollTo('pricing')}
-                  className="bg-white/10 hover:bg-white/20 border border-white/20 text-white font-bold px-8 py-4 rounded-2xl transition-all text-sm">
-                  View Pricing
-                </button>
               </div>
 
               <div className="mt-8 flex items-center gap-4">
@@ -1082,41 +1077,6 @@ export default function LandingPage() {
               </motion.div>
             ))}
           </div>
-        </div>
-      </section>
-
-      {/* ─── PRICING ─── */}
-      <section id="pricing" className="py-24 bg-white">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="text-center max-w-2xl mx-auto mb-12">
-            <SectionLabel><CreditCard className="w-3.5 h-3.5" /> Pricing</SectionLabel>
-            <h2 className="text-4xl font-extrabold text-slate-900 mb-4">Simple, Transparent Pricing</h2>
-            <p className="text-slate-500 text-lg">Choose the plan that fits your school's size. All plans billed in Nigerian Naira.</p>
-          </div>
-
-          {/* Billing Toggle */}
-          <div className="flex items-center justify-center gap-3 mb-10">
-            <span className={`text-sm font-semibold ${!yearlyBilling ? 'text-slate-900' : 'text-slate-400'}`}>Monthly</span>
-            <button
-              onClick={() => setYearlyBilling(!yearlyBilling)}
-              className={`relative w-12 h-6 rounded-full transition-colors ${yearlyBilling ? 'bg-indigo-600' : 'bg-slate-300'}`}
-            >
-              <span className={`absolute top-1 w-4 h-4 bg-white rounded-full shadow transition-transform ${yearlyBilling ? 'translate-x-7' : 'translate-x-1'}`} />
-            </button>
-            <span className={`text-sm font-semibold ${yearlyBilling ? 'text-slate-900' : 'text-slate-400'}`}>
-              Yearly <span className="bg-emerald-100 text-emerald-700 text-xs font-bold px-2 py-0.5 rounded-full ml-1">Save 17%</span>
-            </span>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 max-w-5xl mx-auto">
-            {PLANS.map((plan, i) => (
-              <PricingCard key={i} plan={plan} yearly={yearlyBilling} onDemo={() => setDemoOpen(true)} />
-            ))}
-          </div>
-
-          <p className="text-center text-sm text-slate-400 mt-8">
-            All prices in Nigerian Naira (₦). Annual plan = pay for 10 months, get 12 months. VAT may apply.
-          </p>
         </div>
       </section>
 

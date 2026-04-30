@@ -281,3 +281,48 @@ Write 2–3 short paragraphs. Include a call to action (contact the bursar or ma
   });
   return response.text;
 }
+
+/**
+ * Given a list of raw CSV/Excel column headers, ask Gemini to map them
+ * to known Student fields. Returns a JSON object like:
+ * { "Full Name": "studentName", "Class": "currentClass", ... }
+ */
+export async function mapColumnsToStudentFields(headers: string[]): Promise<Record<string, string>> {
+  const ai = getAI();
+  const knownFields = [
+    'studentName', 'email', 'phone', 'dob', 'gender', 'currentClass',
+    'guardianName', 'guardianPhone', 'guardianEmail', 'homeAddress',
+    'stateOfOrigin', 'bloodGroup', 'religion', 'nin', 'nationality', 'lga',
+  ];
+  const prompt = `You are a data mapping assistant. Given these CSV column headers from a school student list:
+${JSON.stringify(headers)}
+
+Map each header to the closest matching field from this list:
+${JSON.stringify(knownFields)}
+
+Rules:
+- Return ONLY a valid JSON object, no markdown, no explanation.
+- Keys are the original headers, values are the matched field names.
+- If a header doesn't match any field, map it to null.
+- Be smart about variations: "Full Name" → "studentName", "Class" → "currentClass", "Date of Birth" → "dob", etc.
+
+Example output: {"Full Name":"studentName","Class":"currentClass","DOB":"dob"}`;
+
+  try {
+    const response = await ai.models.generateContent({
+      model: 'gemini-2.5-flash',
+      contents: [{ parts: [{ text: prompt }] }],
+    });
+    const text = (response.text ?? '').trim();
+    // Strip markdown code fences if present
+    const clean = text.replace(/^```[a-z]*\n?/i, '').replace(/\n?```$/i, '').trim();
+    return JSON.parse(clean);
+  } catch {
+    // Fallback: identity mapping for exact matches
+    const fallback: Record<string, string> = {};
+    for (const h of headers) {
+      fallback[h] = knownFields.includes(h) ? h : '';
+    }
+    return fallback;
+  }
+}

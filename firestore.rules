@@ -80,6 +80,24 @@ service cloud.firestore {
       return email is string && email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$");
     }
 
+    /**
+     * Returns true if the email is a platform super-admin reserved address.
+     * These emails MUST only ever hold the 'super_admin' role.
+     */
+    function isSuperAdminReservedEmail(email) {
+      return email in ['jabpa87@gmail.com', 'bobychampion87@gmail.com'];
+    }
+
+    /**
+     * A document is safe to write only if it does not try to assign a
+     * non-super_admin role to a reserved super-admin email address.
+     */
+    function emailRoleConsistent(data) {
+      let email = data.get('email', '').lower();
+      let role  = data.get('role', '');
+      return !(isSuperAdminReservedEmail(email) && role != 'super_admin');
+    }
+
     // ─── Platform-level: schools collection ───────────────────────────────────
 
     match /schools/{schoolId} {
@@ -104,6 +122,12 @@ service cloud.firestore {
       allow write: if isSuperAdmin();
     }
 
+    // ─── Platform Invoices (subscription billing — super_admin only) ──────────
+
+    match /platform_invoices/{invoiceId} {
+      allow read, write: if isSuperAdmin();
+    }
+
     // ─── Geofences (keyed by schoolId) ────────────────────────────────────────
 
     match /geofences/{schoolId} {
@@ -123,16 +147,21 @@ service cloud.firestore {
                      (isAdmin() || isTeacher()) &&
                      resource.data.get('schoolId', null) == userProfile().schoolId);
 
-      allow create: if isAuthenticated() && isOwner(userId) &&
-                    request.resource.data.role in ['applicant', 'student', 'teacher', 'parent', 'admin',
-                                                   'School_admin', 'accountant', 'hr', 'librarian',
-                                                   'staff', 'super_admin'];
+      allow create: if emailRoleConsistent(request.resource.data) && (
+                    // User creating their own profile on first sign-in
+                    (isAuthenticated() && isOwner(userId)) ||
+                    // Admin provisioning any school-scoped account (students, parents, staff)
+                    (isAdmin() &&
+                     request.resource.data.get('schoolId', null) == userProfile().schoolId &&
+                     !(request.resource.data.get('role', '') in ['super_admin', 'admin', 'School_admin'])) ||
+                    isSuperAdmin());
 
-      allow update: if isSuperAdmin() ||
+      allow update: if emailRoleConsistent(request.resource.data) && (
+                    isSuperAdmin() ||
                     (isAdmin() && resource.data.get('schoolId', null) == userProfile().schoolId) ||
                     (isOwner(userId) &&
                      request.resource.data.role == resource.data.role &&
-                     request.resource.data.get('schoolId', null) == resource.data.get('schoolId', null));
+                     request.resource.data.get('schoolId', null) == resource.data.get('schoolId', null)));
 
       allow delete: if isSuperAdmin() || (isAdmin() && docBelongsToCallerSchool());
     }
@@ -148,15 +177,25 @@ service cloud.firestore {
     match /applications/{applicationId} {
       allow read: if isSuperAdmin() ||
                     (isAuthenticated() && resource.data.applicantUid == request.auth.uid) ||
-                    (isAdmin() && docBelongsToCallerSchool()) ||
+                    (isAdmin() && (docBelongsToCallerSchool() || resource.data.get('schoolId', null) == null)) ||
                     (isTeacher() && docBelongsToCallerSchool());
 
-      allow create: if isAuthenticated() &&
-                    request.resource.data.applicantUid == request.auth.uid &&
-                    request.resource.data.status == 'pending';
+      // Public admissions form: allow unauthenticated submissions too.
+      // Authenticated users must still match their own uid.
+      allow create: if request.resource.data.status == 'pending' &&
+                    request.resource.data.applicantName is string &&
+                    request.resource.data.applicantName.size() > 0 &&
+                    (
+                      !isAuthenticated() ||
+                      request.resource.data.applicantUid == request.auth.uid
+                    );
 
       allow update: if isSuperAdmin() ||
-                    (isAdmin() && docBelongsToCallerSchool()) ||
+                    (isAdmin() && (
+                      docBelongsToCallerSchool() ||
+                      // Allow admin to update/claim applications with no schoolId (submitted via generic /apply)
+                      resource.data.get('schoolId', null) == null
+                    )) ||
                     (isAuthenticated() &&
                      resource.data.applicantUid == request.auth.uid &&
                      resource.data.status == 'pending');
@@ -174,7 +213,28 @@ service cloud.firestore {
                       resource.data.get('guardianEmail', '') == request.auth.token.email ||
                       resource.data.get('guardianUserId', '') == request.auth.uid
                     ));
-      allow write: if isSuperAdmin() || (isAdmin() && newDocBelongsToCallerSchool());
+      // Admins can write any field; students may only update their own studentExtra sub-object
+      allow create: if (isSuperAdmin() || (isAdmin() && newDocBelongsToCallerSchool())) &&
+                    !isSuperAdminReservedEmail(request.resource.data.get('email', '').lower()) &&
+                    !isSuperAdminReservedEmail(request.resource.data.get('guardianEmail', '').lower());
+      allow update: if (isSuperAdmin() ||
+                    (isAdmin() && docBelongsToCallerSchool()) ||
+                    (isStudent() &&
+                     resource.data.get('email', '') == request.auth.token.email &&
+                     request.resource.data.diff(resource.data).affectedKeys().hasOnly(['studentExtra']))) &&
+                    !isSuperAdminReservedEmail(request.resource.data.get('email', '').lower()) &&
+                    !isSuperAdminReservedEmail(request.resource.data.get('guardianEmail', '').lower());
+      allow delete: if isSuperAdmin() || (isAdmin() && docBelongsToCallerSchool());
+    }
+
+    // ─── Student Login Index ───────────────────────────────────────────────────
+    // Minimal public-readable lookup: studentId → loginEmail, scoped by schoolId.
+    // Document ID = "{schoolId}_{studentId}" (uppercased).
+    // Anyone can read (needed for pre-auth login lookup). Admins of the school can write.
+    match /student_logins/{entryId} {
+      allow read: if true;
+      allow write: if isSuperAdmin() ||
+                     (isAdmin() && request.resource.data.get('schoolId', null) == userProfile().schoolId);
     }
 
     // ─── Guardians ────────────────────────────────────────────────────────────
@@ -189,7 +249,9 @@ service cloud.firestore {
     // ─── Classes & class subjects ──────────────────────────────────────────────
 
     match /classes/{classId} {
-      allow read: if isAuthenticated() && (isSuperAdmin() || docBelongsToCallerSchool());
+      // Public read: unauthenticated applicants need to see the class list on the Apply page.
+      // Authenticated users are restricted to their own school.
+      allow read: if !isAuthenticated() || isSuperAdmin() || docBelongsToCallerSchool();
       allow write: if isSuperAdmin() || (isAdmin() && newDocBelongsToCallerSchool());
     }
 
@@ -261,8 +323,10 @@ service cloud.firestore {
     match /messages/{messageId} {
       allow read: if isAuthenticated() && (
         isSuperAdmin() ||
-        request.auth.uid == resource.data.senderId ||
-        request.auth.uid == resource.data.receiverId
+        (docBelongsToCallerSchool() && (
+          request.auth.uid == resource.data.senderId ||
+          request.auth.uid == resource.data.receiverId
+        ))
       );
       allow create: if isAuthenticated() && newDocBelongsToCallerSchool();
       allow update: if isAuthenticated() && (
@@ -332,15 +396,18 @@ service cloud.firestore {
       allow read: if isAuthenticated() && (
         isSuperAdmin() ||
         (isAdmin() && docBelongsToCallerSchool()) ||
-        resource.data.get('recipientId', '') == request.auth.uid
+        (docBelongsToCallerSchool() && resource.data.get('recipientId', '') == request.auth.uid)
       );
       allow create: if isAuthenticated() && newDocBelongsToCallerSchool();
-      allow update: if isAuthenticated() && resource.data.get('recipientId', '') == request.auth.uid &&
+      allow update: if isAuthenticated() &&
+                    docBelongsToCallerSchool() &&
+                    resource.data.get('recipientId', '') == request.auth.uid &&
                     request.resource.data.diff(resource.data).affectedKeys().hasOnly(['read']);
       allow delete: if isSuperAdmin() || (isAdmin() && docBelongsToCallerSchool());
     }
 
     match /notification_broadcasts/{broadcastId} {
+      // Any authenticated member of the school can read school broadcasts
       allow read: if isAuthenticated() && (isSuperAdmin() || docBelongsToCallerSchool());
       allow write: if isSuperAdmin() || (isAdmin() && newDocBelongsToCallerSchool());
     }
@@ -449,7 +516,7 @@ service cloud.firestore {
     // ─── Demo requests (public) ───────────────────────────────────────────────
 
     match /demo_requests/{requestId} {
-      allow read: if isSuperAdmin();
+      allow read, write: if isSuperAdmin();
       allow create: if true; // Public form submission
     }
 

@@ -501,21 +501,27 @@ function previewStudentId(prefix: string, format: SchoolSettings['studentIdForma
 }
 
 // ─── Geo-fence map preview (Leaflet) ─────────────────────────────────────────
-function GeoFenceMapPreview({ lat, lng, radius }: { lat: number | null; lng: number | null; radius: number }) {
+function GeoFenceMapPreview({
+  lat, lng, radius, onMapClick,
+}: {
+  lat: number | null;
+  lng: number | null;
+  radius: number;
+  onMapClick?: (lat: number, lng: number) => void;
+}) {
   const containerRef = React.useRef<HTMLDivElement>(null);
   const mapRef = React.useRef<any>(null);
   const circleRef = React.useRef<any>(null);
   const markerRef = React.useRef<any>(null);
+  const onMapClickRef = React.useRef(onMapClick);
+  onMapClickRef.current = onMapClick;
 
   const validCoords = lat !== null && lng !== null && !isNaN(lat) && !isNaN(lng);
 
   React.useEffect(() => {
-    if (!validCoords || !containerRef.current) return;
+    if (!containerRef.current) return;
 
-    // Dynamically import Leaflet so it doesn't SSR-crash and avoids the
-    // "window is not defined" error in test environments.
     import('leaflet').then(L => {
-      // Inject Leaflet CSS once
       if (!document.getElementById('leaflet-css')) {
         const link = document.createElement('link');
         link.id = 'leaflet-css';
@@ -524,7 +530,6 @@ function GeoFenceMapPreview({ lat, lng, radius }: { lat: number | null; lng: num
         document.head.appendChild(link);
       }
 
-      // Fix default icon paths broken by bundlers
       delete (L.Icon.Default.prototype as any)._getIconUrl;
       L.Icon.Default.mergeOptions({
         iconRetinaUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png',
@@ -532,65 +537,78 @@ function GeoFenceMapPreview({ lat, lng, radius }: { lat: number | null; lng: num
         shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
       });
 
+      const initialLat = validCoords ? lat! : 6.5244;
+      const initialLng = validCoords ? lng! : 3.3792;
+      const zoom = validCoords ? 17 : 6;
+
       if (!mapRef.current) {
-        mapRef.current = L.map(containerRef.current!).setView([lat!, lng!], 17);
+        mapRef.current = L.map(containerRef.current!).setView([initialLat, initialLng], zoom);
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
           attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
           maxZoom: 19,
         }).addTo(mapRef.current);
-      } else {
+
+        // Click-to-place handler
+        mapRef.current.on('click', (e: any) => {
+          onMapClickRef.current?.(e.latlng.lat, e.latlng.lng);
+        });
+      } else if (validCoords) {
         mapRef.current.setView([lat!, lng!], 17);
       }
 
-      // Update / create circle
-      if (circleRef.current) {
-        circleRef.current.setLatLng([lat!, lng!]).setRadius(radius);
-      } else {
-        circleRef.current = L.circle([lat!, lng!], {
-          radius,
-          color: '#4f46e5',
-          fillColor: '#4f46e5',
-          fillOpacity: 0.15,
-          weight: 2,
-        }).addTo(mapRef.current);
-      }
+      if (validCoords) {
+        if (circleRef.current) {
+          circleRef.current.setLatLng([lat!, lng!]).setRadius(radius);
+        } else {
+          circleRef.current = L.circle([lat!, lng!], {
+            radius,
+            color: '#4f46e5',
+            fillColor: '#4f46e5',
+            fillOpacity: 0.15,
+            weight: 2,
+          }).addTo(mapRef.current);
+        }
 
-      // Update / create marker
-      if (markerRef.current) {
-        markerRef.current.setLatLng([lat!, lng!]);
-      } else {
-        markerRef.current = L.marker([lat!, lng!]).addTo(mapRef.current)
-          .bindPopup('School entrance').openPopup();
-      }
+        if (markerRef.current) {
+          markerRef.current.setLatLng([lat!, lng!]);
+        } else {
+          markerRef.current = L.marker([lat!, lng!], { draggable: true })
+            .addTo(mapRef.current)
+            .bindPopup('School entrance — drag to adjust')
+            .openPopup();
 
-      // Fit map to the circle bounds
-      mapRef.current.fitBounds(circleRef.current.getBounds(), { padding: [30, 30] });
+          // Drag marker to reposition
+          markerRef.current.on('dragend', (e: any) => {
+            const pos = e.target.getLatLng();
+            onMapClickRef.current?.(pos.lat, pos.lng);
+          });
+        }
+
+        mapRef.current.fitBounds(circleRef.current.getBounds(), { padding: [30, 30] });
+      }
     });
-
-    return () => {
-      // Do NOT destroy the map on every re-render — only when the component unmounts
-    };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lat, lng, radius]);
 
-  // Destroy map on unmount
   React.useEffect(() => {
     return () => {
       if (mapRef.current) { mapRef.current.remove(); mapRef.current = null; }
     };
   }, []);
 
-  if (!validCoords) {
-    return (
-      <div className="w-full h-64 bg-slate-100 rounded-xl border border-slate-200 flex items-center justify-center text-slate-400 text-sm">
-        <MapPin className="w-5 h-5 mr-2" /> Enter coordinates above to preview the boundary
-      </div>
-    );
-  }
-
   return (
-    <div className="rounded-xl overflow-hidden border border-slate-200 shadow-sm" style={{ height: 280 }}>
+    <div className="rounded-xl overflow-hidden border border-slate-200 shadow-sm relative" style={{ height: 300 }}>
       <div ref={containerRef} style={{ height: '100%', width: '100%' }} />
+      {!validCoords && (
+        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+          <div className="bg-white/90 rounded-xl px-4 py-2 text-sm text-slate-500 flex items-center gap-2 shadow">
+            <MapPin className="w-4 h-4" /> Click the map or search an address to set location
+          </div>
+        </div>
+      )}
+      <div className="absolute bottom-2 right-2 bg-white/90 text-xs text-slate-500 px-2 py-1 rounded-lg shadow pointer-events-none">
+        Click map or drag marker to reposition
+      </div>
     </div>
   );
 }
@@ -643,6 +661,73 @@ const FONT_OPTIONS = ['Inter', 'Poppins', 'Lato', 'Roboto', 'Nunito', 'Playfair 
 
 const SLUG_REGEX = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
+function PortalLinks({ schoolId, urlSlug }: { schoolId: string | null; urlSlug: string }) {
+  const [copiedIdx, setCopiedIdx] = React.useState<number | null>(null);
+  const base = window.location.origin;
+  const id = schoolId ?? '';
+  const slug = urlSlug || id;
+  const links = [
+    { label: 'Student Login', description: 'Share with students to log into their portal.', url: `${base}/s/${slug}/login/student`, color: 'bg-indigo-50 border-indigo-100' },
+    { label: 'Parent Login', description: 'Share with parents to access the parent portal.', url: `${base}/s/${slug}/login/parent`, color: 'bg-emerald-50 border-emerald-100' },
+    { label: 'Teacher Login', description: 'Share with teaching staff.', url: `${base}/s/${slug}/login/teacher`, color: 'bg-sky-50 border-sky-100' },
+    { label: 'Staff / General Login', description: 'For admin, accountant, HR, librarian roles.', url: `${base}/s/${slug}/login`, color: 'bg-slate-50 border-slate-200' },
+    { label: 'Online Admissions Form', description: 'Public link for new applicants to apply.', url: `${base}/s/${slug}/apply`, color: 'bg-amber-50 border-amber-100' },
+    { label: 'School Portal Homepage', description: 'Public landing page for your school.', url: `${base}/s/${slug}`, color: 'bg-violet-50 border-violet-100' },
+  ];
+  const handleCopy = (url: string, idx: number) => {
+    navigator.clipboard.writeText(url).then(() => {
+      setCopiedIdx(idx);
+      setTimeout(() => setCopiedIdx(null), 2000);
+    });
+  };
+  return (
+    <section className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
+      <h2 className="font-bold text-slate-800 text-sm flex items-center gap-2 mb-1">
+        <LinkIcon className="w-4 h-4 text-indigo-600" /> Portal &amp; Login Links
+      </h2>
+      <p className="text-xs text-slate-500 mb-5">
+        Share these links with each user group so they can access the correct portal.
+        {!urlSlug && (
+          <span className="ml-1 text-amber-600 font-medium">
+            Set a URL slug above to get shorter, memorable links.
+          </span>
+        )}
+      </p>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        {links.map((lnk, idx) => (
+          <div key={lnk.label} className={`flex items-start gap-3 rounded-xl border px-4 py-3 ${lnk.color}`}>
+            <div className="flex-1 min-w-0">
+              <p className="text-xs font-bold text-slate-800 mb-0.5">{lnk.label}</p>
+              <p className="text-[11px] text-slate-500 mb-1.5 leading-snug">{lnk.description}</p>
+              <p className="font-mono text-[11px] text-slate-600 truncate">{lnk.url}</p>
+            </div>
+            <div className="flex flex-col gap-1 shrink-0">
+              <button
+                onClick={() => handleCopy(lnk.url, idx)}
+                title="Copy link"
+                className="p-1.5 rounded-lg hover:bg-white/80 transition-colors text-slate-500 hover:text-indigo-600"
+              >
+                {copiedIdx === idx
+                  ? <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                  : <LinkIcon className="w-4 h-4" />}
+              </button>
+              <a
+                href={lnk.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                title="Open in new tab"
+                className="p-1.5 rounded-lg hover:bg-white/80 transition-colors text-slate-500 hover:text-indigo-600"
+              >
+                <ExternalLink className="w-4 h-4" />
+              </a>
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 export default function SchoolSettingsPage() {
   const { schoolId } = useSchool();
   const { isSuperAdmin } = useAuth();
@@ -676,6 +761,8 @@ export default function SchoolSettingsPage() {
   const [geofenceForm, setGeofenceForm] = useState({ lat: '', lng: '', radius: '200' });
   const [savingGeofence, setSavingGeofence] = useState(false);
   const [detectingLocation, setDetectingLocation] = useState(false);
+  const [addressSearch, setAddressSearch] = useState('');
+  const [addressSearching, setAddressSearching] = useState(false);
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const leafletMapRef = useRef<any>(null);
   const fenceCircleRef = useRef<any>(null);
@@ -743,6 +830,30 @@ export default function SchoolSettingsPage() {
       },
       { enableHighAccuracy: true, timeout: 15_000 },
     );
+  };
+
+  const handleAddressSearch = async () => {
+    if (!addressSearch.trim()) return;
+    setAddressSearching(true);
+    try {
+      const encoded = encodeURIComponent(addressSearch.trim());
+      const res = await fetch(
+        `https://nominatim.openstreetmap.org/search?q=${encoded}&format=json&limit=1`,
+        { headers: { 'Accept-Language': 'en', 'User-Agent': 'AvenirSIS/1.0' } }
+      );
+      const data = await res.json();
+      if (!data.length) {
+        toast.error('Address not found. Try a more specific address.');
+        return;
+      }
+      const { lat, lon, display_name } = data[0];
+      setGeofenceForm(f => ({ ...f, lat: parseFloat(lat).toFixed(7), lng: parseFloat(lon).toFixed(7) }));
+      toast.success(`Found: ${display_name.split(',').slice(0, 3).join(', ')}`);
+    } catch {
+      toast.error('Address search failed. Check your connection.');
+    } finally {
+      setAddressSearching(false);
+    }
   };
 
   const handleSaveGeofence = async () => {
@@ -826,7 +937,12 @@ export default function SchoolSettingsPage() {
     setSaving(true);
     const tid = toast.loading('Saving settings…');
     try {
-      await setDoc(doc(db, SETTINGS_DOC, schoolId!), { ...form, updatedAt: serverTimestamp() });
+      await setDoc(doc(db, SETTINGS_DOC, schoolId!), {
+        ...form,
+        updatedAt: serverTimestamp(),
+        // Mark settings step done for onboarding wizard
+        onboardingSettingsDone: true,
+      });
       setIsDirty(false);
       toast.success('Settings saved!', { id: tid });
     } catch (e: any) {
@@ -967,6 +1083,9 @@ export default function SchoolSettingsPage() {
               </div>
             </div>
           </section>
+
+          {/* Portal & Login Links */}
+          <PortalLinks schoolId={schoolId} urlSlug={form.urlSlug ?? ''} />
 
           {/* Contact & Location */}
           <section className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
@@ -1891,7 +2010,38 @@ export default function SchoolSettingsPage() {
               lat={parseFloat(geofenceForm.lat) || null}
               lng={parseFloat(geofenceForm.lng) || null}
               radius={parseInt(geofenceForm.radius, 10) || 200}
+              onMapClick={(lat, lng) => setGeofenceForm(f => ({
+                ...f,
+                lat: lat.toFixed(7),
+                lng: lng.toFixed(7),
+              }))}
             />
+
+            {/* Address search */}
+            <div className="mt-4">
+              <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">
+                Search by Address
+              </label>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={addressSearch}
+                  onChange={e => setAddressSearch(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && handleAddressSearch()}
+                  placeholder="e.g. 12 Admiralty Way, Lekki, Lagos"
+                  className="flex-1 px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm"
+                />
+                <button
+                  onClick={handleAddressSearch}
+                  disabled={addressSearching || !addressSearch.trim()}
+                  className="flex items-center gap-2 px-4 py-2.5 bg-slate-800 text-white font-semibold rounded-xl hover:bg-slate-700 transition-colors text-sm disabled:opacity-50"
+                >
+                  {addressSearching ? <Loader2 className="w-4 h-4 animate-spin" /> : <MapPin className="w-4 h-4" />}
+                  {addressSearching ? 'Searching…' : 'Search'}
+                </button>
+              </div>
+              <p className="text-xs text-slate-400 mt-1.5">Powered by OpenStreetMap — no API key required</p>
+            </div>
 
             <div className="flex gap-3 mt-6">
               <button

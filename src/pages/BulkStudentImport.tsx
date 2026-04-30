@@ -102,54 +102,66 @@ export default function BulkStudentImport() {
     setImporting(true);
     const importResults: ImportResult[] = [];
     const tid = toast.loading(`Importing ${preview.length} students…`);
+    const sid = schoolId ?? 'main';
 
-    for (let i = 0; i < preview.length; i++) {
-      const row = preview[i];
-      try {
-        // Check duplicate by email
-        if (row.email?.trim()) {
-          const dup = await getDocs(query(collection(db, 'students'), where('schoolId', '==', schoolId!), where('email', '==', row.email.trim())));
-          if (!dup.empty) {
+    try {
+      // Pre-fetch all existing emails for this school in one query to avoid per-row round trips
+      const existingSnap = await getDocs(
+        query(collection(db, 'students'), where('schoolId', '==', sid))
+      );
+      const existingEmails = new Set(
+        existingSnap.docs.map(d => (d.data().email ?? '').toLowerCase().trim()).filter(Boolean)
+      );
+      // Starting sequence offset so generated IDs don't collide within this batch
+      let seqOffset = existingSnap.size;
+
+      for (let i = 0; i < preview.length; i++) {
+        const row = preview[i];
+        try {
+          // Duplicate check against pre-fetched set (no extra Firestore call)
+          const emailKey = row.email?.trim().toLowerCase() ?? '';
+          if (emailKey && existingEmails.has(emailKey)) {
             importResults.push({ row: i + 2, name: row.studentName, status: 'duplicate', message: 'Email already exists' });
             continue;
           }
+
+          // Generate ID using schoolId so it counts the right school's students
+          const newId = await generateStudentId(sid);
+          seqOffset++;
+
+          const student: Omit<Student, 'id'> = {
+            studentName: row.studentName.trim(),
+            email: row.email?.trim() || '',
+            phone: row.phone?.trim() || '',
+            dob: row.dob?.trim() || '',
+            gender: row.gender.trim().toLowerCase(),
+            nin: '',
+            currentClass: row.currentClass.trim(),
+            studentId: newId,
+            enrolledAt: serverTimestamp(),
+            applicationId: 'bulk_import',
+            admissionStatus: 'active',
+            guardianName: row.guardianName?.trim() || '',
+            guardianPhone: row.guardianPhone?.trim() || '',
+            guardianEmail: row.guardianEmail?.trim() || '',
+            homeAddress: row.homeAddress?.trim() || '',
+            stateOfOrigin: row.stateOfOrigin?.trim() || '',
+            bloodGroup: row.bloodGroup?.trim() || '',
+            religion: row.religion?.trim() || '',
+            schoolId: sid,
+          };
+
+          await addDoc(collection(db, 'students'), student);
+          if (emailKey) existingEmails.add(emailKey); // prevent intra-batch duplicates
+          importResults.push({ row: i + 2, name: row.studentName, status: 'success', studentId: newId });
+        } catch (e: any) {
+          importResults.push({ row: i + 2, name: row.studentName, status: 'error', message: e.message });
         }
-
-        let newId = await generateStudentId();
-        // Ensure uniqueness
-        let idCheck = await getDocs(query(collection(db, 'students'), where('schoolId', '==', schoolId!), where('studentId', '==', newId)));
-        while (!idCheck.empty) {
-          newId = await generateStudentId();
-          idCheck = await getDocs(query(collection(db, 'students'), where('schoolId', '==', schoolId!), where('studentId', '==', newId)));
-        }
-
-        const student: Omit<Student, 'id'> = {
-          studentName: row.studentName.trim(),
-          email: row.email?.trim() || '',
-          phone: row.phone?.trim() || '',
-          dob: row.dob?.trim() || '',
-          gender: row.gender.trim().toLowerCase(),
-          nin: '',
-          currentClass: row.currentClass.trim(),
-          studentId: newId,
-          enrolledAt: serverTimestamp(),
-          applicationId: 'bulk_import',
-          admissionStatus: 'active',
-          guardianName: row.guardianName?.trim() || '',
-          guardianPhone: row.guardianPhone?.trim() || '',
-          guardianEmail: row.guardianEmail?.trim() || '',
-          homeAddress: row.homeAddress?.trim() || '',
-          stateOfOrigin: row.stateOfOrigin?.trim() || '',
-          bloodGroup: row.bloodGroup?.trim() || '',
-          religion: row.religion?.trim() || '',
-          schoolId: schoolId ?? 'main',
-        };
-
-        await addDoc(collection(db, 'students'), student);
-        importResults.push({ row: i + 2, name: row.studentName, status: 'success', studentId: newId });
-      } catch (e: any) {
-        importResults.push({ row: i + 2, name: row.studentName, status: 'error', message: e.message });
       }
+    } catch (e: any) {
+      toast.error('Import failed: ' + (e.message || 'Unknown error'), { id: tid });
+      setImporting(false);
+      return;
     }
 
     setResults(importResults);

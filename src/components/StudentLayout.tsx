@@ -2,7 +2,8 @@ import React from 'react';
 import { Link, useLocation, Outlet } from 'react-router-dom';
 import { useAuth } from './FirebaseProvider';
 import { useSchool } from './SchoolContext';
-import { Home, BookOpen, Trophy, MessageCircle, User, LogOut, Sparkles } from 'lucide-react';
+import { Home, BookOpen, Trophy, MessageCircle, User, LogOut, Sparkles, WifiOff } from 'lucide-react';
+import { useOfflineStatus } from '../hooks/useOfflineStatus';
 
 /**
  * Kid-friendly shell for the student portal.
@@ -29,6 +30,7 @@ export function StudentLayout({ children }: { children?: React.ReactNode }) {
   const { profile, logout } = useAuth();
   const { schoolName, studentAgeTier } = useSchool();
   const location = useLocation();
+  const isOffline = useOfflineStatus();
   const tier = studentAgeTier ?? 'primary';
   const isPrimary = tier === 'primary';
 
@@ -72,6 +74,14 @@ export function StudentLayout({ children }: { children?: React.ReactNode }) {
           </button>
         </div>
       </header>
+
+      {/* ── Offline banner ── */}
+      {isOffline && (
+        <div className="bg-amber-500 text-white text-xs font-bold text-center py-1.5 px-4 flex items-center justify-center gap-1.5 sticky top-14 z-20">
+          <WifiOff className="w-3.5 h-3.5" />
+          You're offline — showing cached data
+        </div>
+      )}
 
       {/* ── Main content ── */}
       <main className={`max-w-5xl mx-auto px-4 py-6 pb-28 ${isPrimary ? 'text-slate-800' : 'text-slate-900'}`}>

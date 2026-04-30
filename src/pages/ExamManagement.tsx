@@ -36,6 +36,7 @@ type TabId = 'exams' | 'question_bank' | 'cbt' | 'results';
 // ─── Question Bank Tab ────────────────────────────────────────────────────────
 function QuestionBankTab() {
   const { user } = useAuth();
+  const schoolId = useSchoolId();
   const [questions, setQuestions] = useState<QuestionBankItem[]>([]);
   const [filterSubject, setFilterSubject] = useState(SUBJECTS[0]);
   const [filterLevel, setFilterLevel] = useState('');
@@ -54,18 +55,19 @@ function QuestionBankTab() {
   });
 
   useEffect(() => {
+    if (!schoolId) return;
     const unsub = onSnapshot(
-      query(collection(db, 'question_bank'), orderBy('createdAt', 'desc')),
+      query(collection(db, 'question_bank'), where('schoolId', '==', schoolId), orderBy('createdAt', 'desc')),
       snap => setQuestions(snap.docs.map(d => ({ id: d.id, ...d.data() } as QuestionBankItem))),
       () => {}
     );
     const unsub2 = onSnapshot(
-      query(collection(db, 'curriculum_documents'), orderBy('uploadedAt', 'desc')),
+      query(collection(db, 'curriculum_documents'), where('schoolId', '==', schoolId), orderBy('uploadedAt', 'desc')),
       snap => setCurriculumDocs(snap.docs.map(d => ({ id: d.id, ...d.data() } as any))),
       () => {}
     );
     return () => { unsub(); unsub2(); };
-  }, []);
+  }, [schoolId]);
 
   const filtered = questions.filter(q =>
     (!filterSubject || q.subject === filterSubject) &&
@@ -80,7 +82,7 @@ function QuestionBankTab() {
   };
 
   const generateBatch = async () => {
-    if (!user) { toast.error('Not logged in'); return; }
+    if (!user || !schoolId) { toast.error('Not logged in'); return; }
     const topicList = genForm.topics.split(',').map(t => t.trim()).filter(Boolean);
     if (topicList.length === 0) { toast.error('Enter at least one topic.'); return; }
 
@@ -108,6 +110,7 @@ function QuestionBankTab() {
           sourceType: 'ai_generated',
           sourceDocId: selectedDocId || null,
           createdBy: user.uid,
+          schoolId,
           createdAt: serverTimestamp(),
         } as Omit<QuestionBankItem, 'id'>);
       });
@@ -121,13 +124,14 @@ function QuestionBankTab() {
   };
 
   const saveManualQuestion = async () => {
-    if (!user) return;
+    if (!user || !schoolId) return;
     const q = addForm;
     if (!q.topic || !q.questionText) { toast.error('Fill in topic and question text.'); return; }
     await addDoc(collection(db, 'question_bank'), {
       ...q,
       sourceType: 'manual',
       createdBy: user.uid,
+      schoolId,
       createdAt: serverTimestamp(),
     }).catch(console.error);
     toast.success('Question added!');
@@ -376,6 +380,7 @@ function QuestionBankTab() {
 // ─── CBT Exams Tab ────────────────────────────────────────────────────────────
 function CBTExamsTab() {
   const { user } = useAuth();
+  const schoolId = useSchoolId();
   const classSelectOptions = useClassSelectOptions();
   const [cbtExams, setCbtExams] = useState<CBTExam[]>([]);
   const [questions, setQuestions] = useState<QuestionBankItem[]>([]);
@@ -390,17 +395,22 @@ function CBTExamsTab() {
   const [copiedLink, setCopiedLink] = useState<string | null>(null);
 
   useEffect(() => {
-    const unsub = onSnapshot(query(collection(db, 'cbt_exams'), orderBy('createdAt', 'desc')), snap => {
-      setCbtExams(snap.docs.map(d => ({ id: d.id, ...d.data() } as CBTExam)));
-    }, () => {});
-    const unsub2 = onSnapshot(collection(db, 'question_bank'), snap => {
-      setQuestions(snap.docs.map(d => ({ id: d.id, ...d.data() } as QuestionBankItem)));
-    }, () => {});
+    if (!schoolId) return;
+    const unsub = onSnapshot(
+      query(collection(db, 'cbt_exams'), where('schoolId', '==', schoolId), orderBy('createdAt', 'desc')),
+      snap => { setCbtExams(snap.docs.map(d => ({ id: d.id, ...d.data() } as CBTExam))); },
+      () => {}
+    );
+    const unsub2 = onSnapshot(
+      query(collection(db, 'question_bank'), where('schoolId', '==', schoolId)),
+      snap => { setQuestions(snap.docs.map(d => ({ id: d.id, ...d.data() } as QuestionBankItem))); },
+      () => {}
+    );
     return () => { unsub(); unsub2(); };
-  }, []);
+  }, [schoolId]);
 
   const saveExam = async () => {
-    if (!form.title || !form.targetClass) { toast.error('Fill in title and class.'); return; }
+    if (!form.title || !form.targetClass || !schoolId) { toast.error('Fill in title and class.'); return; }
     const data: Omit<CBTExam, 'id'> = {
       title: form.title!,
       subject: form.subject!,
@@ -413,6 +423,7 @@ function CBTExamsTab() {
       status: form.status || 'draft',
       type: form.type || 'internal',
       questionFilter: { subject: form.subject! },
+      schoolId,
       createdAt: serverTimestamp(),
     };
     await addDoc(collection(db, 'cbt_exams'), data).catch(console.error);
@@ -458,6 +469,7 @@ function CBTExamsTab() {
         startedAt: serverTimestamp(),
         status: 'in_progress',
         durationMinutes: exam.durationMinutes,
+        schoolId: exam.schoolId,
       } as Omit<CBTSession, 'id'>);
 
       const link = `${window.location.origin}/cbt/${sessionRef.id}`;
@@ -638,19 +650,25 @@ function CBTExamsTab() {
 
 // ─── Results Tab ──────────────────────────────────────────────────────────────
 function ResultsTab() {
+  const schoolId = useSchoolId();
   const [sessions, setSessions] = useState<CBTSession[]>([]);
   const [cbtExams, setCbtExams] = useState<CBTExam[]>([]);
   const [filterExam, setFilterExam] = useState('');
 
   useEffect(() => {
-    const unsub = onSnapshot(query(collection(db, 'cbt_sessions'), orderBy('startedAt', 'desc')), snap => {
-      setSessions(snap.docs.map(d => ({ id: d.id, ...d.data() } as CBTSession)));
-    }, () => {});
-    const unsub2 = onSnapshot(collection(db, 'cbt_exams'), snap => {
-      setCbtExams(snap.docs.map(d => ({ id: d.id, ...d.data() } as CBTExam)));
-    }, () => {});
+    if (!schoolId) return;
+    const unsub = onSnapshot(
+      query(collection(db, 'cbt_sessions'), where('schoolId', '==', schoolId), orderBy('startedAt', 'desc')),
+      snap => { setSessions(snap.docs.map(d => ({ id: d.id, ...d.data() } as CBTSession))); },
+      () => {}
+    );
+    const unsub2 = onSnapshot(
+      query(collection(db, 'cbt_exams'), where('schoolId', '==', schoolId)),
+      snap => { setCbtExams(snap.docs.map(d => ({ id: d.id, ...d.data() } as CBTExam))); },
+      () => {}
+    );
     return () => { unsub(); unsub2(); };
-  }, []);
+  }, [schoolId]);
 
   const submitted = sessions.filter(s => s.status === 'submitted' || s.status === 'timed_out');
   const filtered = filterExam ? submitted.filter(s => s.examId === filterExam) : submitted;

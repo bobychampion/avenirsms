@@ -24,7 +24,7 @@ const COLLECTIONS_TO_MIGRATE = [
   'notification_broadcasts', 'fcm_tokens', 'exams', 'exam_seating',
   'question_bank', 'cbt_exams', 'cbt_sessions', 'curriculum_documents',
   'curriculum_items', 'pins', 'promotions', 'demo_requests', 'whatsapp_logs',
-  'events',
+  'events', 'mail',
 ];
 
 // Users are handled separately (super_admin must NOT get schoolId)

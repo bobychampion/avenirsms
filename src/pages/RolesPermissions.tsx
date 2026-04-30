@@ -11,7 +11,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   collection, doc, query, where, onSnapshot, updateDoc, arrayUnion, arrayRemove,
-  setDoc, serverTimestamp,
+  setDoc, serverTimestamp, getDocs,
 } from 'firebase/firestore';
 import { initializeApp, getApps } from 'firebase/app';
 import { getAuth, createUserWithEmailAndPassword, signOut as firebaseSignOut } from 'firebase/auth';
@@ -25,16 +25,110 @@ import {
 } from '../utils/permissions';
 import { logRoleChange, logPermissionChange, writeAuditLog } from '../utils/auditLog';
 import {
-  buildStudentLoginEmail, generateStudentTempPassword,
+  buildStudentLoginEmail, generateStudentTempPassword, upsertStudentLoginIndex,
 } from '../utils/studentAccount';
 import { useSchoolSettings } from './SchoolSettings';
-import { ShieldCheck, Search, Check, X, History, KeyRound } from 'lucide-react';
+import { ShieldCheck, Search, Check, X, History, KeyRound, Copy, CheckCheck } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 const ASSIGNABLE_ROLES: UserProfile['role'][] = [
   'admin', 'School_admin', 'teacher', 'parent', 'student',
   'accountant', 'hr', 'librarian', 'staff', 'applicant',
 ];
+
+// ── Confirm + Credentials modals ──────────────────────────────────────────────
+
+interface ConfirmModalProps {
+  title: string;
+  message: string;
+  onConfirm: () => void;
+  onCancel: () => void;
+}
+
+function ConfirmModal({ title, message, onConfirm, onCancel }: ConfirmModalProps) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md mx-4 p-6 space-y-4">
+        <h2 className="text-base font-bold text-slate-900">{title}</h2>
+        <p className="text-sm text-slate-600 whitespace-pre-wrap">{message}</p>
+        <div className="flex justify-end gap-3 pt-2">
+          <button onClick={onCancel} className="px-4 py-2 rounded-lg border border-slate-200 text-sm text-slate-600 hover:bg-slate-50">Cancel</button>
+          <button onClick={onConfirm} className="px-4 py-2 rounded-lg bg-indigo-600 text-sm font-bold text-white hover:bg-indigo-700">Confirm</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+interface CredentialsModalProps {
+  displayName: string;
+  login: string;
+  password: string;
+  onClose: () => void;
+}
+
+function CopyButton({ value }: { value: string }) {
+  const [copied, setCopied] = useState(false);
+  const handleCopy = async () => {
+    await navigator.clipboard.writeText(value);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+  return (
+    <button onClick={handleCopy} className="ml-2 p-1 rounded hover:bg-indigo-100 text-indigo-600 transition-colors" title="Copy">
+      {copied ? <CheckCheck className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
+    </button>
+  );
+}
+
+function CredentialsModal({ displayName, login, password, onClose }: CredentialsModalProps) {
+  const full = `Login: ${login}\nTemporary password: ${password}`;
+  const [copiedAll, setCopiedAll] = useState(false);
+  const handleCopyAll = async () => {
+    await navigator.clipboard.writeText(full);
+    setCopiedAll(true);
+    setTimeout(() => setCopiedAll(false), 2000);
+  };
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md mx-4 p-6 space-y-4">
+        <div className="flex items-center gap-2">
+          <KeyRound className="w-5 h-5 text-indigo-600" />
+          <h2 className="text-base font-bold text-slate-900">Login re-provisioned</h2>
+        </div>
+        <p className="text-sm text-slate-600">
+          New credentials for <strong>{displayName}</strong>. Share these with the student/family —
+          they'll be prompted to set a new password on first sign-in.
+        </p>
+        <div className="rounded-xl bg-slate-50 border border-slate-200 divide-y divide-slate-200">
+          <div className="flex items-center justify-between px-4 py-3">
+            <div>
+              <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-0.5">New login</p>
+              <p className="text-sm font-mono text-slate-900 select-all break-all">{login}</p>
+            </div>
+            <CopyButton value={login} />
+          </div>
+          <div className="flex items-center justify-between px-4 py-3">
+            <div>
+              <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-0.5">Temporary password</p>
+              <p className="text-sm font-mono text-slate-900 select-all">{password}</p>
+            </div>
+            <CopyButton value={password} />
+          </div>
+        </div>
+        <div className="flex justify-between items-center pt-1">
+          <button onClick={handleCopyAll} className="inline-flex items-center gap-1.5 text-xs font-bold text-indigo-600 hover:underline">
+            {copiedAll ? <CheckCheck className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
+            {copiedAll ? 'Copied!' : 'Copy both'}
+          </button>
+          <button onClick={onClose} className="px-5 py-2 rounded-lg bg-indigo-600 text-sm font-bold text-white hover:bg-indigo-700">Done</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Main component ─────────────────────────────────────────────────────────────
 
 export default function RolesPermissions() {
   const { profile: actor } = useAuth();
@@ -44,6 +138,10 @@ export default function RolesPermissions() {
   const [search, setSearch] = useState('');
   const [selectedUid, setSelectedUid] = useState<string | null>(null);
   const [auditEntries, setAuditEntries] = useState<any[]>([]);
+
+  // Modal state
+  const [confirmModal, setConfirmModal] = useState<{ title: string; message: string; onConfirm: () => void } | null>(null);
+  const [credentialsModal, setCredentialsModal] = useState<{ displayName: string; login: string; password: string } | null>(null);
 
   useEffect(() => {
     if (!schoolId) return;
@@ -87,14 +185,20 @@ export default function RolesPermissions() {
       toast.error('Super admin promotions must be done from the platform dashboard.');
       return;
     }
-    if (!confirm(`Change ${target.email}'s role from ${target.role} to ${newRole}?`)) return;
-    try {
-      await updateDoc(doc(db, 'users', target.uid), { role: newRole });
-      await logRoleChange(actor, { uid: target.uid, email: target.email, schoolId: target.schoolId }, target.role, newRole);
-      toast.success(`Role updated: ${target.email} → ${newRole}`);
-    } catch (err: any) {
-      toast.error(`Could not update role: ${err.message || err.code}`);
-    }
+    setConfirmModal({
+      title: 'Change role',
+      message: `Change ${target.email}'s role from ${target.role} to ${newRole}?`,
+      onConfirm: async () => {
+        setConfirmModal(null);
+        try {
+          await updateDoc(doc(db, 'users', target.uid), { role: newRole });
+          await logRoleChange(actor, { uid: target.uid, email: target.email, schoolId: target.schoolId }, target.role, newRole);
+          toast.success(`Role updated: ${target.email} → ${newRole}`);
+        } catch (err: any) {
+          toast.error(`Could not update role: ${err.message || err.code}`);
+        }
+      },
+    });
   };
 
   /**
@@ -105,59 +209,83 @@ export default function RolesPermissions() {
    * The old Auth account becomes orphaned (harmless; clean from Firebase
    * Console occasionally).
    */
-  const resetPassword = async (target: UserProfile) => {
+  const resetPassword = (target: UserProfile) => {
     if (!actor || !target.syntheticLogin) return;
     const studentIdHint = target.linkedStudentIds?.[0] ?? target.uid;
     const newPassword = generateStudentTempPassword(studentIdHint + Date.now());
     const suffix = Date.now().toString(36);
     const newEmail = buildStudentLoginEmail(`${studentIdHint}-${suffix}`, schoolSettings);
-    if (!confirm(
-      `Re-provision login for ${target.displayName || target.email}?\n\n` +
-      `New login:\n  ${newEmail}\n` +
-      `New temporary password:\n  ${newPassword}\n\n` +
-      `Share these with the student/family. They'll be prompted to set a new password on first sign-in.`
-    )) return;
-    try {
-      const secondaryApp = getApps().find(a => a.name === 'reset-creator')
-        || initializeApp(firebaseConfig as any, 'reset-creator');
-      const secondaryAuth = getAuth(secondaryApp);
-      const cred = await createUserWithEmailAndPassword(secondaryAuth, newEmail, newPassword);
-      const newUid = cred.user.uid;
-      await firebaseSignOut(secondaryAuth);
 
-      // Write new users/{newUid} profile mirroring the old one
-      const { uid: _old, email: _oldEmail, ...rest } = target;
-      await setDoc(doc(db, 'users', newUid), {
-        ...rest,
-        uid: newUid,
-        email: newEmail,
-        mustChangePassword: true,
-        syntheticLogin: true,
-        createdAt: serverTimestamp(),
-      });
+    setConfirmModal({
+      title: `Re-provision login for ${target.displayName || target.email}?`,
+      message:
+        `New login:\n  ${newEmail}\n\nNew temporary password:\n  ${newPassword}\n\n` +
+        `Share these with the student/family. They'll be prompted to set a new password on first sign-in.`,
+      onConfirm: async () => {
+        setConfirmModal(null);
+        try {
+          const secondaryApp = getApps().find(a => a.name === 'reset-creator')
+            || initializeApp(firebaseConfig as any, 'reset-creator');
+          const secondaryAuth = getAuth(secondaryApp);
+          const cred = await createUserWithEmailAndPassword(secondaryAuth, newEmail, newPassword);
+          const newUid = cred.user.uid;
+          await firebaseSignOut(secondaryAuth);
 
-      // Mark old profile disabled so it can't be used
-      await updateDoc(doc(db, 'users', target.uid), { disabled: true });
+          // Write new users/{newUid} profile mirroring the old one
+          const { uid: _old, email: _oldEmail, ...rest } = target;
+          await setDoc(doc(db, 'users', newUid), {
+            ...rest,
+            uid: newUid,
+            email: newEmail,
+            mustChangePassword: true,
+            syntheticLogin: true,
+            createdAt: serverTimestamp(),
+          });
 
-      await writeAuditLog(actor, {
-        action: 'password.reset',
-        targetUserId: target.uid,
-        targetUserEmail: target.email,
-        schoolId: target.schoolId,
-        details: { newUid, newEmail },
-      });
+          // Mark old profile disabled so it can't be used
+          await updateDoc(doc(db, 'users', target.uid), { disabled: true });
 
-      toast.success('Credentials re-provisioned. See alert for details.');
-      alert(
-        `✓ Login re-provisioned for ${target.displayName || target.email}\n\n` +
-        `New login: ${newEmail}\n` +
-        `Temporary password: ${newPassword}\n\n` +
-        `Share these with the student. They must change the password on first sign-in.`
-      );
-    } catch (err: any) {
-      console.error('Password reset failed:', err);
-      toast.error(err.message || 'Could not re-provision login.');
-    }
+          // Update linked student doc(s) so the login lookup works
+          const linkedId = target.linkedStudentIds?.[0];
+          if (linkedId) {
+            // Try direct doc update first (if we know the Firestore student doc ID)
+            try {
+              await updateDoc(doc(db, 'students', linkedId), { loginEmail: newEmail });
+            } catch {
+              // Fallback: query by studentId field
+              const snap = await getDocs(
+                query(collection(db, 'students'), where('studentId', '==', linkedId))
+              );
+              for (const d of snap.docs) {
+                await updateDoc(d.ref, { loginEmail: newEmail });
+              }
+            }
+            // Keep student_logins index in sync
+            if (target.schoolId) {
+              await upsertStudentLoginIndex(db, target.schoolId, linkedId, newEmail).catch(console.warn);
+            }
+          }
+
+          await writeAuditLog(actor, {
+            action: 'password.reset',
+            targetUserId: target.uid,
+            targetUserEmail: target.email,
+            schoolId: target.schoolId,
+            details: { newUid, newEmail },
+          });
+
+          toast.success('Credentials re-provisioned.');
+          setCredentialsModal({
+            displayName: target.displayName || target.email || target.uid,
+            login: newEmail,
+            password: newPassword,
+          });
+        } catch (err: any) {
+          console.error('Password reset failed:', err);
+          toast.error(err.message || 'Could not re-provision login.');
+        }
+      },
+    });
   };
 
   const togglePermission = async (target: UserProfile, perm: Permission) => {
@@ -175,6 +303,23 @@ export default function RolesPermissions() {
   };
 
   return (
+    <>
+      {confirmModal && (
+        <ConfirmModal
+          title={confirmModal.title}
+          message={confirmModal.message}
+          onConfirm={confirmModal.onConfirm}
+          onCancel={() => setConfirmModal(null)}
+        />
+      )}
+      {credentialsModal && (
+        <CredentialsModal
+          displayName={credentialsModal.displayName}
+          login={credentialsModal.login}
+          password={credentialsModal.password}
+          onClose={() => setCredentialsModal(null)}
+        />
+      )}
     <div className="max-w-7xl mx-auto p-6 space-y-6">
       <header>
         <p className="text-xs font-bold uppercase tracking-wider text-indigo-600">Administration</p>
@@ -349,5 +494,6 @@ export default function RolesPermissions() {
         </ul>
       </section>
     </div>
+    </>
   );
 }

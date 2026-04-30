@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { db, handleFirestoreError, OperationType } from '../firebase';
 import { useAuth } from '../components/FirebaseProvider';
+import { useSchoolId } from '../hooks/useSchoolId';
 import {
   collection, query, onSnapshot, addDoc, serverTimestamp,
   orderBy, getDocs, writeBatch, doc, where
@@ -39,6 +40,7 @@ const TYPE_CONFIG: Record<NotifType, { label: string; icon: React.ElementType; c
 
 export default function NotificationComposer() {
   const { profile } = useAuth();
+  const schoolId = useSchoolId();
   const [students, setStudents] = useState<Student[]>([]);
   const [history, setHistory] = useState<SentNotification[]>([]);
   const [sending, setSending] = useState(false);
@@ -54,16 +56,18 @@ export default function NotificationComposer() {
   });
 
   useEffect(() => {
-    const unsubStudents = onSnapshot(collection(db, 'students'), snap => {
-      setStudents(snap.docs.map(d => ({ id: d.id, ...d.data() } as Student)));
-    });
+    if (!schoolId) return;
+    const unsubStudents = onSnapshot(
+      query(collection(db, 'students'), where('schoolId', '==', schoolId)),
+      snap => { setStudents(snap.docs.map(d => ({ id: d.id, ...d.data() } as Student))); }
+    );
     const unsubHistory = onSnapshot(
-      query(collection(db, 'notification_broadcasts'), orderBy('createdAt', 'desc')),
+      query(collection(db, 'notification_broadcasts'), where('schoolId', '==', schoolId), orderBy('createdAt', 'desc')),
       snap => setHistory(snap.docs.map(d => ({ id: d.id, ...d.data() } as SentNotification))),
       err => handleFirestoreError(err, OperationType.LIST, 'notification_broadcasts')
     );
     return () => { unsubStudents(); unsubHistory(); };
-  }, []);
+  }, [schoolId]);
 
   // Preview recipient count
   const recipientCount = () => {
@@ -106,6 +110,7 @@ export default function NotificationComposer() {
           body: form.body,
           type: form.type,
           read: false,
+          schoolId,
           createdAt: serverTimestamp(),
         });
       }
@@ -120,6 +125,7 @@ export default function NotificationComposer() {
         targetClass: form.target === 'class' ? form.targetClass : null,
         recipientCount: recipients.length,
         sentBy: profile?.displayName || 'Admin',
+        schoolId,
         createdAt: serverTimestamp(),
       });
 

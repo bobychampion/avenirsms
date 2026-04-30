@@ -1,21 +1,27 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import { useAuth } from '../components/FirebaseProvider';
 import { db, handleFirestoreError, OperationType } from '../firebase';
-import { collection, addDoc, query, where, onSnapshot, serverTimestamp } from 'firebase/firestore';
-import { Application, SCHOOL_CLASSES, NIGERIAN_REGULATIONS } from '../types';
+import { collection, addDoc, query, where, onSnapshot, serverTimestamp, getDoc, doc, getDocs } from 'firebase/firestore';
+import { Application, NIGERIAN_REGULATIONS } from '../types';
 import { motion, AnimatePresence } from 'motion/react';
-import { User, BookOpen, Phone, FileUp, CheckCircle, AlertTriangle, ArrowRight, ArrowLeft, Loader2 } from 'lucide-react';
+import { User, BookOpen, Phone, FileUp, CheckCircle, AlertTriangle, ArrowRight, ArrowLeft, Loader2, Heart } from 'lucide-react';
 import { differenceInYears, parseISO } from 'date-fns';
 import { useUnsavedChanges } from '../hooks/useUnsavedChanges';
 import UnsavedChangesDialog from '../components/UnsavedChangesDialog';
 
+const RELATIONSHIPS = ['father', 'mother', 'uncle', 'aunt', 'sibling', 'guardian', 'other'];
+
 export default function Apply() {
   const { user } = useAuth();
   const navigate = useNavigate();
+  // schoolId comes from URL param when accessed via /s/:schoolId/apply
+  const { schoolId: urlSchoolId } = useParams<{ schoolId?: string }>();
   const [step, setStep] = useState(1);
   const [loading, setLoading] = useState(false);
   const [submitted, setSubmitted] = useState(false);
+  const [schoolName, setSchoolName] = useState<string>('');
+  const [schoolClasses, setSchoolClasses] = useState<string[]>([]);
   const [existingApplication, setExistingApplication] = useState<Application | null>(null);
   const [formData, setFormData] = useState<Partial<Application>>({
     applicantName: '',
@@ -29,6 +35,11 @@ export default function Apply() {
     waecNecoNumber: '',
     status: 'pending',
     applicantUid: user?.uid || '',
+    guardianName: '',
+    guardianPhone: '',
+    guardianEmail: '',
+    guardianRelationship: 'father',
+    guardianAddress: '',
   });
 
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -43,9 +54,30 @@ export default function Apply() {
     setIsDirty(true);
   };
 
+  // Load school name and classes for display
+  useEffect(() => {
+    if (!urlSchoolId) return;
+    // School name
+    getDoc(doc(db, 'school_settings', urlSchoolId)).then(snap => {
+      if (snap.exists()) setSchoolName((snap.data() as any).schoolName || '');
+    });
+    // School's actual classes (created by the school admin)
+    getDocs(query(collection(db, 'classes'), where('schoolId', '==', urlSchoolId)))
+      .then(snap => {
+        const names = snap.docs
+          .map(d => (d.data() as any).name as string)
+          .filter(Boolean)
+          .sort((a, b) => a.localeCompare(b));
+        setSchoolClasses(names);
+      });
+  }, [urlSchoolId]);
+
+  // Check if this user already applied to THIS school
   useEffect(() => {
     if (!user) return;
-    const q = query(collection(db, 'applications'), where('applicantUid', '==', user.uid));
+    const constraints = [where('applicantUid', '==', user.uid)];
+    if (urlSchoolId) constraints.push(where('schoolId', '==', urlSchoolId));
+    const q = query(collection(db, 'applications'), ...constraints);
     const unsubscribe = onSnapshot(q, (snapshot) => {
       if (!snapshot.empty) {
         setExistingApplication({ id: snapshot.docs[0].id, ...snapshot.docs[0].data() } as Application);
@@ -53,14 +85,15 @@ export default function Apply() {
     }, (error) => handleFirestoreError(error, OperationType.LIST, 'applications'));
 
     return () => unsubscribe();
-  }, [user]);
+  }, [user, urlSchoolId]);
 
   const validateStep = () => {
     const newErrors: Record<string, string> = {};
     if (step === 1) {
       if (!formData.applicantName) newErrors.applicantName = 'Name is required';
       if (!formData.dob) newErrors.dob = 'Date of birth is required';
-      if (!formData.nin || formData.nin.length !== 11) newErrors.nin = 'NIN must be 11 digits';
+      // NIN is optional — only validate length if provided
+      if (formData.nin && formData.nin.length !== 11) newErrors.nin = 'NIN must be 11 digits if provided';
     }
     if (step === 2) {
       if (!formData.classApplyingFor) newErrors.classApplyingFor = 'Target class is required';
@@ -75,7 +108,12 @@ export default function Apply() {
       }
     }
     if (step === 3) {
-      if (!formData.phone) newErrors.phone = 'Phone number is required';
+      if (!formData.phone) newErrors.phone = 'Applicant phone number is required';
+      if (!formData.guardianName) newErrors.guardianName = 'Guardian full name is required';
+      if (!formData.guardianPhone) newErrors.guardianPhone = 'Guardian phone number is required';
+      if (formData.guardianEmail && !/\S+@\S+\.\S+/.test(formData.guardianEmail)) {
+        newErrors.guardianEmail = 'Please enter a valid email address';
+      }
     }
 
     setErrors(newErrors);
@@ -94,6 +132,7 @@ export default function Apply() {
     try {
       await addDoc(collection(db, 'applications'), {
         ...formData,
+        ...(urlSchoolId ? { schoolId: urlSchoolId } : {}),
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       });
@@ -116,7 +155,7 @@ export default function Apply() {
           </div>
           <h2 className="text-2xl font-bold text-slate-900 mb-2">Application Already Submitted</h2>
           <p className="text-slate-600 mb-8 max-w-md mx-auto">
-            Your application for <strong>{existingApplication.classApplyingFor}</strong> is currently 
+            Your application for <strong>{existingApplication.classApplyingFor}</strong> is currently
             <span className="mx-1 px-2 py-1 rounded bg-indigo-100 text-indigo-700 font-medium capitalize">
               {existingApplication.status}
             </span>.
@@ -127,7 +166,7 @@ export default function Apply() {
               <p className="text-slate-500">Applicant Name</p>
               <p className="text-slate-900 font-medium">{existingApplication.applicantName}</p>
               <p className="text-slate-500">NIN</p>
-              <p className="text-slate-900 font-medium">{existingApplication.nin}</p>
+              <p className="text-slate-900 font-medium">{existingApplication.nin || '—'}</p>
               <p className="text-slate-500">Submitted On</p>
               <p className="text-slate-900 font-medium">
                 {existingApplication.createdAt?.toDate ? existingApplication.createdAt.toDate().toLocaleDateString() : 'Just now'}
@@ -141,6 +180,13 @@ export default function Apply() {
 
   return (
     <div className="max-w-4xl mx-auto px-4 py-12">
+      {/* School banner */}
+      {schoolName && (
+        <div className="mb-6 text-center">
+          <p className="text-sm text-slate-500 uppercase tracking-widest font-medium">Applying to</p>
+          <h1 className="text-2xl font-bold text-indigo-700">{schoolName}</h1>
+        </div>
+      )}
       {/* Unsaved changes guard */}
       <UnsavedChangesDialog
         blocker={blocker}
@@ -168,7 +214,7 @@ export default function Apply() {
           ))}
         </div>
         <div className="h-2 bg-slate-200 rounded-full overflow-hidden">
-          <motion.div 
+          <motion.div
             className="h-full bg-indigo-600"
             initial={{ width: '0%' }}
             animate={{ width: `${(step - 1) * 25}%` }}
@@ -192,15 +238,15 @@ export default function Apply() {
                   <h2 className="text-2xl font-bold text-slate-900">Personal Information</h2>
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  <FormField 
-                    label="Full Name of Applicant" 
+                  <FormField
+                    label="Full Name of Applicant"
                     error={errors.applicantName}
                     value={formData.applicantName}
                     onChange={v => updateForm({ applicantName: v })}
                     placeholder="John Doe"
                   />
-                  <FormField 
-                    label="Date of Birth" 
+                  <FormField
+                    label="Date of Birth"
                     type="date"
                     error={errors.dob}
                     value={formData.dob}
@@ -208,7 +254,7 @@ export default function Apply() {
                   />
                   <div className="space-y-2">
                     <label className="text-sm font-semibold text-slate-700">Gender</label>
-                    <select 
+                    <select
                       className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition-all"
                       value={formData.gender}
                       onChange={e => updateForm({ gender: e.target.value as any })}
@@ -218,12 +264,12 @@ export default function Apply() {
                       <option value="other">Other</option>
                     </select>
                   </div>
-                  <FormField 
-                    label="National ID (NIN)" 
+                  <FormField
+                    label="National ID (NIN) — Optional"
                     error={errors.nin}
                     value={formData.nin}
                     onChange={v => updateForm({ nin: v })}
-                    placeholder="11-digit number"
+                    placeholder="11-digit number (if available)"
                     maxLength={11}
                   />
                 </div>
@@ -245,13 +291,16 @@ export default function Apply() {
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                   <div className="space-y-2">
                     <label className="text-sm font-semibold text-slate-700">Class Applying For</label>
-                    <select 
+                    <select
                       className={`w-full px-4 py-3 rounded-xl border focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition-all ${errors.classApplyingFor ? 'border-rose-300 ring-1 ring-rose-200' : 'border-slate-200'}`}
                       value={formData.classApplyingFor}
                       onChange={e => updateForm({ classApplyingFor: e.target.value })}
                     >
                       <option value="">Select class…</option>
-                      {SCHOOL_CLASSES.map(c => <option key={c} value={c}>{c}</option>)}
+                      {schoolClasses.length > 0
+                        ? schoolClasses.map(c => <option key={c} value={c}>{c}</option>)
+                        : <option disabled>No classes available</option>
+                      }
                     </select>
                     {errors.classApplyingFor && (
                       <p className="text-sm text-rose-600 flex items-center gap-1">
@@ -259,15 +308,15 @@ export default function Apply() {
                       </p>
                     )}
                   </div>
-                  <FormField 
-                    label="Previous School Attended" 
+                  <FormField
+                    label="Previous School Attended"
                     value={formData.previousSchool}
                     onChange={v => updateForm({ previousSchool: v })}
                     placeholder="Name of school"
                   />
                   {formData.classApplyingFor?.startsWith('SSS') && (
-                    <FormField 
-                      label="WAEC/NECO Examination Number" 
+                    <FormField
+                      label="WAEC/NECO Examination Number"
                       error={errors.waecNecoNumber}
                       value={formData.waecNecoNumber}
                       onChange={v => updateForm({ waecNecoNumber: v })}
@@ -286,24 +335,84 @@ export default function Apply() {
                 exit={{ opacity: 0, x: -20 }}
                 className="space-y-6"
               >
-                <div className="flex items-center space-x-3 mb-6">
+                <div className="flex items-center space-x-3 mb-2">
                   <Phone className="w-6 h-6 text-indigo-600" />
                   <h2 className="text-2xl font-bold text-slate-900">Contact Information</h2>
                 </div>
+
+                {/* Applicant contact */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  <FormField 
-                    label="Parent/Guardian Email" 
+                  <FormField
+                    label="Parent/Guardian Email (login)"
                     value={formData.email}
                     disabled
                     onChange={() => {}}
                   />
-                  <FormField 
-                    label="Phone Number" 
+                  <FormField
+                    label="Applicant Phone Number"
                     error={errors.phone}
                     value={formData.phone}
                     onChange={v => updateForm({ phone: v })}
                     placeholder="+234..."
                   />
+                </div>
+
+                {/* Guardian section */}
+                <div className="pt-2 border-t border-slate-100">
+                  <div className="flex items-center gap-2 mb-4">
+                    <Heart className="w-5 h-5 text-rose-400" />
+                    <h3 className="text-base font-bold text-slate-800">Parent / Guardian Details</h3>
+                  </div>
+                  <p className="text-sm text-slate-500 mb-4">
+                    This information is used to create a parent portal account so the guardian can
+                    track grades, attendance, and fees online.
+                  </p>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div className="md:col-span-2">
+                      <FormField
+                        label="Guardian Full Name *"
+                        error={errors.guardianName}
+                        value={formData.guardianName}
+                        onChange={v => updateForm({ guardianName: v })}
+                        placeholder="Full legal name"
+                      />
+                    </div>
+                    <FormField
+                      label="Guardian Phone *"
+                      error={errors.guardianPhone}
+                      value={formData.guardianPhone}
+                      onChange={v => updateForm({ guardianPhone: v })}
+                      placeholder="+234..."
+                    />
+                    <FormField
+                      label="Guardian Email"
+                      type="email"
+                      error={errors.guardianEmail}
+                      value={formData.guardianEmail}
+                      onChange={v => updateForm({ guardianEmail: v })}
+                      placeholder="email@example.com"
+                    />
+                    <div className="space-y-2">
+                      <label className="text-sm font-semibold text-slate-700">Relationship to Applicant</label>
+                      <select
+                        className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none transition-all capitalize"
+                        value={formData.guardianRelationship}
+                        onChange={e => updateForm({ guardianRelationship: e.target.value })}
+                      >
+                        {RELATIONSHIPS.map(r => (
+                          <option key={r} value={r} className="capitalize">{r.charAt(0).toUpperCase() + r.slice(1)}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="md:col-span-2">
+                      <FormField
+                        label="Guardian Address"
+                        value={formData.guardianAddress}
+                        onChange={v => updateForm({ guardianAddress: v })}
+                        placeholder="Street address, city"
+                      />
+                    </div>
+                  </div>
                 </div>
               </motion.div>
             )}
@@ -322,7 +431,7 @@ export default function Apply() {
                 </div>
                 <div className="p-12 border-2 border-dashed border-slate-200 rounded-2xl text-center bg-slate-50">
                   <FileUp className="w-12 h-12 text-slate-400 mx-auto mb-4" />
-                  <p className="text-slate-600 mb-2 font-medium">Upload Birth Certificate & Transcripts</p>
+                  <p className="text-slate-600 mb-2 font-medium">Upload Birth Certificate &amp; Transcripts</p>
                   <p className="text-slate-400 text-sm mb-6">PDF, JPG or PNG (Max 5MB)</p>
                   <button className="px-6 py-2 bg-white border border-slate-200 rounded-lg text-slate-700 font-medium hover:bg-slate-100 transition-colors">
                     Select Files
@@ -347,16 +456,20 @@ export default function Apply() {
                 <div className="bg-slate-50 rounded-2xl p-6 space-y-4 border border-slate-100">
                   <ReviewItem label="Applicant Name" value={formData.applicantName} />
                   <ReviewItem label="Date of Birth" value={formData.dob} />
-                  <ReviewItem label="NIN" value={formData.nin} />
+                  {formData.nin && <ReviewItem label="NIN" value={formData.nin} />}
                   <ReviewItem label="Class Applying For" value={formData.classApplyingFor} />
                   <ReviewItem label="Previous School" value={formData.previousSchool} />
                   {formData.waecNecoNumber && <ReviewItem label="WAEC/NECO Number" value={formData.waecNecoNumber} />}
                   <ReviewItem label="Contact Phone" value={formData.phone} />
+                  <ReviewItem label="Guardian Name" value={formData.guardianName} />
+                  <ReviewItem label="Guardian Phone" value={formData.guardianPhone} />
+                  {formData.guardianEmail && <ReviewItem label="Guardian Email" value={formData.guardianEmail} />}
+                  <ReviewItem label="Guardian Relationship" value={formData.guardianRelationship} />
                 </div>
                 <div className="flex items-start p-4 bg-amber-50 rounded-xl border border-amber-100">
                   <AlertTriangle className="w-5 h-5 text-amber-600 mr-3 mt-0.5" />
                   <p className="text-sm text-amber-800">
-                    By submitting, you confirm that all information provided is accurate and 
+                    By submitting, you confirm that all information provided is accurate and
                     consents to identity verification via national databases.
                   </p>
                 </div>
@@ -375,7 +488,7 @@ export default function Apply() {
                 </div>
                 <h2 className="text-3xl font-bold text-slate-900 mb-4">Application Submitted!</h2>
                 <p className="text-slate-600 mb-8 max-w-md mx-auto">
-                  Your application has been received and is being reviewed by our admissions team. 
+                  Your application has been received and is being reviewed by our admissions team.
                   You will be notified via email of any updates.
                 </p>
                 <button

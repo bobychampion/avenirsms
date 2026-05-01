@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { db, auth, handleFirestoreError, OperationType } from '../firebase';
-import { collection, query, onSnapshot, doc, updateDoc, orderBy, serverTimestamp, setDoc, where } from 'firebase/firestore';
+import { collection, query, onSnapshot, doc, updateDoc, orderBy, serverTimestamp, setDoc, where, addDoc, getDocs } from 'firebase/firestore';
 import { useSchoolId } from '../hooks/useSchoolId';
 import { createUserWithEmailAndPassword, updateProfile } from 'firebase/auth';
 import { UserProfile } from '../types';
@@ -8,8 +8,9 @@ import { motion, AnimatePresence } from 'motion/react';
 import toast from 'react-hot-toast';
 import {
   Users, Search, Filter, User as UserIcon, CheckCircle2,
-  X, AlertCircle, Ban, Power, Loader2, Plus, ChevronRight, Key
+  X, AlertCircle, Ban, Power, Loader2, Plus, ChevronRight, Key, UserCheck
 } from 'lucide-react';
+import { assertNotSuperAdminEmail } from '../utils/superAdminGuard';
 
 const ROLE_COLORS: Record<string, string> = {
   admin: 'bg-rose-50 text-rose-700 border-rose-100',
@@ -30,6 +31,7 @@ interface RoleChangeConfirm {
 export default function UserManagement() {
   const schoolId = useSchoolId();
   const [users, setUsers] = useState<UserProfile[]>([]);
+  const [staffWithoutAccount, setStaffWithoutAccount] = useState<{ id: string; staffName: string; email: string; role: string }[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [filterRole, setFilterRole] = useState<string>('all');
@@ -44,11 +46,21 @@ export default function UserManagement() {
     if (!schoolId) return;
     const q = query(collection(db, 'users'), where('schoolId', '==', schoolId!), orderBy('email'));
     const unsub = onSnapshot(q, snap => {
-      // FIX: use doc.id for uid
-      setUsers(snap.docs.map(d => ({ uid: d.id, ...d.data() } as UserProfile)));
+      const loadedUsers = snap.docs.map(d => ({ uid: d.id, ...d.data() } as UserProfile));
+      setUsers(loadedUsers);
       setLoading(false);
     }, err => handleFirestoreError(err, OperationType.LIST, 'users'));
-    return () => unsub();
+
+    // Also watch staff to find those without a linked login account
+    const qStaff = query(collection(db, 'staff'), where('schoolId', '==', schoolId!));
+    const unsubStaff = onSnapshot(qStaff, snap => {
+      const orphans = snap.docs
+        .map(d => ({ id: d.id, ...d.data() } as any))
+        .filter((s: any) => !s.userId);
+      setStaffWithoutAccount(orphans.map((s: any) => ({ id: s.id, staffName: s.staffName, email: s.email, role: s.role })));
+    });
+
+    return () => { unsub(); unsubStaff(); };
   }, [schoolId]);
 
   const handleRoleChange = (u: UserProfile, newRole: string) => {
@@ -83,6 +95,10 @@ export default function UserManagement() {
       toast.error('Passwords do not match');
       return;
     }
+    // Block super-admin emails from being used as school-scoped roles
+    try { assertNotSuperAdminEmail(inviteForm.email, inviteForm.role); }
+    catch (guardErr: any) { toast.error(guardErr.message); return; }
+
     setCreatingUser(true);
     const tid = toast.loading(`Creating ${inviteForm.role} account…`);
     try {
@@ -97,6 +113,46 @@ export default function UserManagement() {
         schoolId: schoolId ?? 'main',
         createdAt: serverTimestamp(),
       });
+
+      // Check if a staff record already exists with this email — link it instead of duplicating
+      const staffRoles = ['teacher', 'admin_staff', 'support', 'accountant'];
+      const isStaffRole = staffRoles.includes(inviteForm.role) || inviteForm.role === 'teacher';
+
+      if (isStaffRole) {
+        const existingStaffSnap = await getDocs(
+          query(collection(db, 'staff'), where('schoolId', '==', schoolId ?? 'main'), where('email', '==', inviteForm.email))
+        );
+
+        if (!existingStaffSnap.empty) {
+          // Link the existing staff record
+          await updateDoc(doc(db, 'staff', existingStaffSnap.docs[0].id), {
+            userId: cred.user.uid,
+            updatedAt: serverTimestamp(),
+          });
+        } else {
+          // No staff record exists — create one
+          const staffRole = inviteForm.role === 'teacher' ? 'teacher'
+            : inviteForm.role === 'accountant' ? 'admin_staff'
+            : inviteForm.role as 'teacher' | 'admin_staff' | 'support';
+          await addDoc(collection(db, 'staff'), {
+            staffName: inviteForm.displayName,
+            email: inviteForm.email,
+            role: staffRole,
+            basicSalary: 0,
+            allowances: 0,
+            bankName: '',
+            accountNumber: '',
+            subject: '',
+            qualification: '',
+            department: '',
+            photoUrl: '',
+            userId: cred.user.uid,
+            schoolId: schoolId ?? 'main',
+            employedAt: serverTimestamp(),
+          });
+        }
+      }
+
       toast.success(`${inviteForm.role.charAt(0).toUpperCase() + inviteForm.role.slice(1)} account created for ${inviteForm.displayName}!`, { id: tid });
       setShowInviteModal(false);
       setInviteForm({ email: '', displayName: '', role: 'teacher', password: '', confirmPassword: '' });
@@ -176,6 +232,35 @@ export default function UserManagement() {
         </div>
         <p className="text-sm text-slate-400 ml-auto font-medium">{filteredUsers.length} / {users.length} users</p>
       </div>
+
+      {/* Staff without login accounts */}
+      {staffWithoutAccount.length > 0 && (
+        <div className="mb-6 bg-amber-50 border border-amber-200 rounded-2xl p-4">
+          <div className="flex items-center gap-2 mb-3">
+            <AlertCircle className="w-4 h-4 text-amber-600 flex-shrink-0" />
+            <p className="text-sm font-bold text-amber-800">
+              {staffWithoutAccount.length} staff member{staffWithoutAccount.length > 1 ? 's' : ''} without a login account
+            </p>
+          </div>
+          <p className="text-xs text-amber-700 mb-3">These staff were added in Staff & HR but have no system login. Create a user account for them to grant portal access.</p>
+          <div className="flex flex-wrap gap-2">
+            {staffWithoutAccount.map(s => (
+              <button
+                key={s.id}
+                onClick={() => {
+                  setInviteForm({ email: s.email || '', displayName: s.staffName, role: s.role === 'teacher' ? 'teacher' : s.role === 'admin_staff' ? 'accountant' : 'teacher', password: '', confirmPassword: '' });
+                  setShowInviteModal(true);
+                }}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-amber-300 text-amber-800 text-xs font-semibold rounded-xl hover:bg-amber-100 transition-colors"
+              >
+                <UserCheck className="w-3.5 h-3.5" />
+                {s.staffName}
+                <span className="text-amber-500">· Create login</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* User Table */}

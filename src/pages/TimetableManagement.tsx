@@ -64,8 +64,8 @@ export default function TimetableManagement() {
     const unsub = onSnapshot(query(collection(db, 'timetables'), where('schoolId', '==', schoolId!)), snap => {
       setTimetables(snap.docs.map(d => ({ id: d.id, ...d.data() } as Timetable)));
     });
-    const unsubT = onSnapshot(query(collection(db, 'users')), snap => {
-      setTeachers(snap.docs.map(d => ({ uid: d.id, ...d.data() } as UserProfile)).filter(u => u.role === 'teacher'));
+    const unsubT = onSnapshot(query(collection(db, 'users'), where('schoolId', '==', schoolId!), where('role', '==', 'teacher')), snap => {
+      setTeachers(snap.docs.map(d => ({ uid: d.id, ...d.data() } as UserProfile)));
     });
     return () => { unsub(); unsubT(); };
   }, [schoolId]);

@@ -36,6 +36,7 @@ import SchoolSettingsPage from './pages/SchoolSettings';
 import PinManagement from './pages/PinManagement';
 import NotificationsManagement from './pages/NotificationsManagement';
 import BulkStudentImport from './pages/BulkStudentImport';
+import BulkStaffImport from './pages/BulkStaffImport';
 import WhatsAppNotifications from './pages/WhatsAppNotifications';
 import SeedData from './pages/SeedData';
 import OnboardingTutorial from './pages/OnboardingTutorial';
@@ -64,6 +65,7 @@ const SuperAdminDashboard = lazy(() => import('./pages/super-admin/SuperAdminDas
 const SchoolList = lazy(() => import('./pages/super-admin/SchoolList'));
 const SchoolOnboarding = lazy(() => import('./pages/super-admin/SchoolOnboarding'));
 const SchoolDetail = lazy(() => import('./pages/super-admin/SchoolDetail'));
+const InvoiceGenerator = lazy(() => import('./pages/super-admin/InvoiceGenerator'));
 const DataMigration = lazy(() => import('./pages/DataMigration'));
 
 // Roles that have access to admin-level finance/payroll/analytics routes
@@ -234,6 +236,7 @@ function AppContent() {
           <Route path="/super-admin/schools" element={<Layout><ProtectedRoute superAdminOnly><SchoolList /></ProtectedRoute></Layout>} />
           <Route path="/super-admin/schools/new" element={<Layout><ProtectedRoute superAdminOnly><SchoolOnboarding /></ProtectedRoute></Layout>} />
           <Route path="/super-admin/schools/:schoolId" element={<Layout><ProtectedRoute superAdminOnly><SchoolDetail /></ProtectedRoute></Layout>} />
+          <Route path="/super-admin/invoices" element={<Layout><ProtectedRoute superAdminOnly><InvoiceGenerator /></ProtectedRoute></Layout>} />
 
           {/* Admin routes */}
           <Route path="/admin" element={<Layout><ProtectedRoute role="admin"><AdminDashboard /></ProtectedRoute></Layout>} />
@@ -260,6 +263,7 @@ function AppContent() {
           <Route path="/admin/settings" element={<Layout><ProtectedRoute role="admin"><SchoolSettingsPage /></ProtectedRoute></Layout>} />
           <Route path="/admin/notifications" element={<Layout><ProtectedRoute role="admin"><NotificationsManagement /></ProtectedRoute></Layout>} />
           <Route path="/admin/bulk-import" element={<Layout><ProtectedRoute role="admin"><BulkStudentImport /></ProtectedRoute></Layout>} />
+          <Route path="/admin/bulk-staff-import" element={<Layout><ProtectedRoute role="admin"><BulkStaffImport /></ProtectedRoute></Layout>} />
           <Route path="/admin/whatsapp" element={<Layout><ProtectedRoute role="admin"><WhatsAppNotifications /></ProtectedRoute></Layout>} />
           <Route path="/admin/seed" element={<Layout><ProtectedRoute superAdminOnly><SeedData /></ProtectedRoute></Layout>} />
           <Route path="/admin/migrate" element={<Layout><ProtectedRoute superAdminOnly><DataMigration /></ProtectedRoute></Layout>} />

@@ -1,14 +1,16 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { Link } from 'react-router-dom';
 import { db } from '../firebase';
-import { collection, query, onSnapshot, addDoc, updateDoc, deleteDoc, doc, serverTimestamp, orderBy, where } from 'firebase/firestore';
-import { Staff, LeaveRequest } from '../types';
+import { collection, query, onSnapshot, addDoc, updateDoc, deleteDoc, doc, serverTimestamp, orderBy, where, getDocs } from 'firebase/firestore';
+import { Staff, LeaveRequest, UserProfile } from '../types';
 import { AnimatePresence, motion } from 'motion/react';
-import { Briefcase, Plus, X, Edit2, Trash2, Mail, Phone, DollarSign, ChevronDown, CheckCircle, XCircle, Upload, Camera, ChevronLeft, ChevronRight as ChevronRightIcon } from 'lucide-react';
+import { Briefcase, Plus, X, Edit2, Trash2, Mail, Phone, DollarSign, ChevronDown, CheckCircle, XCircle, Upload, Camera, ChevronLeft, ChevronRight as ChevronRightIcon, Link2, UserCheck } from 'lucide-react';
 import { useSchool } from '../components/SchoolContext';
 import { useSchoolId } from '../hooks/useSchoolId';
 import { uploadToCloudinary } from '../utils/cloudinaryUpload';
 import { formatCurrency } from '../utils/formatCurrency';
 import toast from 'react-hot-toast';
+import { assertNotSuperAdminEmail } from '../utils/superAdminGuard';
 
 const PAGE_SIZE = 20;
 
@@ -25,6 +27,7 @@ export default function StaffManagement() {
 
   const [staff, setStaff] = useState<Staff[]>([]);
   const [leaves, setLeaves] = useState<LeaveRequest[]>([]);
+  const [usersByEmail, setUsersByEmail] = useState<Record<string, UserProfile>>({});
   const [loading, setLoading] = useState(true);
   const [isModal, setIsModal] = useState(false);
   const [isLeaveModal, setIsLeaveModal] = useState(false);
@@ -47,7 +50,15 @@ export default function StaffManagement() {
     const unsub2 = onSnapshot(query(collection(db, 'leave_requests'), where('schoolId', '==', schoolId!), orderBy('createdAt', 'desc')), snap => {
       setLeaves(snap.docs.map(d => ({ id: d.id, ...d.data() } as LeaveRequest)));
     });
-    return () => { unsub1(); unsub2(); };
+    const unsub3 = onSnapshot(query(collection(db, 'users'), where('schoolId', '==', schoolId!)), snap => {
+      const map: Record<string, UserProfile> = {};
+      snap.docs.forEach(d => {
+        const u = { uid: d.id, ...d.data() } as UserProfile;
+        if (u.email) map[u.email.toLowerCase()] = u;
+      });
+      setUsersByEmail(map);
+    });
+    return () => { unsub1(); unsub2(); unsub3(); };
   }, [schoolId]);
 
   // Reset page when filter changes
@@ -55,10 +66,16 @@ export default function StaffManagement() {
 
   const saveStaff = async () => {
     if (!form.staffName || !form.email) return;
+    try { assertNotSuperAdminEmail(form.email, 'staff member'); }
+    catch (e: any) { toast.error(e.message); return; }
+    // Auto-link userId if a user account exists with this email
+    const linkedUser = usersByEmail[form.email.toLowerCase()];
+    const dataToSave = linkedUser ? { ...form, userId: linkedUser.uid } : form;
+
     if (editingStaff?.id) {
-      await updateDoc(doc(db, 'staff', editingStaff.id), { ...form, updatedAt: serverTimestamp() }).catch(console.error);
+      await updateDoc(doc(db, 'staff', editingStaff.id), { ...dataToSave, updatedAt: serverTimestamp() }).catch(console.error);
     } else {
-      await addDoc(collection(db, 'staff'), { ...form, employedAt: serverTimestamp(), schoolId: schoolId ?? undefined }).catch(console.error);
+      await addDoc(collection(db, 'staff'), { ...dataToSave, employedAt: serverTimestamp(), schoolId: schoolId ?? 'main' }).catch(console.error);
     }
     setIsModal(false);
     setEditingStaff(null);
@@ -78,7 +95,7 @@ export default function StaffManagement() {
       staffName: selectedLeaveStaff.staffName,
       status: 'pending',
       createdAt: serverTimestamp(),
-      schoolId: schoolId ?? undefined,
+      schoolId: schoolId ?? 'main',
     }).catch(console.error);
     setIsLeaveModal(false);
     setLeaveForm(emptyLeave);
@@ -120,10 +137,18 @@ export default function StaffManagement() {
           </h1>
           <p className="text-slate-500 mt-1 text-sm">Manage staff records, roles, and leave requests.</p>
         </div>
-        <button onClick={() => { setEditingStaff(null); setForm(emptyForm); setIsModal(true); }}
-          className="flex items-center gap-2 px-4 py-2.5 bg-indigo-600 text-white font-bold rounded-xl hover:bg-indigo-700 transition-all text-sm shadow-sm">
-          <Plus className="w-4 h-4" /> Add Staff
-        </button>
+        <div className="flex items-center gap-2">
+          <Link
+            to="/admin/bulk-staff-import"
+            className="flex items-center gap-2 px-4 py-2.5 border border-slate-200 text-slate-700 font-bold rounded-xl hover:bg-slate-50 transition-all text-sm"
+          >
+            <Upload className="w-4 h-4" /> Bulk Import
+          </Link>
+          <button onClick={() => { setEditingStaff(null); setForm(emptyForm); setIsModal(true); }}
+            className="flex items-center gap-2 px-4 py-2.5 bg-indigo-600 text-white font-bold rounded-xl hover:bg-indigo-700 transition-all text-sm shadow-sm">
+            <Plus className="w-4 h-4" /> Add Staff
+          </button>
+        </div>
       </div>
 
       {/* Tabs */}
@@ -158,7 +183,10 @@ export default function StaffManagement() {
           ) : (
             <>
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-                {paginatedStaff.map(s => (
+                {paginatedStaff.map(s => {
+                  const linkedUser = usersByEmail[s.email?.toLowerCase() ?? ''];
+                  const hasAccount = !!(s.userId || linkedUser);
+                  return (
                   <motion.div key={s.id} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
                     className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5 hover:shadow-md transition-all">
                     <div className="flex items-start justify-between mb-4">
@@ -193,12 +221,20 @@ export default function StaffManagement() {
                       {s.subject && <div className="flex items-center gap-2"><span className="text-slate-400">📚</span> {s.subject}</div>}
                       <div className="flex items-center gap-2"><DollarSign className="w-3.5 h-3.5 text-slate-400" />{formatCurrency(s.basicSalary, locale, currency)}/mo</div>
                     </div>
+
+                    {/* Login account status */}
+                    <div className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-[10px] font-bold mb-3 ${hasAccount ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-amber-50 text-amber-700 border border-amber-200'}`}>
+                      {hasAccount ? <UserCheck className="w-3 h-3" /> : <Link2 className="w-3 h-3" />}
+                      {hasAccount ? `Login account linked` : 'No login account — create one in User Management'}
+                    </div>
+
                     <button onClick={() => { setSelectedLeaveStaff(s); setIsLeaveModal(true); }}
                       className="w-full py-2 text-xs font-bold text-slate-600 bg-slate-50 hover:bg-slate-100 rounded-xl border border-slate-200 transition-colors">
                       Request Leave
                     </button>
                   </motion.div>
-                ))}
+                  );
+                })}
               </div>
 
               {/* Pagination */}

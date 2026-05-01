@@ -29,6 +29,9 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   LineChart, Line, PieChart, Pie, Cell, AreaChart, Area, Legend
 } from 'recharts';
+import { AnimatePresence } from 'motion/react';
+import { useOnboarding } from '../hooks/useOnboarding';
+import OnboardingWizard from '../components/OnboardingWizard';
 
 export function StatusBadge({ status }: { status: ApplicationStatus }) {
   const styles: Record<ApplicationStatus, string> = {
@@ -90,6 +93,7 @@ const moduleGroups = [
       { to: '/admin/whatsapp', label: 'WhatsApp', icon: MessageSquare, color: 'bg-green-600' },
       { to: '/admin/analytics', label: 'Analytics', icon: BarChart3, color: 'bg-violet-500' },
       { to: '/admin/bulk-import', label: 'Bulk Import', icon: FileSpreadsheet, color: 'bg-teal-600' },
+      { to: '/admin/bulk-staff-import', label: 'Staff Import', icon: Users, color: 'bg-cyan-600' },
       { to: '/admin/users', label: 'User Mgmt', icon: Settings, color: 'bg-pink-500' },
       { to: '/admin/settings', label: 'School Settings', icon: Shield, color: 'bg-slate-600' },
       { to: '/admin/seed', label: 'Seed Data', icon: Database, color: 'bg-violet-600' },
@@ -212,6 +216,9 @@ export default function AdminDashboard() {
   const schoolId = useSchoolId();
   const fmt = (amount: number) => formatCurrency(amount, locale, currency);
 
+  // ─── Onboarding ──────────────────────────────────────────────────────────────
+  const onboarding = useOnboarding(schoolId);
+
   // ─── State ──────────────────────────────────────────────────────────────────
   const [applications, setApplications] = useState<Application[]>([]);
   const [studentCount, setStudentCount] = useState(0);
@@ -273,7 +280,7 @@ export default function AdminDashboard() {
       err => handleFirestoreError(err, OperationType.LIST, 'applications')
     );
     return () => unsubApps();
-  }, []);
+  }, [schoolId]);
 
   // ─── Live Class Board Subscriptions ─────────────────────────────────────────
   useEffect(() => {
@@ -359,7 +366,7 @@ export default function AdminDashboard() {
     const tick = setInterval(() => setLiveNow(new Date()), 60_000);
 
     return () => { unsubFence(); unsubCheckins(); unsubTimetables(); unsubTeachers(); unsubStudentAtt(); clearInterval(idleCheck); clearInterval(tick); };
-  }, []);
+  }, [schoolId]);
 
   // ─── Stats Fetch ────────────────────────────────────────────────────────────
   const fetchStats = async () => {
@@ -544,6 +551,22 @@ export default function AdminDashboard() {
   // ─── Render ─────────────────────────────────────────────────────────────────
   return (
     <div className="p-4 lg:p-6 max-w-[1600px] mx-auto">
+
+      {/* ── Onboarding Wizard ── */}
+      <AnimatePresence>
+        {onboarding.needed && schoolId && (
+          <OnboardingWizard
+            schoolId={schoolId}
+            currentStep={onboarding.currentStep}
+            settingsDone={onboarding.settingsDone}
+            importDone={onboarding.importDone}
+            onMarkSettingsDone={onboarding.markSettingsDone}
+            onMarkImportDone={onboarding.markImportDone}
+            onComplete={onboarding.completeOnboarding}
+            onDismiss={onboarding.dismiss}
+          />
+        )}
+      </AnimatePresence>
 
       {/* ── Header ── */}
       <div className="flex items-center justify-between mb-5">

@@ -89,23 +89,47 @@ export interface GpsError {
 
 /**
  * Wraps `navigator.geolocation.getCurrentPosition` in a promise.
- * Throws `GpsError` on failure.
+ *
+ * Strategy:
+ *  1. Try high-accuracy with a 30 s timeout and allow a 60 s cached fix
+ *     (avoids forcing a fresh GPS acquisition on every tap, which times out
+ *     on laptops / devices that rely on Wi-Fi positioning).
+ *  2. If that times out (error code 3), automatically retry with
+ *     enableHighAccuracy: false — this uses the fast Wi-Fi / IP fallback and
+ *     almost never times out, at the cost of slightly lower accuracy (~100 m),
+ *     which is still well within the 150 m acceptance threshold.
  */
-export function getCurrentPosition(timeoutMs = 15_000): Promise<GpsResult> {
+export function getCurrentPosition(): Promise<GpsResult> {
   return new Promise((resolve, reject) => {
     if (!navigator.geolocation) {
       reject({ code: -1, message: 'Geolocation is not supported by this browser.' } as GpsError);
       return;
     }
+
+    const toResult = (pos: GeolocationPosition): GpsResult => ({
+      lat: pos.coords.latitude,
+      lng: pos.coords.longitude,
+      accuracy: pos.coords.accuracy,
+      timestamp: pos.timestamp,
+    });
+
+    // First attempt: high accuracy, allow a 60-second cached fix
     navigator.geolocation.getCurrentPosition(
-      pos => resolve({
-        lat: pos.coords.latitude,
-        lng: pos.coords.longitude,
-        accuracy: pos.coords.accuracy,
-        timestamp: pos.timestamp,
-      }),
-      err => reject({ code: err.code, message: geolocationErrorMessage(err.code) } as GpsError),
-      { enableHighAccuracy: true, timeout: timeoutMs, maximumAge: 0 },
+      pos => resolve(toResult(pos)),
+      err => {
+        // On timeout only → retry with low-accuracy (Wi-Fi / IP geolocation)
+        // which is instantaneous and reliable indoors / on desktops.
+        if (err.code === 3) {
+          navigator.geolocation.getCurrentPosition(
+            pos => resolve(toResult(pos)),
+            err2 => reject({ code: err2.code, message: geolocationErrorMessage(err2.code) } as GpsError),
+            { enableHighAccuracy: false, timeout: 15_000, maximumAge: 120_000 },
+          );
+        } else {
+          reject({ code: err.code, message: geolocationErrorMessage(err.code) } as GpsError);
+        }
+      },
+      { enableHighAccuracy: true, timeout: 30_000, maximumAge: 60_000 },
     );
   });
 }
@@ -114,7 +138,7 @@ function geolocationErrorMessage(code: number): string {
   switch (code) {
     case 1: return 'Location permission denied. Please enable location access in your browser settings.';
     case 2: return 'Your device could not determine its location. Try again in an open area.';
-    case 3: return 'Location request timed out. Move to an area with better GPS signal and retry.';
+    case 3: return 'Location timed out. Please check that location access is enabled and try again.';
     default: return 'An unknown location error occurred.';
   }
 }

@@ -91,11 +91,9 @@ export default function ParentPortal() {
       qByEmail,
       snap => {
         emailResults = snap.docs.map(d => ({ id: d.id, ...d.data() } as Student));
-        console.debug('[ParentPortal] guardianEmail match:', emailResults.length, 'student(s)');
         updateChildren();
       },
       err => {
-        console.error('[ParentPortal] guardianEmail query failed:', err.code, err.message);
         handleFirestoreError(err, OperationType.LIST, 'students[guardianEmail]');
         setLoading(false);
       }
@@ -105,11 +103,9 @@ export default function ParentPortal() {
       qByUid,
       snap => {
         uidResults = snap.docs.map(d => ({ id: d.id, ...d.data() } as Student));
-        console.debug('[ParentPortal] guardianUserId match:', uidResults.length, 'student(s)');
         updateChildren();
       },
       err => {
-        console.error('[ParentPortal] guardianUserId query failed:', err.code, err.message);
         // Non-fatal: email query may still return results
       }
     );
@@ -312,12 +308,12 @@ export default function ParentPortal() {
   }
 
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10">
+    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 pb-24 md:pb-10">
       {/* Header */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between mb-8 gap-4">
+      <div className="flex flex-col md:flex-row md:items-center justify-between mb-6 gap-4">
         <div>
-          <h1 className="text-3xl font-bold text-slate-900 tracking-tight">Parent Portal</h1>
-          <p className="text-slate-500 mt-1">
+          <h1 className="text-2xl md:text-3xl font-bold text-slate-900 tracking-tight">Parent Portal</h1>
+          <p className="text-slate-500 mt-1 text-sm md:text-base">
             Welcome back, {profile?.displayName}.
             {children.length === 1
               ? ` Monitoring ${children[0].studentName}'s progress.`
@@ -328,7 +324,7 @@ export default function ParentPortal() {
 
       {/* ── MY CHILDREN — always visible when multiple children ── */}
       {children.length > 1 && (
-        <div className="mb-8">
+        <div className="mb-5">
           <h2 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3 flex items-center gap-2">
             <User className="w-3.5 h-3.5" /> My Children ({children.length})
           </h2>
@@ -399,8 +395,8 @@ export default function ParentPortal() {
         </>
       )}
 
-      {/* Tab Bar */}
-      <div className="flex flex-wrap gap-1 bg-slate-100 p-1 rounded-xl mb-8">
+      {/* ── Desktop Tab Bar (hidden on mobile) ── */}
+      <div className="hidden md:flex flex-wrap gap-1 bg-slate-100 p-1 rounded-xl mb-8">
         {tabs.map(({ id, label, Icon, badge }) => (
           <button key={id} onClick={() => setActiveTab(id)}
             className={`px-4 py-2 rounded-lg text-sm font-bold transition-all flex items-center gap-2 relative whitespace-nowrap ${
@@ -420,6 +416,42 @@ export default function ParentPortal() {
           <Calendar className="w-4 h-4" />Calendar
         </button>
       </div>
+
+      {/* ── Mobile Bottom Tab Bar (fixed, shown only on mobile) ── */}
+      <nav className="fixed bottom-0 left-0 right-0 z-30 md:hidden bg-white/95 backdrop-blur-md border-t border-slate-200 shadow-[0_-2px_16px_rgba(0,0,0,0.06)]">
+        <div className="flex overflow-x-auto scrollbar-none">
+          {tabs.map(({ id, label, Icon, badge }) => {
+            const isActive = activeTab === id;
+            return (
+              <button
+                key={id}
+                onClick={() => setActiveTab(id)}
+                className={`flex-1 min-w-[56px] flex flex-col items-center justify-center gap-0.5 py-2 px-1 relative transition-colors ${
+                  isActive ? 'text-indigo-600' : 'text-slate-400'
+                }`}
+              >
+                <div className="relative">
+                  <Icon className={`w-5 h-5 transition-transform ${isActive ? 'scale-110' : ''}`} />
+                  {badge && badge > 0 && (
+                    <span className="absolute -top-1.5 -right-1.5 min-w-[14px] h-3.5 px-0.5 bg-rose-500 text-white text-[9px] font-bold rounded-full flex items-center justify-center">
+                      {badge}
+                    </span>
+                  )}
+                </div>
+                <span className={`text-[9px] font-bold leading-none whitespace-nowrap`}>{label}</span>
+                {isActive && <span className="absolute top-0 left-1/2 -translate-x-1/2 w-6 h-0.5 bg-indigo-600 rounded-full" />}
+              </button>
+            );
+          })}
+          <button
+            onClick={() => navigate('/calendar')}
+            className="flex-1 min-w-[56px] flex flex-col items-center justify-center gap-0.5 py-2 px-1 text-slate-400 transition-colors"
+          >
+            <Calendar className="w-5 h-5" />
+            <span className="text-[9px] font-bold leading-none whitespace-nowrap">Calendar</span>
+          </button>
+        </div>
+      </nav>
 
       {/* ── ACADEMIC PROGRESS ── */}
       {activeTab === 'progress' && (

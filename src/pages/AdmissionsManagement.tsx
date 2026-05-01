@@ -1,6 +1,9 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { db } from '../firebase';
+import { initializeApp, getApps } from 'firebase/app';
+import { getAuth, createUserWithEmailAndPassword, signOut as firebaseSignOut } from 'firebase/auth';
+import firebaseConfig from '../../firebase-applet-config.json';
 import {
   collection, onSnapshot, addDoc, updateDoc, doc,
   serverTimestamp, query, orderBy, getDocs, where, writeBatch, arrayUnion
@@ -14,10 +17,12 @@ import {
   BookOpen, ChevronRight, X, Save, Loader2, AlertTriangle,
   Phone, Mail, MapPin, Heart, School, User, Link2, Baby,
   FileText, BarChart3, RefreshCw, Send, ShieldCheck,
-  ChevronLeft
+  ChevronLeft, Share2, Copy, ExternalLink, KeyRound, GraduationCap
 } from 'lucide-react';
-import { Application, ApplicationStatus, Student, Guardian, SCHOOL_CLASSES, CURRENT_SESSION, formatDate } from '../types';
+import { Application, ApplicationStatus, Student, Guardian, CURRENT_SESSION, formatDate } from '../types';
+import { useSchool } from '../components/SchoolContext';
 import { stripUndefined } from '../utils/firestoreSanitize';
+import { assertNotSuperAdminEmail } from '../utils/superAdminGuard';
 import { differenceInYears, parseISO } from 'date-fns';
 import { useAuth } from '../components/FirebaseProvider';
 import { useSchoolId } from '../hooks/useSchoolId';
@@ -71,15 +76,205 @@ const EMPTY_FORM: DirectAdmitForm = {
   siblingSearch: '',
 };
 
+// ─── Admission Success Modal ──────────────────────────────────────────────────
+
+interface AdmissionResult {
+  studentId: string;
+  className: string;
+  parentEmail?: string;
+  parentPassword?: string;
+  studentLogin?: string;
+  studentPassword?: string;
+}
+
+function CopyBtn({ value, label }: { value: string; label?: string }) {
+  const [copied, setCopied] = React.useState(false);
+  const handle = async () => {
+    await navigator.clipboard.writeText(value);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+  return (
+    <button
+      onClick={handle}
+      className={`flex items-center gap-1 text-xs px-2.5 py-1 rounded-lg font-medium transition-all ${
+        copied ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 hover:bg-slate-200 text-slate-600'
+      }`}
+    >
+      <Copy className="w-3 h-3" />
+      {copied ? 'Copied!' : (label ?? 'Copy')}
+    </button>
+  );
+}
+
+function AdmissionSuccessModal({ result, onClose }: { result: AdmissionResult; onClose: () => void }) {
+  const [copiedAll, setCopiedAll] = React.useState(false);
+
+  const buildShareText = () => {
+    const lines: string[] = [
+      'Student Admission Confirmed',
+      '──────────────────────────',
+      `Student ID : ${result.studentId}`,
+      `Class      : ${result.className}`,
+    ];
+    if (result.parentEmail) {
+      lines.push('', 'Parent Portal Login', `  Email    : ${result.parentEmail}`, `  Password : ${result.parentPassword}`);
+    }
+    if (result.studentLogin) {
+      lines.push('', 'Student Portal Login', `  Login    : ${result.studentLogin}`, `  Password : ${result.studentPassword}`);
+    }
+    lines.push('', 'Please log in and change the temporary password on first sign-in.');
+    return lines.join('\n');
+  };
+
+  const handleCopyAll = async () => {
+    await navigator.clipboard.writeText(buildShareText());
+    setCopiedAll(true);
+    setTimeout(() => setCopiedAll(false), 2500);
+  };
+
+  const handleShare = async () => {
+    const text = buildShareText();
+    if (navigator.share) {
+      try { await navigator.share({ title: 'Student Admission Details', text }); } catch { /* cancelled */ }
+    } else {
+      await navigator.clipboard.writeText(text);
+      setCopiedAll(true);
+      setTimeout(() => setCopiedAll(false), 2500);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+      <motion.div
+        initial={{ opacity: 0, scale: 0.94, y: 16 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        exit={{ opacity: 0, scale: 0.94, y: 16 }}
+        className="bg-white rounded-3xl shadow-2xl w-full max-w-md overflow-hidden"
+      >
+        {/* Header */}
+        <div className="bg-gradient-to-br from-emerald-500 to-teal-600 px-6 pt-7 pb-6 text-white">
+          <div className="flex justify-between items-start">
+            <div className="flex items-center gap-3">
+              <div className="w-11 h-11 rounded-2xl bg-white/20 flex items-center justify-center">
+                <CheckCircle className="w-6 h-6 text-white" />
+              </div>
+              <div>
+                <h2 className="text-lg font-bold">Student Admitted!</h2>
+                <p className="text-emerald-100 text-sm">Enrolment complete</p>
+              </div>
+            </div>
+            <button onClick={onClose} className="w-8 h-8 rounded-full bg-white/20 hover:bg-white/30 flex items-center justify-center transition-colors">
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+          <div className="flex gap-2 mt-4 flex-wrap">
+            <span className="inline-flex items-center gap-1.5 bg-white/20 text-white text-xs font-semibold px-3 py-1.5 rounded-full">
+              <User className="w-3 h-3" /> {result.studentId}
+            </span>
+            <span className="inline-flex items-center gap-1.5 bg-white/20 text-white text-xs font-semibold px-3 py-1.5 rounded-full">
+              <GraduationCap className="w-3 h-3" /> {result.className}
+            </span>
+          </div>
+        </div>
+
+        {/* Credentials cards */}
+        <div className="px-6 py-5 space-y-3 max-h-[55vh] overflow-y-auto">
+          {result.parentEmail && (
+            <div className="border border-indigo-100 rounded-2xl overflow-hidden">
+              <div className="bg-indigo-50 px-4 py-2 flex items-center gap-2">
+                <Users className="w-4 h-4 text-indigo-600" />
+                <span className="text-xs font-bold text-indigo-700 uppercase tracking-wider">Parent Portal Account</span>
+              </div>
+              <div className="divide-y divide-slate-100">
+                <div className="flex items-center justify-between px-4 py-3">
+                  <div>
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-0.5">Email</p>
+                    <p className="text-sm font-mono text-slate-900 select-all">{result.parentEmail}</p>
+                  </div>
+                  <CopyBtn value={result.parentEmail} />
+                </div>
+                <div className="flex items-center justify-between px-4 py-3">
+                  <div>
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-0.5">Temporary Password</p>
+                    <p className="text-sm font-mono text-slate-900 select-all">{result.parentPassword}</p>
+                  </div>
+                  <CopyBtn value={result.parentPassword!} />
+                </div>
+              </div>
+            </div>
+          )}
+
+          {result.studentLogin && (
+            <div className="border border-violet-100 rounded-2xl overflow-hidden">
+              <div className="bg-violet-50 px-4 py-2 flex items-center gap-2">
+                <GraduationCap className="w-4 h-4 text-violet-600" />
+                <span className="text-xs font-bold text-violet-700 uppercase tracking-wider">Student Portal Account</span>
+              </div>
+              <div className="divide-y divide-slate-100">
+                <div className="flex items-center justify-between px-4 py-3">
+                  <div>
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-0.5">Login</p>
+                    <p className="text-sm font-mono text-slate-900 select-all">{result.studentLogin}</p>
+                  </div>
+                  <CopyBtn value={result.studentLogin} />
+                </div>
+                <div className="flex items-center justify-between px-4 py-3">
+                  <div>
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-0.5">Temporary Password</p>
+                    <p className="text-sm font-mono text-slate-900 select-all">{result.studentPassword}</p>
+                  </div>
+                  <CopyBtn value={result.studentPassword!} />
+                </div>
+              </div>
+            </div>
+          )}
+
+          <p className="text-xs text-slate-500 flex items-start gap-1.5 bg-amber-50 border border-amber-100 rounded-xl px-3 py-2.5">
+            <KeyRound className="w-3.5 h-3.5 text-amber-500 mt-0.5 shrink-0" />
+            Share credentials with the family. They will be prompted to set a new password on first sign-in.
+          </p>
+        </div>
+
+        {/* Actions */}
+        <div className="px-6 pb-6 pt-1 flex gap-2">
+          <button
+            onClick={handleShare}
+            className="flex-1 flex items-center justify-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-2.5 rounded-xl text-sm transition-colors"
+          >
+            <Share2 className="w-4 h-4" /> Share
+          </button>
+          <button
+            onClick={handleCopyAll}
+            className={`flex-1 flex items-center justify-center gap-2 font-semibold py-2.5 rounded-xl text-sm transition-colors border ${
+              copiedAll ? 'bg-emerald-50 border-emerald-200 text-emerald-700' : 'bg-white border-slate-200 hover:bg-slate-50 text-slate-700'
+            }`}
+          >
+            <Copy className="w-4 h-4" /> {copiedAll ? 'Copied!' : 'Copy All'}
+          </button>
+          <button
+            onClick={onClose}
+            className="flex-1 flex items-center justify-center gap-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold py-2.5 rounded-xl text-sm transition-colors"
+          >
+            Done
+          </button>
+        </div>
+      </motion.div>
+    </div>
+  );
+}
+
 function DirectAdmitModal({
-  onClose, onSuccess, existingStudents
+  onClose, onSuccess, onAdmitted, existingStudents
 }: {
   onClose: () => void;
   onSuccess: () => void;
+  onAdmitted: (result: AdmissionResult) => void;
   existingStudents: Student[];
 }) {
   const { user, profile } = useAuth();
   const schoolId = useSchoolId();
+  const { classNames } = useSchool();
   const [form, setForm] = useState<DirectAdmitForm>(EMPTY_FORM);
   const [step, setStep] = useState(1); // 1-Student Info, 2-Guardian, 3-Siblings & Class, 4-Review
   const [saving, setSaving] = useState(false);
@@ -142,7 +337,64 @@ function DirectAdmitModal({
       const batch = writeBatch(db);
 
       // 1. Generate student ID
-      const studentId = await generateStudentId();
+      const studentId = await generateStudentId(schoolId ?? 'main');
+
+      // 1a. ── Parent account resolution ─────────────────────────────────
+      // Priority: 1) explicitly linked parent, 2) existing user by email,
+      // 3) create new Firebase Auth account + users/ doc via secondary app.
+      const normalizedParentEmail = form.g1Email.trim().toLowerCase();
+      let resolvedParentUserId: string | undefined;
+      let tempPassword: string | undefined;
+      let parentNewlyCreated = false;
+
+      // Block super-admin emails from being registered as a parent
+      if (normalizedParentEmail) {
+        try { assertNotSuperAdminEmail(normalizedParentEmail, 'parent'); }
+        catch (guardErr: any) {
+          toast.error(guardErr.message);
+          setSaving(false);
+          return;
+        }
+      }
+
+      if (form.linkExistingParent && form.g1UserId) {
+        resolvedParentUserId = form.g1UserId;
+      } else if (normalizedParentEmail) {
+        const existingByEmail = await getDocs(
+          query(collection(db, 'users'), where('email', '==', normalizedParentEmail))
+        );
+        if (!existingByEmail.empty) {
+          resolvedParentUserId = existingByEmail.docs[0].id;
+        } else {
+          const digits = (form.g1Phone || '').replace(/\D/g, '').slice(-4) || '0000';
+          tempPassword = `Parent@${digits}${new Date().getFullYear()}`;
+          try {
+            const secondaryApp = getApps().find(a => a.name === 'parent-creator')
+              || initializeApp(firebaseConfig as any, 'parent-creator');
+            const secondaryAuth = getAuth(secondaryApp);
+            const cred = await createUserWithEmailAndPassword(
+              secondaryAuth, normalizedParentEmail, tempPassword
+            );
+            resolvedParentUserId = cred.user.uid;
+            parentNewlyCreated = true;
+            await firebaseSignOut(secondaryAuth);
+          } catch (authErr: any) {
+            console.error('Parent Auth creation failed:', authErr);
+            tempPassword = undefined;
+            if (authErr.code === 'auth/email-already-in-use') {
+              toast.error(
+                `Auth account for ${normalizedParentEmail} already exists but no profile. ` +
+                `Enrolling student; link parent manually.`
+              );
+            } else {
+              toast.error(
+                `Parent portal account could not be created (${authErr.code || 'unknown'}). ` +
+                `Student will still be enrolled.`
+              );
+            }
+          }
+        }
+      }
 
       // 2. Create application record (for audit trail)
       const appRef = doc(collection(db, 'applications'));
@@ -184,8 +436,8 @@ function DirectAdmitModal({
         guardianName: form.g1Name,
         guardianPhone: form.g1Phone,
         guardianRelationship: form.g1Relationship,
-        guardianEmail: form.g1Email,
-        guardianUserId: form.linkExistingParent ? form.g1UserId : undefined,
+        guardianEmail: normalizedParentEmail,
+        guardianUserId: resolvedParentUserId,
         guardian2Name: form.g2Name || undefined,
         guardian2Phone: form.g2Phone || undefined,
         guardian2Relationship: form.g2Relationship || undefined,
@@ -219,17 +471,37 @@ function DirectAdmitModal({
       // 5. Guardian doc — includes linkedChildren for clear per-child identification
       batch.set(guardianRef, {
         fullName: form.g1Name,
-        email: form.g1Email,
+        email: normalizedParentEmail,
         phone: form.g1Phone,
         relationship: form.g1Relationship,
         occupation: form.g1Occupation,
         homeAddress: form.g1Address || form.homeAddress,
-        userId: form.linkExistingParent ? form.g1UserId : null,
+        userId: resolvedParentUserId ?? null,
         studentIds: [studentRef.id, ...siblingIds],
         linkedChildren: [newChildEntry, ...siblingChildEntries],
         createdAt: serverTimestamp(),
         schoolId: schoolId ?? undefined,
       } as Omit<Guardian, 'id'>);
+
+      // 5a. Create users/{uid} profile for newly created parent account,
+      //     or append this child to an existing parent's linked list.
+      if (parentNewlyCreated && resolvedParentUserId) {
+        batch.set(doc(db, 'users', resolvedParentUserId), stripUndefined({
+          uid: resolvedParentUserId,
+          email: normalizedParentEmail,
+          role: 'parent',
+          displayName: form.g1Name || normalizedParentEmail,
+          schoolId: schoolId ?? undefined,
+          linkedStudentIds: [studentRef.id, ...siblingIds],
+          linkedChildren: [newChildEntry, ...siblingChildEntries],
+          createdAt: serverTimestamp(),
+        }) as Record<string, unknown>);
+      } else if (resolvedParentUserId) {
+        batch.update(doc(db, 'users', resolvedParentUserId), {
+          linkedStudentIds: arrayUnion(studentRef.id, ...siblingIds),
+          linkedChildren: arrayUnion(newChildEntry, ...siblingChildEntries),
+        });
+      }
 
       // 6. Update each sibling to add this new student to their siblingIds
       for (const sib of selectedSiblings) {
@@ -242,18 +514,17 @@ function DirectAdmitModal({
         }
       }
 
-      // 7. If linking existing parent user, append studentId + denormalized child name
-      if (form.linkExistingParent && form.g1UserId) {
-        batch.update(doc(db, 'users', form.g1UserId), {
-          linkedStudentIds: arrayUnion(studentRef.id, ...siblingIds),
-          linkedChildren: arrayUnion(newChildEntry, ...siblingChildEntries),
-        });
-      }
+      // 7. (Parent linking is now handled in step 5a above — no duplicate block)
 
       await batch.commit();
       onSuccess();
       onClose();
-      toast.success(`Student admitted! ID: ${studentId}`);
+      onAdmitted({
+        studentId,
+        className: form.classApplyingFor || '—',
+        parentEmail: (parentNewlyCreated && tempPassword) ? normalizedParentEmail : undefined,
+        parentPassword: (parentNewlyCreated && tempPassword) ? tempPassword : undefined,
+      });
     } catch (err: any) {
       toast.error('Error: ' + (err.message || 'Could not save. Please try again.'));
     } finally {
@@ -492,7 +763,7 @@ function DirectAdmitModal({
                 <select value={form.classApplyingFor} onChange={e => f('classApplyingFor', e.target.value)}
                   className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm">
                   <option value="">— Select a class —</option>
-                  {SCHOOL_CLASSES.map(c => <option key={c}>{c}</option>)}
+                  {classNames.map(c => <option key={c}>{c}</option>)}
                 </select>
               </div>
 
@@ -539,26 +810,9 @@ function DirectAdmitModal({
                           </button>
                         </span>
                       ))}
-            </div>
-            {Math.ceil(filtered.length / ADM_PAGE_SIZE) > 1 && (
-              <div className="flex items-center justify-between px-5 py-4 border-t border-slate-100">
-                <p className="text-xs text-slate-500">
-                  Page {appPage + 1} of {Math.ceil(filtered.length / ADM_PAGE_SIZE)} &nbsp;·&nbsp; {filtered.length} applications
-                </p>
-                <div className="flex gap-2">
-                  <button disabled={appPage === 0} onClick={() => setAppPage(p => p - 1)}
-                    className="flex items-center gap-1 px-3 py-1.5 text-xs font-bold rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
-                    <ChevronLeft className="w-3.5 h-3.5" /> Previous
-                  </button>
-                  <button disabled={appPage >= Math.ceil(filtered.length / ADM_PAGE_SIZE) - 1} onClick={() => setAppPage(p => p + 1)}
-                    className="flex items-center gap-1 px-3 py-1.5 text-xs font-bold rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
-                    Next <ChevronRight className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
-        )}
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -633,6 +887,7 @@ type TabType = 'pipeline' | 'all' | 'stats';
 export default function AdmissionsManagement() {
   const navigate = useNavigate();
   const schoolId = useSchoolId();
+  const { classNames } = useSchool();
   const [applications, setApplications] = useState<Application[]>([]);
   const [students, setStudents] = useState<Student[]>([]);
   const [loading, setLoading] = useState(true);
@@ -641,8 +896,22 @@ export default function AdmissionsManagement() {
   const [classFilter, setClassFilter] = useState('all');
   const [activeTab, setActiveTab] = useState<TabType>('pipeline');
   const [showDirectAdmit, setShowDirectAdmit] = useState(false);
+  const [admissionResult, setAdmissionResult] = useState<AdmissionResult | null>(null);
   const [refresh, setRefresh] = useState(0);
   const [appPage, setAppPage] = useState(0);
+  const [showLinkPanel, setShowLinkPanel] = useState(false);
+
+  // School-specific public admission link
+  const admissionLink = schoolId
+    ? `${window.location.origin}/s/${schoolId}/apply`
+    : null;
+
+  const copyAdmissionLink = () => {
+    if (!admissionLink) return;
+    navigator.clipboard.writeText(admissionLink).then(() => {
+      toast.success('Admission link copied to clipboard!');
+    });
+  };
 
   useEffect(() => {
     if (!schoolId) return;
@@ -726,7 +995,13 @@ export default function AdmissionsManagement() {
             Manage the full student admission pipeline for {CURRENT_SESSION} session.
           </p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex gap-2 flex-wrap">
+          <button
+            onClick={() => setShowLinkPanel(v => !v)}
+            className="flex items-center gap-2 px-4 py-2.5 bg-emerald-50 text-emerald-700 font-bold rounded-xl hover:bg-emerald-100 transition-all text-sm border border-emerald-200"
+          >
+            <Share2 className="w-4 h-4" /> Share Admission Link
+          </button>
           <button onClick={() => setRefresh(r => r + 1)}
             className="flex items-center gap-2 px-4 py-2.5 bg-slate-100 text-slate-700 font-bold rounded-xl hover:bg-slate-200 transition-all text-sm">
             <RefreshCw className="w-4 h-4" /> Refresh
@@ -741,6 +1016,56 @@ export default function AdmissionsManagement() {
           </button>
         </div>
       </div>
+
+      {/* Admission Link Panel */}
+      <AnimatePresence>
+        {showLinkPanel && (
+          <motion.div
+            initial={{ opacity: 0, y: -8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -8 }}
+            className="mb-6 bg-emerald-50 border border-emerald-200 rounded-2xl p-5"
+          >
+            <div className="flex items-start justify-between gap-4">
+              <div className="flex-1 min-w-0">
+                <h3 className="font-bold text-emerald-900 flex items-center gap-2 mb-1">
+                  <Share2 className="w-4 h-4" /> School Admission Link
+                </h3>
+                <p className="text-sm text-emerald-700 mb-3">
+                  Share this link with prospective students and parents. Applications submitted through
+                  this link are automatically routed to <strong>your school only</strong>.
+                </p>
+                <div className="flex items-center gap-2 bg-white border border-emerald-200 rounded-xl px-4 py-2.5">
+                  <ExternalLink className="w-4 h-4 text-emerald-600 shrink-0" />
+                  <span className="text-sm text-slate-700 font-mono truncate flex-1">
+                    {admissionLink}
+                  </span>
+                  <button
+                    onClick={copyAdmissionLink}
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 text-white text-xs font-bold rounded-lg hover:bg-emerald-700 transition-colors shrink-0"
+                  >
+                    <Copy className="w-3.5 h-3.5" /> Copy
+                  </button>
+                  <a
+                    href={admissionLink!}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 text-slate-700 text-xs font-bold rounded-lg hover:bg-slate-200 transition-colors shrink-0"
+                  >
+                    Preview
+                  </a>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowLinkPanel(false)}
+                className="p-1.5 text-emerald-600 hover:bg-emerald-100 rounded-lg transition-colors shrink-0 mt-0.5"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* KPI Cards */}
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 mb-8">
@@ -837,7 +1162,7 @@ export default function AdmissionsManagement() {
             <select value={classFilter} onChange={e => setClassFilter(e.target.value)}
               className="px-4 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm font-medium">
               <option value="all">All Classes</option>
-              {SCHOOL_CLASSES.map(c => <option key={c}>{c}</option>)}
+              {classNames.map(c => <option key={c}>{c}</option>)}
             </select>
           </div>
 
@@ -902,6 +1227,25 @@ export default function AdmissionsManagement() {
                   ))}
                 </tbody>
               </table>
+            </div>
+          )}
+
+          {/* Pagination */}
+          {filtered.length > ADM_PAGE_SIZE && (
+            <div className="flex items-center justify-between px-5 py-4 border-t border-slate-100">
+              <p className="text-xs text-slate-500">
+                Page {appPage + 1} of {Math.ceil(filtered.length / ADM_PAGE_SIZE)} &nbsp;·&nbsp; {filtered.length} applications
+              </p>
+              <div className="flex gap-2">
+                <button disabled={appPage === 0} onClick={() => setAppPage(p => p - 1)}
+                  className="flex items-center gap-1 px-3 py-1.5 text-xs font-bold rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
+                  <ChevronLeft className="w-3.5 h-3.5" /> Previous
+                </button>
+                <button disabled={appPage >= Math.ceil(filtered.length / ADM_PAGE_SIZE) - 1} onClick={() => setAppPage(p => p + 1)}
+                  className="flex items-center gap-1 px-3 py-1.5 text-xs font-bold rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
+                  Next <ChevronRight className="w-3.5 h-3.5" />
+                </button>
+              </div>
             </div>
           )}
         </div>
@@ -1034,8 +1378,16 @@ export default function AdmissionsManagement() {
           <DirectAdmitModal
             onClose={() => setShowDirectAdmit(false)}
             onSuccess={() => setRefresh(r => r + 1)}
+            onAdmitted={(result) => setAdmissionResult(result)}
             existingStudents={students}
           />
+        )}
+      </AnimatePresence>
+
+      {/* Admission Success Modal */}
+      <AnimatePresence>
+        {admissionResult && (
+          <AdmissionSuccessModal result={admissionResult} onClose={() => setAdmissionResult(null)} />
         )}
       </AnimatePresence>
     </div>

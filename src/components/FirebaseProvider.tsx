@@ -4,9 +4,7 @@ import { doc, setDoc, getDoc, updateDoc } from 'firebase/firestore';
 import { auth, db, handleFirestoreError, OperationType } from '../firebase';
 import { UserProfile } from '../types';
 import { hasPermission as checkPermission, type Permission } from '../utils/permissions';
-
-// Emails that are automatically bootstrapped as super_admin on first sign-in
-const SUPER_ADMIN_EMAILS = ['jabpa87@gmail.com', 'bobychampion87@gmail.com'];
+import { SUPER_ADMIN_EMAILS, isSuperAdminEmail, assertNotSuperAdminEmail } from '../utils/superAdminGuard';
 
 interface AuthContextType {
   user: User | null;
@@ -134,6 +132,14 @@ export function FirebaseProvider({ children }: { children: ReactNode }) {
     schoolId?: string
   ) => {
     setAuthError(null);
+    // Block super-admin emails from being registered as any other role
+    if (isSuperAdminEmail(email) && role && role !== 'super_admin') {
+      setAuthError(
+        `"${email.trim().toLowerCase()}" is a platform administrator address and cannot be ` +
+        `registered as a ${role}. Please use a different email.`
+      );
+      return;
+    }
     try {
       const result = await createUserWithEmailAndPassword(auth, email, pass);
       const profileRef = doc(db, 'users', result.user.uid);

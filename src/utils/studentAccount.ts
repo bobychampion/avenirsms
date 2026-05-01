@@ -1,38 +1,12 @@
 /**
  * Synthetic school-email account provisioning for newly admitted students.
  *
- * Some children are too young to have a personal email. Schools can still
- * give them a login by minting a synthetic address like
- * `{studentId}@students.{slug}.local` — it's not a deliverable mailbox, just
- * a Firebase Auth identifier the child uses to sign in. The class-gate
- * (`studentAccountMinClass` in school_settings) decides who gets one.
- *
- * All communication still flows through the in-app `messages` collection
- * and the Student Portal, so no real inbox is needed.
+ * Firebase Auth requires an email address — students don't have real emails,
+ * so we mint a synthetic one internally (e.g. `stu-001@students.greenfield.local`).
+ * Students never see this address. They sign in with their Student ID + password only.
+ * The synthetic email is stored on the student doc and in the `student_logins` index.
  */
 import type { SchoolSettings } from '../pages/SchoolSettings';
-
-/**
- * Returns true when a student entering `studentClass` should have a synthetic
- * login auto-provisioned, based on the school's configured minimum.
- *
- * Comparison uses ordinal position in `classLadder` (typically SCHOOL_CLASSES
- * from types.ts or the school's custom `schoolLevels`). If the configured
- * minimum or the student's class is missing from the ladder, the check fails
- * closed (no auto-provision).
- */
-export function shouldProvisionStudentAccount(
-  studentClass: string | undefined,
-  settings: Pick<SchoolSettings, 'studentAccountMinClass'>,
-  classLadder: string[],
-): boolean {
-  const minClass = settings.studentAccountMinClass;
-  if (!minClass || !studentClass) return false;
-  const minIdx = classLadder.indexOf(minClass);
-  const curIdx = classLadder.indexOf(studentClass);
-  if (minIdx < 0 || curIdx < 0) return false;
-  return curIdx >= minIdx;
-}
 
 /** Normalise an arbitrary string to a safe DNS-ish slug. */
 function slugify(input: string): string {
@@ -65,4 +39,25 @@ export function generateStudentTempPassword(studentId: string): string {
   const year = new Date().getFullYear();
   const digits = (studentId.match(/\d+/g)?.join('') ?? '').slice(-4).padStart(4, '0');
   return `Student@${digits}${year}`;
+}
+
+/**
+ * Write (or overwrite) the student_logins index entry for a given student.
+ * Doc ID = "{schoolId}_{studentId_uppercased}".
+ * This is the only document the login page reads — publicly readable,
+ * contains no sensitive data beyond the synthetic loginEmail.
+ */
+export async function upsertStudentLoginIndex(
+  db: import('firebase/firestore').Firestore,
+  schoolId: string,
+  studentId: string,
+  loginEmail: string,
+): Promise<void> {
+  const { doc, setDoc } = await import('firebase/firestore');
+  const entryId = `${schoolId}_${studentId.trim().toUpperCase()}`;
+  await setDoc(
+    doc(db, 'student_logins', entryId),
+    { schoolId, studentId: studentId.trim().toUpperCase(), loginEmail },
+    { merge: true }
+  );
 }

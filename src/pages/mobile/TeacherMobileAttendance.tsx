@@ -1,13 +1,13 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import {
-  collection, query, where, onSnapshot
+  collection, query, where, onSnapshot, getDocs
 } from 'firebase/firestore';
 import { db } from '../../firebase';
 import { MobileShell } from '../../components/MobileShell';
 import { useAuth } from '../../components/FirebaseProvider';
 import { batchUpsertAttendance } from '../../services/firestoreService';
 import { Student, Attendance } from '../../types';
-import { CheckCircle2, XCircle, Clock, Save, Users, ChevronDown } from 'lucide-react';
+import { CheckCircle2, XCircle, Clock, Save, Users, ChevronDown, Lock } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import toast from 'react-hot-toast';
 import { useSchoolId } from '../../hooks/useSchoolId';
@@ -34,11 +34,46 @@ export default function TeacherMobileAttendance() {
 
   const [students, setStudents] = useState<(Student & { id: string })[]>([]);
   const [rows, setRows] = useState<AttendanceRow[]>([]);
-  const [classes, setClasses] = useState<string[]>([]);
+  const [assignedClasses, setAssignedClasses] = useState<string[]>([]);
+  const [assignmentLoading, setAssignmentLoading] = useState(true);
   const [selectedClass, setSelectedClass] = useState('');
   const [date, setDate] = useState(today);
   const [saving, setSaving] = useState(false);
   const [existingRecords, setExistingRecords] = useState<Record<string, AttStatus>>({});
+
+  // Load teacher's assigned classes from class_subjects + classes (formTutor)
+  useEffect(() => {
+    if (!user || !schoolId) return;
+    setAssignmentLoading(true);
+    const load = async () => {
+      try {
+        const [subjectSnap, tutorSnap, classSnap] = await Promise.all([
+          getDocs(query(collection(db, 'class_subjects'), where('schoolId', '==', schoolId), where('teacherId', '==', user.uid))),
+          getDocs(query(collection(db, 'classes'), where('schoolId', '==', schoolId), where('formTutorId', '==', user.uid))),
+          getDocs(query(collection(db, 'classes'), where('schoolId', '==', schoolId))),
+        ]);
+        const idToName: Record<string, string> = {};
+        classSnap.docs.forEach(d => { idToName[d.id] = (d.data().name as string) || ''; });
+        const assigned = new Set<string>();
+        subjectSnap.docs.forEach(d => {
+          const name = idToName[(d.data() as { classId: string }).classId];
+          if (name) assigned.add(name);
+        });
+        tutorSnap.docs.forEach(d => {
+          const name = (d.data().name as string) || '';
+          if (name) assigned.add(name);
+        });
+        const sorted = [...assigned].sort();
+        setAssignedClasses(sorted);
+        setSelectedClass(prev => sorted.includes(prev) ? prev : (sorted[0] ?? ''));
+      } catch (e) {
+        console.warn('Failed to load teacher assignments:', e);
+      } finally {
+        setAssignmentLoading(false);
+      }
+    };
+    load();
+  }, [user?.uid, schoolId]);
 
   // Load all students once
   useEffect(() => {
@@ -48,9 +83,6 @@ export default function TeacherMobileAttendance() {
       snap => {
         const all = snap.docs.map(d => ({ id: d.id, ...d.data() } as Student & { id: string }));
         setStudents(all);
-        const classSet = [...new Set(all.map(s => s.currentClass).filter(Boolean))].sort();
-        setClasses(classSet);
-        if (classSet.length > 0 && !selectedClass) setSelectedClass(classSet[0]);
       }
     );
     return () => unsub();
@@ -128,6 +160,14 @@ export default function TeacherMobileAttendance() {
           <p className="text-xs text-slate-500 mt-0.5">Mark today's attendance for your class</p>
         </div>
 
+        {/* No assigned classes guard */}
+        {!assignmentLoading && assignedClasses.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-16 text-slate-400 gap-3">
+            <Lock className="w-10 h-10 opacity-40" />
+            <p className="text-sm font-medium text-center">You are not assigned to any class.<br />Contact your administrator.</p>
+          </div>
+        ) : (
+          <>
         {/* Filters */}
         <div className="flex gap-2">
           {/* Class selector */}
@@ -137,8 +177,8 @@ export default function TeacherMobileAttendance() {
               onChange={e => setSelectedClass(e.target.value)}
               className="w-full appearance-none bg-white border border-slate-200 rounded-xl px-3 py-2.5 text-sm font-medium text-slate-800 shadow-sm focus:outline-none focus:ring-2 focus:ring-emerald-400 pr-8"
             >
-              {classes.map(c => <option key={c} value={c}>{c}</option>)}
-              {classes.length === 0 && <option value="">No classes</option>}
+              {assignedClasses.map(c => <option key={c} value={c}>{c}</option>)}
+              {assignedClasses.length === 0 && <option value="">No classes</option>}
             </select>
             <ChevronDown className="absolute right-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
           </div>
@@ -229,9 +269,12 @@ export default function TeacherMobileAttendance() {
             </div>
           ))}
         </div>
+          </>
+        )}
       </div>
 
       {/* Floating Save Button */}
+      {assignedClasses.length > 0 && (
       <button
         onClick={handleSave}
         disabled={saving || markedCount === 0}
@@ -249,6 +292,7 @@ export default function TeacherMobileAttendance() {
         )}
         {saving ? 'Saving…' : `Save ${markedCount > 0 ? markedCount : ''}`}
       </button>
+      )}
     </MobileShell>
   );
 }

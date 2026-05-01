@@ -1,14 +1,26 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { collection, getDocs, query, where } from 'firebase/firestore';
+import { collection, getDocs, query, where, doc, getDoc } from 'firebase/firestore';
 import { db } from '../firebase';
 import { useAuth } from '../components/FirebaseProvider';
 import { getPostAuthHomePath } from '../utils/postAuthRedirect';
 import { UserProfile } from '../types';
 import {
   ShieldCheck, Mail, Lock, ShieldAlert, User,
-  GraduationCap, BookOpen, Briefcase, Users, Sparkles, Hash,
+  GraduationCap, BookOpen, Briefcase, Users, Sparkles, Hash, AlertTriangle, School,
 } from 'lucide-react';
+
+/** Lightweight school name + logo fetch for the login page branding banner. */
+async function fetchSchoolBranding(schoolId: string): Promise<{ name: string; logoUrl: string } | null> {
+  try {
+    const snap = await getDoc(doc(db, 'school_settings', schoolId));
+    if (!snap.exists()) return null;
+    const d = snap.data();
+    return { name: d.schoolName || '', logoUrl: d.logoUrl || '' };
+  } catch {
+    return null;
+  }
+}
 
 type RegisterRole = 'applicant' | 'parent' | 'teacher' | 'staff';
 
@@ -79,16 +91,33 @@ const URL_ROLE_ALIASES: Record<string, RegisterRole> = {
   admin: 'staff',
 };
 
-/** Resolve a Student ID to the school-issued login email stored on the student doc. */
-async function resolveStudentLoginEmail(studentId: string, schoolId?: string): Promise<string | null> {
+type ResolveResult =
+  | { status: 'ok'; loginEmail: string }
+  | { status: 'no_school_context' }
+  | { status: 'not_found' }        // studentId doesn't exist in this school
+  | { status: 'no_account' }       // student exists but loginEmail not provisioned yet
+  | { status: 'error' };
+
+/**
+ * Resolve a Student ID to its loginEmail via the `student_logins` index collection.
+ * This collection is publicly readable and contains only {studentId, loginEmail, schoolId}
+ * — no sensitive student data. Doc ID = "{schoolId}_{studentId_uppercased}".
+ */
+async function resolveStudentLoginEmail(
+  studentId: string,
+  schoolId?: string
+): Promise<ResolveResult> {
   try {
-    const constraints = [where('studentId', '==', studentId.trim().toUpperCase())];
-    if (schoolId) constraints.push(where('schoolId', '==', schoolId));
-    const snap = await getDocs(query(collection(db, 'students'), ...constraints));
-    if (snap.empty) return null;
-    return (snap.docs[0].data().loginEmail as string) ?? null;
+    if (!schoolId) return { status: 'no_school_context' };
+    const normalised = studentId.trim().toUpperCase();
+    const entryId = `${schoolId}_${normalised}`;
+    const snap = await getDoc(doc(db, 'student_logins', entryId));
+    if (!snap.exists()) return { status: 'not_found' };
+    const loginEmail = snap.data().loginEmail as string | undefined;
+    if (!loginEmail) return { status: 'no_account' };
+    return { status: 'ok', loginEmail };
   } catch {
-    return null;
+    return { status: 'error' };
   }
 }
 
@@ -112,7 +141,14 @@ export default function Login() {
   const [passwordError, setPasswordError] = useState('');
   const [resolveError, setResolveError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [schoolBranding, setSchoolBranding] = useState<{ name: string; logoUrl: string } | null>(null);
   const navigate = useNavigate();
+
+  // Fetch school branding for the banner when schoolId is in the URL
+  useEffect(() => {
+    if (!params.schoolId) { setSchoolBranding(null); return; }
+    fetchSchoolBranding(params.schoolId).then(setSchoolBranding);
+  }, [params.schoolId]);
 
   React.useEffect(() => {
     if (!user || authLoading) return;
@@ -135,16 +171,37 @@ export default function Login() {
       await registerWithEmail(email, password, name, toProfileRole(registerRole), params.schoolId);
     } else if (isStudentLogin) {
       // Student login: resolve Student ID → loginEmail → sign in
-      const loginEmail = await resolveStudentLoginEmail(studentId, params.schoolId);
-      if (!loginEmail) {
+      const result = await resolveStudentLoginEmail(studentId, params.schoolId);
+      if (result.status === 'no_school_context') {
         setResolveError(
-          'No portal account found for that Student ID. ' +
-          'Contact your school administrator if you believe this is an error.'
+          "Please use your school's specific login link to sign in. " +
+          'Ask your school admin for a link in the format: /s/[school-id]/login/student'
         );
         setLoading(false);
         return;
       }
-      await loginWithEmail(loginEmail, password);
+      if (result.status === 'not_found') {
+        setResolveError(
+          `Student ID "${studentId}" was not found in this school's records. ` +
+          'Double-check the ID on your admission letter, or ask your school admin.'
+        );
+        setLoading(false);
+        return;
+      }
+      if (result.status === 'no_account') {
+        setResolveError(
+          'Your Student ID was found, but a portal account has not been set up yet. ' +
+          'Ask your school admin to click "Set Password" next to your name in the Student Directory.'
+        );
+        setLoading(false);
+        return;
+      }
+      if (result.status === 'error') {
+        setResolveError('Could not reach the server. Check your connection and try again.');
+        setLoading(false);
+        return;
+      }
+      await loginWithEmail(result.loginEmail, password);
     } else {
       await loginWithEmail(email, password);
     }
@@ -186,6 +243,33 @@ export default function Login() {
         <h2 className={`mt-6 text-center font-extrabold text-slate-900 ${isKidFriendly ? 'text-3xl' : 'text-3xl'}`}>
           {headingText}
         </h2>
+
+        {/* School branding banner — shown when using a school-specific URL */}
+        {isStudentLogin && params.schoolId && schoolBranding && (
+          <div className="mt-4 mx-auto max-w-xs flex items-center gap-3 px-4 py-3 rounded-2xl bg-white border-2 border-indigo-100 shadow-sm">
+            {schoolBranding.logoUrl ? (
+              <img src={schoolBranding.logoUrl} alt="" className="w-10 h-10 rounded-full object-cover border border-slate-200" />
+            ) : (
+              <div className="w-10 h-10 rounded-full bg-indigo-100 flex items-center justify-center">
+                <School className="w-5 h-5 text-indigo-600" />
+              </div>
+            )}
+            <div className="text-left">
+              <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">You're signing in to</p>
+              <p className="text-sm font-extrabold text-slate-900 leading-tight">{schoolBranding.name}</p>
+            </div>
+          </div>
+        )}
+
+        {/* Warning: generic URL without school context */}
+        {isStudentLogin && !params.schoolId && (
+          <div className="mt-4 mx-auto max-w-sm flex items-start gap-2.5 px-4 py-3 rounded-2xl bg-amber-50 border border-amber-200">
+            <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+            <p className="text-xs text-amber-800 leading-snug">
+              You're on a generic login page. For the best experience (and to avoid errors), use your <strong>school's specific login link</strong> — ask your teacher or school office for it.
+            </p>
+          </div>
+        )}
         {taglineText && (
           <p className="mt-2 text-center text-sm text-slate-600 px-6">{taglineText}</p>
         )}

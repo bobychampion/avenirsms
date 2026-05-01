@@ -8,17 +8,18 @@ import {
   doc, getDoc, onSnapshot, updateDoc, serverTimestamp, addDoc,
   collection, query, where, getDocs, writeBatch, arrayUnion
 } from 'firebase/firestore';
-import { Application, ApplicationStatus, NIGERIAN_REGULATIONS, Student, Guardian, SCHOOL_CLASSES, formatDate } from '../types';
+import { Application, ApplicationStatus, NIGERIAN_REGULATIONS, Student, Guardian, formatDate } from '../types';
 import { generateStudentId } from '../services/firestoreService';
 import { stripUndefined } from '../utils/firestoreSanitize';
+import { assertNotSuperAdminEmail } from '../utils/superAdminGuard';
 import { useSchoolSettings } from './SchoolSettings';
-import { shouldProvisionStudentAccount, buildStudentLoginEmail, generateStudentTempPassword } from '../utils/studentAccount';
+import { buildStudentLoginEmail, generateStudentTempPassword, upsertStudentLoginIndex } from '../utils/studentAccount';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   ArrowLeft, CheckCircle, XCircle, Clock, ShieldCheck,
   Database, User, BookOpen, Phone, FileText, AlertTriangle,
   Loader2, Save, Send, MessageSquare, Users, Baby, Heart,
-  Link2, MapPin, School, ChevronDown, X
+  Link2, MapPin, School, ChevronDown, X, Copy, Share2, KeyRound, GraduationCap
 } from 'lucide-react';
 import { differenceInYears, parseISO } from 'date-fns';
 import { StatusBadge } from './AdminDashboard';
@@ -27,6 +28,195 @@ import { useSchool } from '../components/SchoolContext';
 // ─── Guardian panel ───────────────────────────────────────────────────────────
 
 const RELATIONSHIPS = ['father', 'mother', 'uncle', 'aunt', 'sibling', 'guardian', 'other'];
+
+// ─── Admission Success Modal ──────────────────────────────────────────────────
+
+interface AdmissionResult {
+  studentId: string;
+  className: string;
+  parentEmail?: string;
+  parentPassword?: string;
+  studentLogin?: string;
+  studentPassword?: string;
+}
+
+function CopyBtn({ value, label }: { value: string; label?: string }) {
+  const [copied, setCopied] = useState(false);
+  const handle = async () => {
+    await navigator.clipboard.writeText(value);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+  return (
+    <button
+      onClick={handle}
+      className={`flex items-center gap-1 text-xs px-2.5 py-1 rounded-lg font-medium transition-all ${
+        copied ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 hover:bg-slate-200 text-slate-600'
+      }`}
+    >
+      <Copy className="w-3 h-3" />
+      {copied ? 'Copied!' : (label ?? 'Copy')}
+    </button>
+  );
+}
+
+function AdmissionSuccessModal({ result, onClose }: { result: AdmissionResult; onClose: () => void }) {
+  const [copiedAll, setCopiedAll] = useState(false);
+
+  const buildShareText = () => {
+    const lines: string[] = [
+      `Student Admission Confirmed`,
+      `──────────────────────────`,
+      `Student ID : ${result.studentId}`,
+      `Class      : ${result.className}`,
+    ];
+    if (result.parentEmail) {
+      lines.push('', 'Parent Portal Login', `  Email    : ${result.parentEmail}`, `  Password : ${result.parentPassword}`);
+    }
+    if (result.studentLogin) {
+      lines.push('', 'Student Portal Login', `  Login    : ${result.studentLogin}`, `  Password : ${result.studentPassword}`);
+    }
+    lines.push('', 'Please log in and change the temporary password on first sign-in.');
+    return lines.join('\n');
+  };
+
+  const handleCopyAll = async () => {
+    await navigator.clipboard.writeText(buildShareText());
+    setCopiedAll(true);
+    setTimeout(() => setCopiedAll(false), 2500);
+  };
+
+  const handleShare = async () => {
+    const text = buildShareText();
+    if (navigator.share) {
+      try { await navigator.share({ title: 'Student Admission Details', text }); } catch { /* cancelled */ }
+    } else {
+      await navigator.clipboard.writeText(text);
+      setCopiedAll(true);
+      setTimeout(() => setCopiedAll(false), 2500);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+      <motion.div
+        initial={{ opacity: 0, scale: 0.94, y: 16 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        exit={{ opacity: 0, scale: 0.94, y: 16 }}
+        className="bg-white rounded-3xl shadow-2xl w-full max-w-md overflow-hidden"
+      >
+        {/* Header */}
+        <div className="bg-gradient-to-br from-emerald-500 to-teal-600 px-6 pt-7 pb-6 text-white">
+          <div className="flex justify-between items-start">
+            <div className="flex items-center gap-3">
+              <div className="w-11 h-11 rounded-2xl bg-white/20 flex items-center justify-center">
+                <CheckCircle className="w-6 h-6 text-white" />
+              </div>
+              <div>
+                <h2 className="text-lg font-bold">Student Admitted!</h2>
+                <p className="text-emerald-100 text-sm">Enrolment complete</p>
+              </div>
+            </div>
+            <button onClick={onClose} className="w-8 h-8 rounded-full bg-white/20 hover:bg-white/30 flex items-center justify-center transition-colors">
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+          {/* ID + Class chips */}
+          <div className="flex gap-2 mt-4 flex-wrap">
+            <span className="inline-flex items-center gap-1.5 bg-white/20 text-white text-xs font-semibold px-3 py-1.5 rounded-full">
+              <User className="w-3 h-3" /> {result.studentId}
+            </span>
+            <span className="inline-flex items-center gap-1.5 bg-white/20 text-white text-xs font-semibold px-3 py-1.5 rounded-full">
+              <GraduationCap className="w-3 h-3" /> {result.className}
+            </span>
+          </div>
+        </div>
+
+        {/* Credentials cards */}
+        <div className="px-6 py-5 space-y-3 max-h-[55vh] overflow-y-auto">
+          {result.parentEmail && (
+            <div className="border border-indigo-100 rounded-2xl overflow-hidden">
+              <div className="bg-indigo-50 px-4 py-2 flex items-center gap-2">
+                <Users className="w-4 h-4 text-indigo-600" />
+                <span className="text-xs font-bold text-indigo-700 uppercase tracking-wider">Parent Portal Account</span>
+              </div>
+              <div className="divide-y divide-slate-100">
+                <div className="flex items-center justify-between px-4 py-3">
+                  <div>
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-0.5">Email</p>
+                    <p className="text-sm font-mono text-slate-900 select-all">{result.parentEmail}</p>
+                  </div>
+                  <CopyBtn value={result.parentEmail} />
+                </div>
+                <div className="flex items-center justify-between px-4 py-3">
+                  <div>
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-0.5">Temporary Password</p>
+                    <p className="text-sm font-mono text-slate-900 select-all">{result.parentPassword}</p>
+                  </div>
+                  <CopyBtn value={result.parentPassword!} />
+                </div>
+              </div>
+            </div>
+          )}
+
+          {result.studentLogin && (
+            <div className="border border-violet-100 rounded-2xl overflow-hidden">
+              <div className="bg-violet-50 px-4 py-2 flex items-center gap-2">
+                <GraduationCap className="w-4 h-4 text-violet-600" />
+                <span className="text-xs font-bold text-violet-700 uppercase tracking-wider">Student Portal Account</span>
+              </div>
+              <div className="divide-y divide-slate-100">
+                <div className="flex items-center justify-between px-4 py-3">
+                  <div>
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-0.5">Login</p>
+                    <p className="text-sm font-mono text-slate-900 select-all">{result.studentLogin}</p>
+                  </div>
+                  <CopyBtn value={result.studentLogin} />
+                </div>
+                <div className="flex items-center justify-between px-4 py-3">
+                  <div>
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-0.5">Temporary Password</p>
+                    <p className="text-sm font-mono text-slate-900 select-all">{result.studentPassword}</p>
+                  </div>
+                  <CopyBtn value={result.studentPassword!} />
+                </div>
+              </div>
+            </div>
+          )}
+
+          <p className="text-xs text-slate-500 flex items-start gap-1.5 bg-amber-50 border border-amber-100 rounded-xl px-3 py-2.5">
+            <KeyRound className="w-3.5 h-3.5 text-amber-500 mt-0.5 shrink-0" />
+            Share credentials with the family. They will be prompted to set a new password on first sign-in.
+          </p>
+        </div>
+
+        {/* Actions */}
+        <div className="px-6 pb-6 pt-1 flex gap-2">
+          <button
+            onClick={handleShare}
+            className="flex-1 flex items-center justify-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-2.5 rounded-xl text-sm transition-colors"
+          >
+            <Share2 className="w-4 h-4" /> Share
+          </button>
+          <button
+            onClick={handleCopyAll}
+            className={`flex-1 flex items-center justify-center gap-2 font-semibold py-2.5 rounded-xl text-sm transition-colors border ${
+              copiedAll ? 'bg-emerald-50 border-emerald-200 text-emerald-700' : 'bg-white border-slate-200 hover:bg-slate-50 text-slate-700'
+            }`}
+          >
+            <Copy className="w-4 h-4" /> {copiedAll ? 'Copied!' : 'Copy All'}
+          </button>
+          <button
+            onClick={onClose}
+            className="flex-1 flex items-center justify-center gap-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold py-2.5 rounded-xl text-sm transition-colors"
+          >
+            Done
+          </button>
+        </div>
+      </motion.div>
+    </div>
+  );
+}
 
 interface GuardianForm {
   g1Name: string; g1Phone: string; g1Email: string; g1Relationship: string; g1Occupation: string;
@@ -198,6 +388,7 @@ export default function ApplicationDetail() {
   const [ninVerified, setNinVerified] = useState(false);
   const [examVerified, setExamVerified] = useState(false);
   const [showGuardianPanel, setShowGuardianPanel] = useState(false);
+  const [admissionResult, setAdmissionResult] = useState<AdmissionResult | null>(null);
 
   // Guardian / sibling / class state
   const [guardianForm, setGuardianForm] = useState<GuardianForm>({
@@ -302,6 +493,16 @@ export default function ApplicationDetail() {
           let parentNewlyCreated = false;
 
           const normalizedEmail = guardianForm.g1Email.trim().toLowerCase();
+
+          // Block super-admin emails from being used as parent accounts
+          if (normalizedEmail) {
+            try { assertNotSuperAdminEmail(normalizedEmail, 'parent'); }
+            catch (guardErr: any) {
+              toast.error(guardErr.message);
+              setSaving(false);
+              return;
+            }
+          }
 
           if (linkExistingParent && linkedUserId) {
             resolvedParentUserId = linkedUserId;
@@ -472,17 +673,12 @@ export default function ApplicationDetail() {
           }
 
           // ── Synthetic student login provisioning ─────────────────────
-          // If the class passes the configured gate and no account already
-          // exists for this applicant, mint a school-issued login so the
-          // child can sign in. Synthetic emails aren't deliverable — the
-          // temp password is shown to the admin to hand to the family.
+          // Always provision a school-issued login for every new student.
+          // Students sign in with Student ID + password — the synthetic email
+          // is internal only and never shown to the student.
           let studentSyntheticEmail: string | undefined;
           let studentTempPassword: string | undefined;
-          const ladder = classNames?.length ? classNames : SCHOOL_CLASSES;
-          if (
-            !existingStudentAccount &&
-            shouldProvisionStudentAccount(assignedClass, schoolSettings, ladder)
-          ) {
+          if (!existingStudentAccount) {
             studentSyntheticEmail = buildStudentLoginEmail(studentId, schoolSettings);
             studentTempPassword = generateStudentTempPassword(studentId);
             try {
@@ -503,7 +699,6 @@ export default function ApplicationDetail() {
                 syntheticLogin: true,
                 createdAt: serverTimestamp(),
               }) as Record<string, unknown>);
-              // Store login email on the student doc so admin can retrieve it later
               batch.update(studentRef, { loginEmail: studentSyntheticEmail });
               await firebaseSignOut(studentAuth);
             } catch (studentAuthErr: any) {
@@ -511,7 +706,7 @@ export default function ApplicationDetail() {
               alert(
                 `⚠ Student portal account could not be created ` +
                 `(${studentAuthErr.message || studentAuthErr.code}). ` +
-                `Student is still enrolled; create the login manually afterwards.`
+                `Student is still enrolled; use "Set Password" in the Student Directory to fix this.`
               );
               studentSyntheticEmail = undefined;
               studentTempPassword = undefined;
@@ -519,27 +714,19 @@ export default function ApplicationDetail() {
           }
 
           await batch.commit();
+          // Write student_logins index AFTER batch so schoolId is available
+          if (studentSyntheticEmail && (application.schoolId ?? schoolId)) {
+            await upsertStudentLoginIndex(db, application.schoolId ?? schoolId!, studentId, studentSyntheticEmail).catch(console.warn);
+          }
 
-          let successMsg = `✓ Student admitted!\nStudent ID: ${studentId}\nClass: ${assignedClass}`;
-          if (parentNewlyCreated && tempPassword) {
-            successMsg +=
-              `\n\n👤 Parent portal account created` +
-              `\n  • Email: ${normalizedEmail}` +
-              `\n  • Temporary Password: ${tempPassword}` +
-              `\n\nPlease share these credentials with the parent. ` +
-              `They can log in at the Parent Portal and should change their password on first login.`;
-          } else if (resolvedParentUserId) {
-            successMsg += `\n\n✓ Parent portal account linked.`;
-          }
-          if (studentSyntheticEmail && studentTempPassword) {
-            successMsg +=
-              `\n\n🎒 Student portal account created` +
-              `\n  • Login: ${studentSyntheticEmail}` +
-              `\n  • Temporary Password: ${studentTempPassword}` +
-              `\n\nThis is a school-issued login (not a real email inbox). ` +
-              `Share it with the student/family — they'll be prompted to set a new password on first sign-in.`;
-          }
-          alert(successMsg);
+          setAdmissionResult({
+            studentId,
+            className: assignedClass,
+            parentEmail: (parentNewlyCreated && tempPassword) ? normalizedEmail : undefined,
+            parentPassword: (parentNewlyCreated && tempPassword) ? tempPassword : undefined,
+            studentLogin: studentSyntheticEmail,
+            studentPassword: studentTempPassword,
+          });
           return;
         } else {
           // Student already exists — update guardian link on the existing student record
@@ -620,6 +807,13 @@ export default function ApplicationDetail() {
 
   return (
     <div className="max-w-5xl mx-auto px-4 py-10">
+      {/* Admission Success Modal */}
+      <AnimatePresence>
+        {admissionResult && (
+          <AdmissionSuccessModal result={admissionResult} onClose={() => setAdmissionResult(null)} />
+        )}
+      </AnimatePresence>
+
       <button onClick={() => navigate('/admin/admissions')}
         className="flex items-center text-slate-500 hover:text-indigo-600 font-medium mb-8 transition-colors">
         <ArrowLeft className="w-4 h-4 mr-2" /> Back to Admissions

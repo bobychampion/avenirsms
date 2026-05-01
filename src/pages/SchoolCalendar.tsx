@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { db, handleFirestoreError, OperationType } from '../firebase';
 import { useAuth } from '../components/FirebaseProvider';
-import { collection, query, onSnapshot, orderBy, addDoc, deleteDoc, doc, updateDoc } from 'firebase/firestore';
+import { collection, query, onSnapshot, orderBy, addDoc, deleteDoc, doc, updateDoc, where } from 'firebase/firestore';
 import { SchoolEvent } from '../types';
+import { useSchoolId } from '../hooks/useSchoolId';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   Calendar as CalendarIcon, Plus, Trash2, Edit2, 
@@ -12,6 +13,7 @@ import {
 
 export default function SchoolCalendar() {
   const { profile, isAdmin } = useAuth();
+  const schoolId = useSchoolId();
   
   const [events, setEvents] = useState<SchoolEvent[]>([]);
   const [loading, setLoading] = useState(true);
@@ -27,14 +29,15 @@ export default function SchoolCalendar() {
   });
 
   useEffect(() => {
-    const q = query(collection(db, 'events'), orderBy('date', 'asc'));
+    if (!schoolId) return;
+    const q = query(collection(db, 'events'), where('schoolId', '==', schoolId), orderBy('date', 'asc'));
     const unsubscribe = onSnapshot(q, (snapshot) => {
       setEvents(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as SchoolEvent)));
       setLoading(false);
     }, (error) => handleFirestoreError(error, OperationType.LIST, 'events'));
 
     return () => unsubscribe();
-  }, []);
+  }, [schoolId]);
 
   const daysInMonth = (year: number, month: number) => new Date(year, month + 1, 0).getDate();
   const firstDayOfMonth = (year: number, month: number) => new Date(year, month, 1).getDay();
@@ -46,11 +49,12 @@ export default function SchoolCalendar() {
 
   const handleSaveEvent = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!schoolId) return;
     try {
       if (editingEvent?.id) {
-        await updateDoc(doc(db, 'events', editingEvent.id), formData);
+        await updateDoc(doc(db, 'events', editingEvent.id), { ...formData, schoolId });
       } else {
-        await addDoc(collection(db, 'events'), formData);
+        await addDoc(collection(db, 'events'), { ...formData, schoolId });
       }
       setIsModalOpen(false);
       setEditingEvent(null);

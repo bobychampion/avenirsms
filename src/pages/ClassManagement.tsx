@@ -74,7 +74,7 @@ export default function ClassManagement() {
       const data = {
         ...formData,
         formTutorName: tutor?.displayName || 'Not Assigned',
-        schoolId: schoolId ?? undefined,
+        schoolId: schoolId ?? 'main',
       };
 
       if (editingClass?.id) {
@@ -100,7 +100,7 @@ export default function ClassManagement() {
         subjectName: subjectFormData.subjectName,
         teacherId: subjectFormData.teacherId,
         teacherName: teacher?.displayName || 'Not Assigned',
-        schoolId: schoolId ?? undefined,
+        schoolId: schoolId ?? 'main',
       };
 
       if (editingSubject?.id) {

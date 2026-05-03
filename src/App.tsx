@@ -13,6 +13,7 @@ import AdminDashboard from './pages/AdminDashboard';
 import ApplicationDetail from './pages/ApplicationDetail';
 import StudentList from './pages/StudentList';
 import StudentProfile from './pages/StudentProfile';
+import StudentLifecycle from './pages/StudentLifecycle';
 import TeacherPortal from './pages/TeacherPortal';
 import ParentPortal from './pages/ParentPortal';
 import SchoolCalendar from './pages/SchoolCalendar';
@@ -243,6 +244,7 @@ function AppContent() {
           <Route path="/admin/admissions" element={<Layout><ProtectedRoute role="admin"><AdmissionsManagement /></ProtectedRoute></Layout>} />
           <Route path="/admin/students" element={<Layout><ProtectedRoute role="admin"><StudentList /></ProtectedRoute></Layout>} />
           <Route path="/admin/students/:id" element={<Layout><ProtectedRoute role="admin"><StudentProfile /></ProtectedRoute></Layout>} />
+          <Route path="/admin/students/:id/lifecycle" element={<Layout><ProtectedRoute role="admin"><StudentLifecycle /></ProtectedRoute></Layout>} />
           <Route path="/admin/gradebook" element={<Layout><ProtectedRoute role="admin"><Gradebook /></ProtectedRoute></Layout>} />
           <Route path="/admin/report-cards" element={<Layout><ProtectedRoute role="admin"><ReportCards /></ProtectedRoute></Layout>} />
           <Route path="/admin/users" element={<Layout><ProtectedRoute role="admin"><UserManagement /></ProtectedRoute></Layout>} />

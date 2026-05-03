@@ -13,7 +13,7 @@ import {
   ArrowLeft, User, Phone, Mail, GraduationCap, Calendar, Hash, 
   ShieldCheck, Database, Save, Loader2, Heart, Users, BookOpen,
   Sparkles, TrendingUp, TrendingDown, Minus, AlertTriangle,
-  CreditCard, Printer, X, CheckCircle2, ChevronRight, Camera
+  CreditCard, Printer, X, CheckCircle2, ChevronRight, Camera, Activity
 } from 'lucide-react';
 import { DOCUMENT_TITLE_DEFAULT } from '../constants/appMeta';
 import { useUnsavedChanges } from '../hooks/useUnsavedChanges';
@@ -235,6 +235,14 @@ export default function StudentProfile() {
           </div>
         </div>
         <div className="flex flex-wrap gap-2">
+          {/* Lifecycle button */}
+          <Link
+            to={`/admin/students/${id}/lifecycle`}
+            className="inline-flex items-center gap-2 px-4 py-2.5 bg-white border border-slate-200 text-slate-700 font-bold rounded-xl hover:bg-slate-50 transition-all text-sm"
+          >
+            <Activity className="w-4 h-4 text-slate-500" />
+            Lifecycle
+          </Link>
           {/* ID Card button */}
           <button
             onClick={() => setShowIdCard(true)}

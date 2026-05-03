@@ -513,6 +513,27 @@ service cloud.firestore {
       allow write: if isSuperAdmin() || (isAdmin() && newDocBelongsToCallerSchool());
     }
 
+    // ─── Student Lifecycle Events ─────────────────────────────────────────────
+
+    match /lifecycle_events/{eventId} {
+      allow read: if isAuthenticated() && (isSuperAdmin() || docBelongsToCallerSchool());
+      allow write: if isSuperAdmin() || (isAdmin() && newDocBelongsToCallerSchool());
+    }
+
+    // ─── Behavioral Records ───────────────────────────────────────────────────
+
+    match /behavioral_records/{recordId} {
+      allow read: if isAuthenticated() && (isSuperAdmin() || docBelongsToCallerSchool());
+      allow write: if isSuperAdmin() || (isAdmin() && newDocBelongsToCallerSchool());
+    }
+
+    // ─── Alumni Profiles ──────────────────────────────────────────────────────
+
+    match /alumni_profiles/{profileId} {
+      allow read: if isAuthenticated() && (isSuperAdmin() || docBelongsToCallerSchool());
+      allow write: if isSuperAdmin() || (isAdmin() && newDocBelongsToCallerSchool());
+    }
+
     // ─── Demo requests (public) ───────────────────────────────────────────────
 
     match /demo_requests/{requestId} {

@@ -685,3 +685,58 @@ export function formatDate(dateStr: string): string {
   const [y, m, d] = dateStr.split('-');
   return `${d}/${m}/${y}`;
 }
+
+// ─── Student Lifecycle & Alumni ───────────────────────────────────────────────
+
+/** A single event in a student's lifecycle timeline */
+export interface LifecycleEvent {
+  id?: string;
+  studentId: string;
+  schoolId: string;
+  type: 'enrolled' | 'promoted' | 'detained' | 'graduated' | 'withdrawn' | 'suspended' | 'reinstated' | 'note';
+  title: string;
+  description?: string;
+  fromClass?: string;
+  toClass?: string;
+  session?: string;
+  recordedBy?: string;
+  createdAt: any;
+}
+
+/** Behavioral record — incident or commendation */
+export interface BehavioralRecord {
+  id?: string;
+  studentId: string;
+  schoolId: string;
+  type: 'commendation' | 'warning' | 'suspension' | 'incident' | 'achievement';
+  title: string;
+  description: string;
+  severity?: 'low' | 'medium' | 'high';
+  recordedBy: string;
+  date: string;
+  createdAt: any;
+}
+
+/** Alumni profile — created when a student graduates */
+export interface AlumniProfile {
+  id?: string;
+  studentId: string;
+  schoolId: string;
+  studentName: string;
+  graduationYear: string;
+  graduationClass: string;
+  currentOccupation?: string;
+  employer?: string;
+  university?: string;
+  course?: string;
+  personalEmail?: string;
+  phone?: string;
+  linkedIn?: string;
+  engagementStatus: 'active' | 'inactive' | 'lost_contact';
+  totalDonations: number;
+  donationNotes?: string;
+  networkingNotes?: string;
+  lastContactDate?: string;
+  createdAt: any;
+  updatedAt?: any;
+}

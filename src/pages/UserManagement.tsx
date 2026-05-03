@@ -31,7 +31,7 @@ interface RoleChangeConfirm {
 export default function UserManagement() {
   const schoolId = useSchoolId();
   const [users, setUsers] = useState<UserProfile[]>([]);
-  const [staffWithoutAccount, setStaffWithoutAccount] = useState<{ id: string; staffName: string; email: string; role: string }[]>([]);
+  const [staffWithoutAccount, setStaffWithoutAccount] = useState<{ id: string; staffName: string; email: string; role: string; pendingPassword: string }[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [filterRole, setFilterRole] = useState<string>('all');
@@ -41,6 +41,7 @@ export default function UserManagement() {
   const [showInviteModal, setShowInviteModal] = useState(false);
   const [creatingUser, setCreatingUser] = useState(false);
   const [inviteForm, setInviteForm] = useState({ email: '', displayName: '', role: 'teacher', password: '', confirmPassword: '' });
+  const [syncingLinks, setSyncingLinks] = useState(false);
 
   useEffect(() => {
     if (!schoolId) return;
@@ -51,17 +52,59 @@ export default function UserManagement() {
       setLoading(false);
     }, err => handleFirestoreError(err, OperationType.LIST, 'users'));
 
-    // Also watch staff to find those without a linked login account
+    // Watch staff — find those without a linked login account
     const qStaff = query(collection(db, 'staff'), where('schoolId', '==', schoolId!));
     const unsubStaff = onSnapshot(qStaff, snap => {
       const orphans = snap.docs
         .map(d => ({ id: d.id, ...d.data() } as any))
         .filter((s: any) => !s.userId);
-      setStaffWithoutAccount(orphans.map((s: any) => ({ id: s.id, staffName: s.staffName, email: s.email, role: s.role })));
+      setStaffWithoutAccount(orphans.map((s: any) => ({
+        id: s.id,
+        staffName: s.staffName,
+        email: s.email,
+        role: s.role,
+        pendingPassword: s.pendingPassword || '',
+      })));
     });
 
     return () => { unsub(); unsubStaff(); };
   }, [schoolId]);
+
+  // Auto-link staff records to existing user accounts by email match.
+  // Handles the case where accounts were created manually without going through
+  // the "Create login" flow (so userId was never written back to the staff doc).
+  const handleSyncLinks = async () => {
+    if (!schoolId || !staffWithoutAccount.length) return;
+    setSyncingLinks(true);
+    const tid = toast.loading('Linking staff to existing accounts…');
+    try {
+      // Build email → uid map from loaded users
+      const emailToUid: Record<string, string> = {};
+      users.forEach(u => { if (u.email) emailToUid[u.email.toLowerCase()] = u.uid; });
+
+      let linked = 0;
+      for (const s of staffWithoutAccount) {
+        const uid = emailToUid[s.email?.toLowerCase() ?? ''];
+        if (uid) {
+          await updateDoc(doc(db, 'staff', s.id), {
+            userId: uid,
+            pendingPassword: null,
+            updatedAt: serverTimestamp(),
+          });
+          linked++;
+        }
+      }
+      if (linked > 0) {
+        toast.success(`Linked ${linked} staff member${linked > 1 ? 's' : ''} to existing accounts`, { id: tid });
+      } else {
+        toast('No matching accounts found — use "Create login" for remaining staff', { id: tid });
+      }
+    } catch (e: any) {
+      toast.error('Sync failed: ' + e.message, { id: tid });
+    } finally {
+      setSyncingLinks(false);
+    }
+  };
 
   const handleRoleChange = (u: UserProfile, newRole: string) => {
     if (newRole === u.role) return;
@@ -124,9 +167,10 @@ export default function UserManagement() {
         );
 
         if (!existingStaffSnap.empty) {
-          // Link the existing staff record
+          // Link the existing staff record and clear the stored pending password
           await updateDoc(doc(db, 'staff', existingStaffSnap.docs[0].id), {
             userId: cred.user.uid,
+            pendingPassword: null,
             updatedAt: serverTimestamp(),
           });
         } else {
@@ -234,33 +278,69 @@ export default function UserManagement() {
       </div>
 
       {/* Staff without login accounts */}
-      {staffWithoutAccount.length > 0 && (
-        <div className="mb-6 bg-amber-50 border border-amber-200 rounded-2xl p-4">
-          <div className="flex items-center gap-2 mb-3">
-            <AlertCircle className="w-4 h-4 text-amber-600 flex-shrink-0" />
-            <p className="text-sm font-bold text-amber-800">
-              {staffWithoutAccount.length} staff member{staffWithoutAccount.length > 1 ? 's' : ''} without a login account
-            </p>
+      {staffWithoutAccount.length > 0 && (() => {
+        // Split into: those with a matching user account (just need linking) vs truly no account
+        const userEmailSet = new Set(users.map(u => u.email?.toLowerCase()));
+        const canAutoLink = staffWithoutAccount.filter(s => userEmailSet.has(s.email?.toLowerCase()));
+        const needNewAccount = staffWithoutAccount.filter(s => !userEmailSet.has(s.email?.toLowerCase()));
+        return (
+          <div className="mb-6 bg-amber-50 border border-amber-200 rounded-2xl p-4">
+            <div className="flex items-center justify-between gap-2 mb-2 flex-wrap">
+              <div className="flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 text-amber-600 flex-shrink-0" />
+                <p className="text-sm font-bold text-amber-800">
+                  {staffWithoutAccount.length} staff member{staffWithoutAccount.length > 1 ? 's' : ''} without a linked login
+                </p>
+              </div>
+              {canAutoLink.length > 0 && (
+                <button
+                  onClick={handleSyncLinks}
+                  disabled={syncingLinks}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-600 text-white text-xs font-bold rounded-xl hover:bg-amber-700 transition-colors disabled:opacity-50"
+                >
+                  {syncingLinks
+                    ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    : <UserCheck className="w-3.5 h-3.5" />}
+                  Link {canAutoLink.length} existing account{canAutoLink.length > 1 ? 's' : ''}
+                </button>
+              )}
+            </div>
+            {canAutoLink.length > 0 && (
+              <p className="text-xs text-amber-700 mb-3">
+                <strong>{canAutoLink.length}</strong> staff already have a login account — click "Link" to connect them.
+                {needNewAccount.length > 0 && <> <strong>{needNewAccount.length}</strong> still need a new account created.</>}
+              </p>
+            )}
+            {needNewAccount.length > 0 && canAutoLink.length === 0 && (
+              <p className="text-xs text-amber-700 mb-3">These staff have no system login. Create an account for them to grant portal access.</p>
+            )}
+            {needNewAccount.length > 0 && (
+              <div className="flex flex-wrap gap-2">
+                {needNewAccount.map(s => (
+                  <button
+                    key={s.id}
+                    onClick={() => {
+                      setInviteForm({
+                        email: s.email || '',
+                        displayName: s.staffName,
+                        role: s.role === 'teacher' ? 'teacher' : s.role === 'admin_staff' ? 'accountant' : 'teacher',
+                        password: s.pendingPassword || '',
+                        confirmPassword: s.pendingPassword || '',
+                      });
+                      setShowInviteModal(true);
+                    }}
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-amber-300 text-amber-800 text-xs font-semibold rounded-xl hover:bg-amber-100 transition-colors"
+                  >
+                    <UserCheck className="w-3.5 h-3.5" />
+                    {s.staffName}
+                    <span className="text-amber-500">· Create login</span>
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
-          <p className="text-xs text-amber-700 mb-3">These staff were added in Staff & HR but have no system login. Create a user account for them to grant portal access.</p>
-          <div className="flex flex-wrap gap-2">
-            {staffWithoutAccount.map(s => (
-              <button
-                key={s.id}
-                onClick={() => {
-                  setInviteForm({ email: s.email || '', displayName: s.staffName, role: s.role === 'teacher' ? 'teacher' : s.role === 'admin_staff' ? 'accountant' : 'teacher', password: '', confirmPassword: '' });
-                  setShowInviteModal(true);
-                }}
-                className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-amber-300 text-amber-800 text-xs font-semibold rounded-xl hover:bg-amber-100 transition-colors"
-              >
-                <UserCheck className="w-3.5 h-3.5" />
-                {s.staffName}
-                <span className="text-amber-500">· Create login</span>
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
+        );
+      })()}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* User Table */}
@@ -495,6 +575,12 @@ export default function UserManagement() {
                 </div>
                 <div>
                   <label className="text-xs font-bold text-slate-400 uppercase block mb-1.5">Password</label>
+                  {inviteForm.password && inviteForm.password === inviteForm.confirmPassword && (
+                    <div className="flex items-center gap-1.5 text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-1.5 mb-2">
+                      <CheckCircle2 className="w-3.5 h-3.5 flex-shrink-0" />
+                      Password pre-filled from bulk import — you can change it if needed
+                    </div>
+                  )}
                   <input required type="password" value={inviteForm.password}
                     onChange={e => setInviteForm({ ...inviteForm, password: e.target.value })}
                     placeholder="Min. 8 characters"

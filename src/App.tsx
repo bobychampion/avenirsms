@@ -38,6 +38,8 @@ import PinManagement from './pages/PinManagement';
 import NotificationsManagement from './pages/NotificationsManagement';
 import BulkStudentImport from './pages/BulkStudentImport';
 import BulkStaffImport from './pages/BulkStaffImport';
+import IntegrationSettings from './pages/IntegrationSettings';
+import GoogleOAuthCallback from './pages/GoogleOAuthCallback';
 import WhatsAppNotifications from './pages/WhatsAppNotifications';
 import SeedData from './pages/SeedData';
 import OnboardingTutorial from './pages/OnboardingTutorial';
@@ -46,20 +48,12 @@ import AdminMobileDashboard from './pages/mobile/AdminMobileDashboard';
 import TeacherMobileAttendance from './pages/mobile/TeacherMobileAttendance';
 import ParentMobileHome from './pages/mobile/ParentMobileHome';
 import { Layout } from './components/Layout';
-import { StudentLayout } from './components/StudentLayout';
 import { StaffLayout } from './components/StaffLayout';
 import AccountantPortal from './pages/AccountantPortal';
 import HrPortal from './pages/HrPortal';
 import LibraryPortal from './pages/LibraryPortal';
 import RolesPermissions from './pages/RolesPermissions';
 import ParentList from './pages/ParentList';
-import {
-  StudentToday,
-  StudentAssignments,
-  StudentGrades,
-  StudentMessages,
-  StudentProfile as StudentPortalProfile,
-} from './pages/StudentPortal';
 
 // Super Admin pages — lazy-loaded (only needed by super_admin users)
 const SuperAdminDashboard = lazy(() => import('./pages/super-admin/SuperAdminDashboard'));
@@ -86,7 +80,6 @@ type GuardRole =
   | 'admin'
   | 'School_admin'
   | 'applicant'
-  | 'student'
   | 'teacher'
   | 'parent'
   | 'super_admin'
@@ -263,6 +256,8 @@ function AppContent() {
           <Route path="/admin/promotion" element={<Layout><ProtectedRoute role="admin"><StudentPromotion /></ProtectedRoute></Layout>} />
           <Route path="/admin/pins" element={<Layout><ProtectedRoute role="admin"><PinManagement /></ProtectedRoute></Layout>} />
           <Route path="/admin/settings" element={<Layout><ProtectedRoute role="admin"><SchoolSettingsPage /></ProtectedRoute></Layout>} />
+          <Route path="/admin/integrations/google" element={<Layout><ProtectedRoute role="admin"><IntegrationSettings /></ProtectedRoute></Layout>} />
+          <Route path="/auth/google/callback" element={<ProtectedRoute role="admin"><GoogleOAuthCallback /></ProtectedRoute>} />
           <Route path="/admin/notifications" element={<Layout><ProtectedRoute role="admin"><NotificationsManagement /></ProtectedRoute></Layout>} />
           <Route path="/admin/bulk-import" element={<Layout><ProtectedRoute role="admin"><BulkStudentImport /></ProtectedRoute></Layout>} />
           <Route path="/admin/bulk-staff-import" element={<Layout><ProtectedRoute role="admin"><BulkStaffImport /></ProtectedRoute></Layout>} />
@@ -277,12 +272,8 @@ function AppContent() {
           <Route path="/teacher" element={<Layout><ProtectedRoute role="teacher"><TeacherPortal /></ProtectedRoute></Layout>} />
           <Route path="/parent" element={<Layout><ProtectedRoute role="parent"><ParentPortal /></ProtectedRoute></Layout>} />
 
-          {/* Student portal — kid-friendly StudentLayout (no sidebar) */}
-          <Route path="/student" element={<ProtectedRoute role="student"><StudentLayout><StudentToday /></StudentLayout></ProtectedRoute>} />
-          <Route path="/student/assignments" element={<ProtectedRoute role="student"><StudentLayout><StudentAssignments /></StudentLayout></ProtectedRoute>} />
-          <Route path="/student/grades" element={<ProtectedRoute role="student"><StudentLayout><StudentGrades /></StudentLayout></ProtectedRoute>} />
-          <Route path="/student/messages" element={<ProtectedRoute role="student"><StudentLayout><StudentMessages /></StudentLayout></ProtectedRoute>} />
-          <Route path="/student/profile" element={<ProtectedRoute role="student"><StudentLayout><StudentPortalProfile /></StudentLayout></ProtectedRoute>} />
+          {/* Student portal removed — redirect to home */}
+          <Route path="/student/*" element={<Navigate to="/home" replace />} />
 
           {/* Accountant portal — dedicated landing + reuses /admin/finance pages */}
           <Route path="/accountant" element={<ProtectedRoute role="accountant"><StaffLayout role="accountant"><AccountantPortal /></StaffLayout></ProtectedRoute>} />

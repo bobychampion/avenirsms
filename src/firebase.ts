@@ -3,11 +3,18 @@ import { getAuth } from 'firebase/auth';
 import { getFirestore, doc, getDocFromCache, getDocFromServer } from 'firebase/firestore';
 import { getAnalytics } from 'firebase/analytics';
 import { getMessaging, isSupported } from 'firebase/messaging';
+import { getFunctions, connectFunctionsEmulator } from 'firebase/functions';
 import firebaseConfig from '../firebase-applet-config.json';
 
 const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
 export const db = getFirestore(app, (firebaseConfig as any).firestoreDatabaseId);
+
+// Connect to local Functions emulator in development
+if (import.meta.env.DEV) {
+  const functions = getFunctions(app);
+  connectFunctionsEmulator(functions, '127.0.0.1', 5001);
+}
 export const analytics = typeof window !== 'undefined' ? getAnalytics(app) : null;
 
 /**

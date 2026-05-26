@@ -311,6 +311,9 @@ export interface SchoolEvent {
   description: string;
   date: string;
   type: 'academic' | 'holiday' | 'sports' | 'other';
+  schoolId?: string;
+  /** Google Calendar event ID — set after successful sync */
+  googleEventId?: string;
 }
 
 export interface Invoice {

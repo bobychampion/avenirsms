@@ -123,8 +123,14 @@ export default function ClassManagement() {
     } catch (err: any) {
       console.error('Classroom sync failed:', err);
       const detail = err?.message ?? String(err);
-      // If classroom isn't enabled, give a direct action hint
-      if (detail.includes('not connected') || detail.includes('failed-precondition')) {
+      if (detail.includes('CourseStateDenied') || detail.includes('403')) {
+        toast.error(
+          'Google Classroom sync requires a Google Workspace for Education account. ' +
+          'Personal Gmail and standard Workspace accounts cannot create courses. ' +
+          'Contact your IT admin to upgrade to Workspace for Education.',
+          { duration: 8000 }
+        );
+      } else if (detail.includes('not connected') || detail.includes('failed-precondition')) {
         toast.error('Enable Google Classroom in Integration Settings first.', { duration: 5000 });
       } else if (detail.includes('unauthenticated') || detail.includes('permission-denied')) {
         toast.error('Reconnect Google Workspace — your authorization may have expired.', { duration: 5000 });

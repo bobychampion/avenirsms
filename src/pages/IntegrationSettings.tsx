@@ -341,6 +341,22 @@ export default function IntegrationSettings() {
                     {isConnected && <StatusBadge status={enabled ? status : 'not_enabled'} />}
                   </div>
                   <p className="text-xs text-slate-500 mt-0.5">{meta.desc}</p>
+                  {/* Classroom-specific requirement note */}
+                  {key === 'classroom' && (
+                    <p className="text-xs text-amber-600 mt-1.5 flex items-start gap-1">
+                      <AlertCircle size={11} className="shrink-0 mt-0.5" />
+                      Requires a <strong className="font-semibold mx-0.5">Google Workspace for Education</strong> account.
+                      Personal Gmail and standard Workspace accounts cannot create courses.{' '}
+                      <a
+                        href="https://edu.google.com/workspace-for-education/editions/education-fundamentals/"
+                        target="_blank"
+                        rel="noreferrer"
+                        className="underline underline-offset-2 hover:text-amber-800 transition-colors"
+                      >
+                        Learn more →
+                      </a>
+                    </p>
+                  )}
                   {error && enabled && (
                     <p className="text-xs text-red-500 mt-1 flex items-center gap-1">
                       <AlertCircle size={11} /> {error}

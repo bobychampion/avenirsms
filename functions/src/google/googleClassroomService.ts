@@ -1,243 +1,159 @@
 /**
  * Google Classroom Service
- * 
- * Placeholder module for future Google Classroom integration features.
- * This service will handle course synchronization, assignment management,
- * and student work operations between AVENIR and Google Classroom.
- * 
- * **Future Features:**
- * - Sync AVENIR classes to Google Classroom courses
- * - Create and manage assignments in Classroom
- * - Sync grades between AVENIR and Classroom
- * - Manage student enrollments and rosters
- * - Post announcements and materials to courses
- * 
- * **Validates: Requirement 11.5**
- * 
- * @module functions/google/googleClassroomService
+ *
+ * Implements course synchronisation between Avenir SMS and Google Classroom.
+ * Maps AVENIR SchoolClass records to Google Classroom courses via the
+ * school's connected Google Workspace access token.
  */
 
 import { getValidAccessToken } from './googleTokenService';
 
-/**
- * List courses for a school (Placeholder)
- * 
- * Future implementation will retrieve all Google Classroom courses
- * accessible to the school's account, with filtering and pagination support.
- * 
- * @param schoolId - The school ID for which to list courses
- * @param pageSize - Number of courses to return per page (default: 100)
- * @param pageToken - Token for pagination
- * @returns Promise resolving to list of courses with metadata
- * @throws Error - Not yet implemented
- */
-export async function listCourses(
-  schoolId: string,
-  pageSize: number = 100,
-  pageToken?: string
-): Promise<any> {
-  throw new Error('Google Classroom course listing not yet implemented');
+const CLASSROOM_BASE = 'https://classroom.googleapis.com/v1';
+
+/** Minimal shape returned by the Classroom API for a course */
+export interface ClassroomCourse {
+  id: string;
+  name: string;
+  section?: string;
+  description?: string;
+  room?: string;
+  courseState: 'ACTIVE' | 'ARCHIVED' | 'PROVISIONED' | 'DECLINED' | 'SUSPENDED';
+  alternateLink?: string;
 }
 
+/** Input shape for creating / updating a classroom course */
+export interface SchoolClassInput {
+  /** Class name, e.g. "JSS 2A" */
+  name: string;
+  /** Academic session, e.g. "2025/2026" */
+  section?: string;
+  /** Optional description */
+  description?: string;
+  /** Optional room/location */
+  room?: string;
+}
+
+// ─── helpers ──────────────────────────────────────────────────────────────────
+
+async function authHeaders(schoolId: string): Promise<Record<string, string>> {
+  const token = await getValidAccessToken(schoolId);
+  return {
+    Authorization: `Bearer ${token}`,
+    'Content-Type': 'application/json',
+  };
+}
+
+function buildCourseBody(cls: SchoolClassInput, includeState = true) {
+  return {
+    name: cls.name,
+    section: cls.section,
+    description: cls.description
+      ? `${cls.description}\n\n[Synced from Avenir SMS]`
+      : '[Synced from Avenir SMS]',
+    ...(cls.room ? { room: cls.room } : {}),
+    ...(includeState ? { courseState: 'ACTIVE' } : {}),
+  };
+}
+
+// ─── public API ───────────────────────────────────────────────────────────────
+
 /**
- * Create a new course (Placeholder)
- * 
- * Future implementation will create a new Google Classroom course,
- * syncing class data from AVENIR to Classroom.
- * 
- * @param schoolId - The school ID for which to create the course
- * @param course - Course details (name, section, description, room)
- * @returns Promise resolving to created course metadata
- * @throws Error - Not yet implemented
+ * Create a new active course in Google Classroom.
+ * Returns the Google Classroom course ID to be stored in Firestore.
  */
 export async function createCourse(
   schoolId: string,
-  course: {
-    name: string;
-    section?: string;
-    description?: string;
-    room?: string;
-    ownerId?: string;
+  cls: SchoolClassInput
+): Promise<string> {
+  const url = `${CLASSROOM_BASE}/courses`;
+  const headers = await authHeaders(schoolId);
+  const body = {
+    ...buildCourseBody(cls, true),
+    ownerId: 'me',
+  };
+
+  const res = await fetch(url, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(body),
+  });
+
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`Classroom createCourse failed (${res.status}): ${err}`);
   }
-): Promise<any> {
-  throw new Error('Google Classroom course creation not yet implemented');
+
+  const data = (await res.json()) as ClassroomCourse;
+  return data.id;
 }
 
 /**
- * Update course details (Placeholder)
- * 
- * Future implementation will update an existing Google Classroom course,
- * syncing changes from AVENIR to Classroom.
- * 
- * @param schoolId - The school ID for which to update the course
- * @param courseId - ID of the course to update
- * @param updates - Partial course data to update
- * @returns Promise resolving to updated course metadata
- * @throws Error - Not yet implemented
+ * Update an existing Google Classroom course's name, section, and description.
  */
 export async function updateCourse(
   schoolId: string,
   courseId: string,
-  updates: Record<string, any>
-): Promise<any> {
-  throw new Error('Google Classroom course update not yet implemented');
+  cls: SchoolClassInput
+): Promise<void> {
+  const updateMask = 'name,section,description';
+  const url = `${CLASSROOM_BASE}/courses/${encodeURIComponent(courseId)}?updateMask=${updateMask}`;
+  const headers = await authHeaders(schoolId);
+  const body = buildCourseBody(cls, false);
+
+  const res = await fetch(url, {
+    method: 'PATCH',
+    headers,
+    body: JSON.stringify(body),
+  });
+
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`Classroom updateCourse failed (${res.status}): ${err}`);
+  }
 }
 
 /**
- * Archive or delete a course (Placeholder)
- * 
- * Future implementation will archive or delete a Google Classroom course,
- * with appropriate safety checks and audit logging.
- * 
- * @param schoolId - The school ID for which to archive the course
- * @param courseId - ID of the course to archive
- * @param deleteInstead - If true, delete instead of archive
- * @returns Promise resolving when operation is complete
- * @throws Error - Not yet implemented
+ * Archive a Google Classroom course (safe alternative to deletion).
+ * Silently succeeds if the course is already archived or gone (404 / 410).
  */
 export async function archiveCourse(
   schoolId: string,
-  courseId: string,
-  deleteInstead: boolean = false
+  courseId: string
 ): Promise<void> {
-  throw new Error('Google Classroom course archival not yet implemented');
-}
+  const url = `${CLASSROOM_BASE}/courses/${encodeURIComponent(courseId)}?updateMask=courseState`;
+  const headers = await authHeaders(schoolId);
+  const body = { courseState: 'ARCHIVED' };
 
-/**
- * List students in a course (Placeholder)
- * 
- * Future implementation will retrieve all students enrolled in a
- * Google Classroom course, with support for pagination.
- * 
- * @param schoolId - The school ID for which to list students
- * @param courseId - ID of the course to list students from
- * @param pageSize - Number of students to return per page (default: 100)
- * @param pageToken - Token for pagination
- * @returns Promise resolving to list of students
- * @throws Error - Not yet implemented
- */
-export async function listStudents(
-  schoolId: string,
-  courseId: string,
-  pageSize: number = 100,
-  pageToken?: string
-): Promise<any> {
-  throw new Error('Google Classroom student listing not yet implemented');
-}
+  const res = await fetch(url, {
+    method: 'PATCH',
+    headers,
+    body: JSON.stringify(body),
+  });
 
-/**
- * Invite students to a course (Placeholder)
- * 
- * Future implementation will invite students to a Google Classroom course,
- * syncing enrollments from AVENIR to Classroom.
- * 
- * @param schoolId - The school ID for which to invite students
- * @param courseId - ID of the course to invite students to
- * @param studentEmails - Array of student email addresses to invite
- * @returns Promise resolving to invitation results
- * @throws Error - Not yet implemented
- */
-export async function inviteStudents(
-  schoolId: string,
-  courseId: string,
-  studentEmails: string[]
-): Promise<any> {
-  throw new Error('Google Classroom student invitation not yet implemented');
-}
-
-/**
- * Create course assignment (Placeholder)
- * 
- * Future implementation will create an assignment in Google Classroom,
- * syncing assignment data from AVENIR to Classroom.
- * 
- * @param schoolId - The school ID for which to create the assignment
- * @param courseId - ID of the course to create the assignment in
- * @param assignment - Assignment details (title, description, due date, points)
- * @returns Promise resolving to created assignment metadata
- * @throws Error - Not yet implemented
- */
-export async function createAssignment(
-  schoolId: string,
-  courseId: string,
-  assignment: {
-    title: string;
-    description?: string;
-    dueDate?: { year: number; month: number; day: number };
-    dueTime?: { hours: number; minutes: number };
-    maxPoints?: number;
-    materials?: any[];
+  // 404 = already gone, 410 = permanently removed — both are fine
+  if (!res.ok && res.status !== 404 && res.status !== 410) {
+    const err = await res.text();
+    throw new Error(`Classroom archiveCourse failed (${res.status}): ${err}`);
   }
-): Promise<any> {
-  throw new Error('Google Classroom assignment creation not yet implemented');
 }
 
 /**
- * List assignments in a course (Placeholder)
- * 
- * Future implementation will retrieve all assignments from a Google Classroom
- * course, with filtering and pagination support.
- * 
- * @param schoolId - The school ID for which to list assignments
- * @param courseId - ID of the course to list assignments from
- * @param pageSize - Number of assignments to return per page (default: 100)
- * @param pageToken - Token for pagination
- * @returns Promise resolving to list of assignments
- * @throws Error - Not yet implemented
+ * List active courses accessible to the school's Workspace account.
  */
-export async function listAssignments(
+export async function listCourses(
   schoolId: string,
-  courseId: string,
-  pageSize: number = 100,
-  pageToken?: string
-): Promise<any> {
-  throw new Error('Google Classroom assignment listing not yet implemented');
-}
+  pageSize = 100
+): Promise<ClassroomCourse[]> {
+  const url = `${CLASSROOM_BASE}/courses?courseStates=ACTIVE&pageSize=${pageSize}`;
+  const headers = await authHeaders(schoolId);
 
-/**
- * Grade student submission (Placeholder)
- * 
- * Future implementation will grade a student's assignment submission
- * in Google Classroom, syncing grades from AVENIR to Classroom.
- * 
- * @param schoolId - The school ID for which to grade the submission
- * @param courseId - ID of the course containing the assignment
- * @param assignmentId - ID of the assignment
- * @param submissionId - ID of the student submission
- * @param grade - Grade to assign (numeric or letter)
- * @param feedback - Optional feedback comment
- * @returns Promise resolving to graded submission metadata
- * @throws Error - Not yet implemented
- */
-export async function gradeSubmission(
-  schoolId: string,
-  courseId: string,
-  assignmentId: string,
-  submissionId: string,
-  grade: number | string,
-  feedback?: string
-): Promise<any> {
-  throw new Error('Google Classroom grading not yet implemented');
-}
+  const res = await fetch(url, { method: 'GET', headers });
 
-/**
- * Post announcement to course (Placeholder)
- * 
- * Future implementation will post an announcement to a Google Classroom
- * course, visible to all enrolled students and teachers.
- * 
- * @param schoolId - The school ID for which to post the announcement
- * @param courseId - ID of the course to post to
- * @param text - Announcement text content
- * @param materials - Optional materials to attach (links, files)
- * @returns Promise resolving to posted announcement metadata
- * @throws Error - Not yet implemented
- */
-export async function postAnnouncement(
-  schoolId: string,
-  courseId: string,
-  text: string,
-  materials?: any[]
-): Promise<any> {
-  throw new Error('Google Classroom announcement posting not yet implemented');
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`Classroom listCourses failed (${res.status}): ${err}`);
+  }
+
+  const data = (await res.json()) as { courses?: ClassroomCourse[] };
+  return data.courses ?? [];
 }

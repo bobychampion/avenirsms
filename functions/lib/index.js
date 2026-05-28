@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.deleteCalendarEvent = exports.syncCalendarEvent = exports.verifyGoogleConnection = exports.disconnectGoogleWorkspace = exports.refreshGoogleToken = exports.connectGoogleWorkspace = exports.setStudentPassword = void 0;
+exports.archiveClassroomCourse = exports.syncClassroomCourse = exports.deleteCalendarEvent = exports.syncCalendarEvent = exports.verifyGoogleConnection = exports.disconnectGoogleWorkspace = exports.refreshGoogleToken = exports.connectGoogleWorkspace = exports.setStudentPassword = void 0;
 exports.connectGoogleWorkspaceHandler = connectGoogleWorkspaceHandler;
 exports.refreshGoogleTokenHandler = refreshGoogleTokenHandler;
 exports.disconnectGoogleWorkspaceHandler = disconnectGoogleWorkspaceHandler;
@@ -29,6 +29,7 @@ const googleAuthService_1 = require("./google/googleAuthService");
 const googleTokenService_1 = require("./google/googleTokenService");
 const googleVerificationService_1 = require("./google/googleVerificationService");
 const googleCalendarService_1 = require("./google/googleCalendarService");
+const googleClassroomService_1 = require("./google/googleClassroomService");
 (0, app_1.initializeApp)();
 exports.setStudentPassword = (0, https_1.onCall)(async (request) => {
     const { auth, data } = request;
@@ -571,6 +572,104 @@ exports.deleteCalendarEvent = (0, https_1.onCall)(async (request) => {
     catch (error) {
         console.error('deleteCalendarEvent error:', error);
         throw new https_1.HttpsError('internal', `Failed to delete event from Google Calendar: ${error instanceof Error ? error.message : 'unknown error'}`);
+    }
+});
+/**
+ * syncClassroomCourse — Create or update an AVENIR class as a Google Classroom course.
+ * Called from ClassManagement.tsx after saving a class to Firestore.
+ */
+exports.syncClassroomCourse = (0, https_1.onCall)(async (request) => {
+    const { auth, data } = request;
+    if (!auth)
+        throw new https_1.HttpsError('unauthenticated', 'Sign-in required.');
+    const { schoolId, cls, googleCourseId } = data ?? {};
+    if (!schoolId || !cls?.name) {
+        throw new https_1.HttpsError('invalid-argument', 'schoolId and cls.name are required.');
+    }
+    // Validate caller belongs to this school
+    const db = (0, firestore_1.getFirestore)();
+    const actorSnap = await db.doc(`users/${auth.uid}`).get();
+    const actor = actorSnap.data();
+    if (!actor)
+        throw new https_1.HttpsError('not-found', 'User profile not found.');
+    const isSuperAdmin = actor.role === 'super_admin';
+    const isSchoolAdmin = (actor.role === 'admin' || actor.role === 'School_admin') &&
+        actor.schoolId === schoolId;
+    if (!isSuperAdmin && !isSchoolAdmin) {
+        throw new https_1.HttpsError('permission-denied', 'Only school admins can sync classroom courses.');
+    }
+    // Check Google Classroom is connected and enabled
+    const integrationSnap = await db
+        .doc(`schools/${schoolId}/integrations/google`)
+        .get();
+    const integration = integrationSnap.data();
+    if (!integration?.connected || !integration?.enabledServices?.classroom) {
+        throw new https_1.HttpsError('failed-precondition', 'Google Classroom is not connected. Enable it in Integration Settings.');
+    }
+    try {
+        let resultId;
+        if (googleCourseId) {
+            await (0, googleClassroomService_1.updateCourse)(schoolId, googleCourseId, cls);
+            resultId = googleCourseId;
+        }
+        else {
+            resultId = await (0, googleClassroomService_1.createCourse)(schoolId, cls);
+        }
+        // Audit log
+        await db.collection('audit_log').add({
+            schoolId,
+            actorId: auth.uid,
+            actorRole: actor.role,
+            action: googleCourseId ? 'google.classroom.course_updated' : 'google.classroom.course_created',
+            details: { className: cls.name, section: cls.section, googleCourseId: resultId },
+            createdAt: firestore_1.Timestamp.now(),
+        });
+        return { googleCourseId: resultId };
+    }
+    catch (error) {
+        console.error('syncClassroomCourse error:', error);
+        throw new https_1.HttpsError('internal', `Failed to sync class to Google Classroom: ${error instanceof Error ? error.message : 'unknown error'}`);
+    }
+});
+/**
+ * archiveClassroomCourse — Archive a Google Classroom course when a class is deleted.
+ * Called from ClassManagement.tsx before deleting a class from Firestore.
+ */
+exports.archiveClassroomCourse = (0, https_1.onCall)(async (request) => {
+    const { auth, data } = request;
+    if (!auth)
+        throw new https_1.HttpsError('unauthenticated', 'Sign-in required.');
+    const { schoolId, googleCourseId } = data ?? {};
+    if (!schoolId || !googleCourseId) {
+        throw new https_1.HttpsError('invalid-argument', 'schoolId and googleCourseId are required.');
+    }
+    // Validate caller
+    const db = (0, firestore_1.getFirestore)();
+    const actorSnap = await db.doc(`users/${auth.uid}`).get();
+    const actor = actorSnap.data();
+    if (!actor)
+        throw new https_1.HttpsError('not-found', 'User profile not found.');
+    const isSuperAdmin = actor.role === 'super_admin';
+    const isSchoolAdmin = (actor.role === 'admin' || actor.role === 'School_admin') &&
+        actor.schoolId === schoolId;
+    if (!isSuperAdmin && !isSchoolAdmin) {
+        throw new https_1.HttpsError('permission-denied', 'Only school admins can archive classroom courses.');
+    }
+    try {
+        await (0, googleClassroomService_1.archiveCourse)(schoolId, googleCourseId);
+        await db.collection('audit_log').add({
+            schoolId,
+            actorId: auth.uid,
+            actorRole: actor.role,
+            action: 'google.classroom.course_archived',
+            details: { googleCourseId },
+            createdAt: firestore_1.Timestamp.now(),
+        });
+        return { success: true };
+    }
+    catch (error) {
+        console.error('archiveClassroomCourse error:', error);
+        throw new https_1.HttpsError('internal', `Failed to archive course in Google Classroom: ${error instanceof Error ? error.message : 'unknown error'}`);
     }
 });
 //# sourceMappingURL=index.js.map

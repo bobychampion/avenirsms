@@ -105,6 +105,8 @@ export interface SchoolClass {
   formTutorName?: string;
   academicSession: string;
   studentCount?: number;
+  /** Google Classroom course ID — set after successful sync */
+  googleCourseId?: string;
 }
 
 export interface ClassSubject {

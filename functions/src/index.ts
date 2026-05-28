@@ -37,6 +37,7 @@ import {
 import { storeTokens, getValidAccessToken, clearTokens } from './google/googleTokenService';
 import { verifyConnection } from './google/googleVerificationService';
 import { createEvent, updateEvent, deleteEvent } from './google/googleCalendarService';
+import { createCourse, updateCourse, archiveCourse } from './google/googleClassroomService';
 
 initializeApp();
 
@@ -790,6 +791,150 @@ export const deleteCalendarEvent = onCall<DeleteCalendarEventRequest>(
       throw new HttpsError(
         'internal',
         `Failed to delete event from Google Calendar: ${error instanceof Error ? error.message : 'unknown error'}`
+      );
+    }
+  }
+);
+
+// ─── Google Classroom Sync ────────────────────────────────────────────────────
+
+interface SyncClassroomCourseRequest {
+  schoolId: string;
+  cls: {
+    name: string;
+    section?: string;  // academic session
+    description?: string;
+    room?: string;
+  };
+  /** If provided, updates the existing Classroom course instead of creating */
+  googleCourseId?: string;
+}
+
+interface SyncClassroomCourseResponse {
+  googleCourseId: string;
+}
+
+/**
+ * syncClassroomCourse — Create or update an AVENIR class as a Google Classroom course.
+ * Called from ClassManagement.tsx after saving a class to Firestore.
+ */
+export const syncClassroomCourse = onCall<SyncClassroomCourseRequest>(
+  async (request): Promise<SyncClassroomCourseResponse> => {
+    const { auth, data } = request;
+    if (!auth) throw new HttpsError('unauthenticated', 'Sign-in required.');
+
+    const { schoolId, cls, googleCourseId } = data ?? ({} as SyncClassroomCourseRequest);
+    if (!schoolId || !cls?.name) {
+      throw new HttpsError('invalid-argument', 'schoolId and cls.name are required.');
+    }
+
+    // Validate caller belongs to this school
+    const db = getFirestore();
+    const actorSnap = await db.doc(`users/${auth.uid}`).get();
+    const actor = actorSnap.data();
+    if (!actor) throw new HttpsError('not-found', 'User profile not found.');
+
+    const isSuperAdmin = actor.role === 'super_admin';
+    const isSchoolAdmin =
+      (actor.role === 'admin' || actor.role === 'School_admin') &&
+      actor.schoolId === schoolId;
+    if (!isSuperAdmin && !isSchoolAdmin) {
+      throw new HttpsError('permission-denied', 'Only school admins can sync classroom courses.');
+    }
+
+    // Check Google Classroom is connected and enabled
+    const integrationSnap = await db
+      .doc(`schools/${schoolId}/integrations/google`)
+      .get();
+    const integration = integrationSnap.data();
+    if (!integration?.connected || !integration?.enabledServices?.classroom) {
+      throw new HttpsError(
+        'failed-precondition',
+        'Google Classroom is not connected. Enable it in Integration Settings.'
+      );
+    }
+
+    try {
+      let resultId: string;
+      if (googleCourseId) {
+        await updateCourse(schoolId, googleCourseId, cls);
+        resultId = googleCourseId;
+      } else {
+        resultId = await createCourse(schoolId, cls);
+      }
+
+      // Audit log
+      await db.collection('audit_log').add({
+        schoolId,
+        actorId: auth.uid,
+        actorRole: actor.role,
+        action: googleCourseId ? 'google.classroom.course_updated' : 'google.classroom.course_created',
+        details: { className: cls.name, section: cls.section, googleCourseId: resultId },
+        createdAt: Timestamp.now(),
+      });
+
+      return { googleCourseId: resultId };
+    } catch (error) {
+      console.error('syncClassroomCourse error:', error);
+      throw new HttpsError(
+        'internal',
+        `Failed to sync class to Google Classroom: ${error instanceof Error ? error.message : 'unknown error'}`
+      );
+    }
+  }
+);
+
+interface ArchiveClassroomCourseRequest {
+  schoolId: string;
+  googleCourseId: string;
+}
+
+/**
+ * archiveClassroomCourse — Archive a Google Classroom course when a class is deleted.
+ * Called from ClassManagement.tsx before deleting a class from Firestore.
+ */
+export const archiveClassroomCourse = onCall<ArchiveClassroomCourseRequest>(
+  async (request): Promise<{ success: boolean }> => {
+    const { auth, data } = request;
+    if (!auth) throw new HttpsError('unauthenticated', 'Sign-in required.');
+
+    const { schoolId, googleCourseId } = data ?? ({} as ArchiveClassroomCourseRequest);
+    if (!schoolId || !googleCourseId) {
+      throw new HttpsError('invalid-argument', 'schoolId and googleCourseId are required.');
+    }
+
+    // Validate caller
+    const db = getFirestore();
+    const actorSnap = await db.doc(`users/${auth.uid}`).get();
+    const actor = actorSnap.data();
+    if (!actor) throw new HttpsError('not-found', 'User profile not found.');
+
+    const isSuperAdmin = actor.role === 'super_admin';
+    const isSchoolAdmin =
+      (actor.role === 'admin' || actor.role === 'School_admin') &&
+      actor.schoolId === schoolId;
+    if (!isSuperAdmin && !isSchoolAdmin) {
+      throw new HttpsError('permission-denied', 'Only school admins can archive classroom courses.');
+    }
+
+    try {
+      await archiveCourse(schoolId, googleCourseId);
+
+      await db.collection('audit_log').add({
+        schoolId,
+        actorId: auth.uid,
+        actorRole: actor.role,
+        action: 'google.classroom.course_archived',
+        details: { googleCourseId },
+        createdAt: Timestamp.now(),
+      });
+
+      return { success: true };
+    } catch (error) {
+      console.error('archiveClassroomCourse error:', error);
+      throw new HttpsError(
+        'internal',
+        `Failed to archive course in Google Classroom: ${error instanceof Error ? error.message : 'unknown error'}`
       );
     }
   }

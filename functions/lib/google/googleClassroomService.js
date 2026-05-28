@@ -21,7 +21,7 @@ async function authHeaders(schoolId) {
         'Content-Type': 'application/json',
     };
 }
-function buildCourseBody(cls, includeState = true) {
+function buildCourseBody(cls) {
     return {
         name: cls.name,
         section: cls.section,
@@ -29,7 +29,6 @@ function buildCourseBody(cls, includeState = true) {
             ? `${cls.description}\n\n[Synced from Avenir SMS]`
             : '[Synced from Avenir SMS]',
         ...(cls.room ? { room: cls.room } : {}),
-        ...(includeState ? { courseState: 'ACTIVE' } : {}),
     };
 }
 // ─── public API ───────────────────────────────────────────────────────────────
@@ -40,8 +39,12 @@ function buildCourseBody(cls, includeState = true) {
 async function createCourse(schoolId, cls) {
     const url = `${CLASSROOM_BASE}/courses`;
     const headers = await authHeaders(schoolId);
+    // Do NOT include courseState on create — setting ACTIVE directly requires a
+    // Google Workspace for Education teacher account and returns 403 for other
+    // account types (@CourseStateDenied). Let Google create the course in its
+    // default PROVISIONED state, then try to activate it as a separate step.
     const body = {
-        ...buildCourseBody(cls, true),
+        ...buildCourseBody(cls),
         ownerId: 'me',
     };
     const res = await fetch(url, {
@@ -54,7 +57,25 @@ async function createCourse(schoolId, cls) {
         throw new Error(`Classroom createCourse failed (${res.status}): ${err}`);
     }
     const data = (await res.json());
-    return data.id;
+    const courseId = data.id;
+    // Attempt to activate the course. This may fail on personal Gmail accounts
+    // or non-Education Workspace accounts — that's acceptable; the course still
+    // exists in PROVISIONED state and is fully usable by teachers and students.
+    try {
+        const activateUrl = `${CLASSROOM_BASE}/courses/${encodeURIComponent(courseId)}?updateMask=courseState`;
+        const activateRes = await fetch(activateUrl, {
+            method: 'PATCH',
+            headers,
+            body: JSON.stringify({ courseState: 'ACTIVE' }),
+        });
+        if (!activateRes.ok) {
+            console.warn(`Classroom: course ${courseId} created but could not be activated (${activateRes.status}) — staying in PROVISIONED state.`);
+        }
+    }
+    catch (e) {
+        console.warn('Classroom: course activation attempt failed, course stays PROVISIONED:', e);
+    }
+    return courseId;
 }
 /**
  * Update an existing Google Classroom course's name, section, and description.
@@ -63,7 +84,7 @@ async function updateCourse(schoolId, courseId, cls) {
     const updateMask = 'name,section,description';
     const url = `${CLASSROOM_BASE}/courses/${encodeURIComponent(courseId)}?updateMask=${updateMask}`;
     const headers = await authHeaders(schoolId);
-    const body = buildCourseBody(cls, false);
+    const body = buildCourseBody(cls);
     const res = await fetch(url, {
         method: 'PATCH',
         headers,

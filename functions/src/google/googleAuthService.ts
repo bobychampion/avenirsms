@@ -40,7 +40,7 @@ export const GOOGLE_SCOPES = {
     'https://www.googleapis.com/auth/calendar',
   ],
   classroom: [
-    'https://www.googleapis.com/auth/classroom.courses.readonly',
+    'https://www.googleapis.com/auth/classroom.courses',
   ],
   gmail: [
     'https://www.googleapis.com/auth/gmail.send',

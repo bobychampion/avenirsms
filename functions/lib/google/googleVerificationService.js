@@ -120,7 +120,21 @@ async function verifyClassroom(schoolId) {
                 error: `Classroom API call failed: ${response.status} ${errorText}`,
             };
         }
-        // Successfully called Classroom API
+        // Confirm the token has WRITE scope, not just read-only.
+        // A readonly token passes the GET above but fails when creating/updating courses.
+        const db = (0, firestore_1.getFirestore)();
+        const integrationSnap = await db
+            .doc(`schools/${schoolId}/integrations/google`)
+            .get();
+        const storedScopes = integrationSnap.data()?.tokens?.scopes ?? [];
+        const hasWriteScope = storedScopes.some((s) => s.includes('classroom.courses') && !s.includes('readonly'));
+        if (!hasWriteScope) {
+            return {
+                success: false,
+                error: 'Token only has read-only Classroom access. Please click Reconnect in Integration Settings to grant write permissions.',
+            };
+        }
+        // Successfully called Classroom API with write-capable token
         return { success: true };
     }
     catch (error) {

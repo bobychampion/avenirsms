@@ -121,8 +121,16 @@ export default function ClassManagement() {
 
       toast.success(`Synced "${classData.name}" to Google Classroom`);
     } catch (err: any) {
-      console.warn('Classroom sync failed:', err?.message ?? err);
-      toast.error('Saved locally — Google Classroom sync failed');
+      console.error('Classroom sync failed:', err);
+      const detail = err?.message ?? String(err);
+      // If classroom isn't enabled, give a direct action hint
+      if (detail.includes('not connected') || detail.includes('failed-precondition')) {
+        toast.error('Enable Google Classroom in Integration Settings first.', { duration: 5000 });
+      } else if (detail.includes('unauthenticated') || detail.includes('permission-denied')) {
+        toast.error('Reconnect Google Workspace — your authorization may have expired.', { duration: 5000 });
+      } else {
+        toast.error(`Classroom sync failed: ${detail}`, { duration: 6000 });
+      }
     } finally {
       setSyncingId(null);
     }

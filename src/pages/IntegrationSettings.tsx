@@ -150,7 +150,7 @@ export default function IntegrationSettings() {
     const scopes = [
       'https://www.googleapis.com/auth/drive.readonly',
       'https://www.googleapis.com/auth/calendar.events',
-      'https://www.googleapis.com/auth/classroom.courses.readonly',
+      'https://www.googleapis.com/auth/classroom.courses',
       'https://www.googleapis.com/auth/gmail.send',
       'openid email profile',
     ].join(' ');

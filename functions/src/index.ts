@@ -15,9 +15,11 @@
  * or `super_admin` role in the target user's school. Enforced server-side.
  */
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
+import { onSchedule } from 'firebase-functions/v2/scheduler';
 import { initializeApp } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 import { getFirestore, Timestamp } from 'firebase-admin/firestore';
+import { getMessaging } from 'firebase-admin/messaging';
 import {
   ConnectGoogleWorkspaceRequest,
   ConnectGoogleWorkspaceResponse,
@@ -937,5 +939,207 @@ export const archiveClassroomCourse = onCall<ArchiveClassroomCourseRequest>(
         `Failed to archive course in Google Classroom: ${error instanceof Error ? error.message : 'unknown error'}`
       );
     }
+  }
+);
+
+// ─── Scheduled Automated Reminders ───────────────────────────────────────────
+//
+// Runs daily at 07:00 WAT (06:00 UTC).
+// Checks each school's active invoices and sends FCM push notifications to
+// parents whose children have outstanding fee balances due today or overdue.
+//
+// Also sends absence reminders for students absent 3+ consecutive school days
+// without an approved absence_request on file.
+
+/**
+ * Helper: send an FCM notification to a single FCM token.
+ * Silently swallows failures so one bad token never blocks the batch.
+ */
+async function sendFcmNotification(
+  token: string,
+  title: string,
+  body: string,
+  data?: Record<string, string>,
+): Promise<void> {
+  try {
+    await getMessaging().send({ token, notification: { title, body }, data: data ?? {} });
+  } catch (err: any) {
+    // Token expired / unregistered — log but continue
+    console.warn('FCM send failed for token', token.slice(-6), ':', err.code ?? err.message);
+  }
+}
+
+/**
+ * dailyReminders — fires every morning at 06:00 UTC (07:00 WAT).
+ *
+ * Fee reminder logic:
+ *  1. Fetch all invoices where status ∈ ['unpaid','partial'] across all schools.
+ *  2. Filter to those with dueDate ≤ today.
+ *  3. For each invoice, look up the student → parent guardian's Firebase UID →
+ *     their FCM token stored in `users/{uid}.fcmToken`.
+ *  4. Send a push notification via FCM.
+ *  5. Write a `notifications` Firestore doc so the in-app bell also reflects it.
+ *
+ * Consecutive-absence alert logic:
+ *  1. Fetch today's attendance records where status = 'absent'.
+ *  2. Compare with the previous 2 school days.
+ *  3. If a student is absent all 3 days and has no approved absence_request
+ *     covering today, send the parent a welfare check notification.
+ */
+export const dailyReminders = onSchedule(
+  { schedule: '0 6 * * *', timeZone: 'UTC', region: 'us-central1' },
+  async (_event) => {
+    const db = getFirestore();
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const todayStr = today.toISOString().split('T')[0];
+
+    console.log(`[dailyReminders] Running for date: ${todayStr}`);
+
+    // ── FEE REMINDERS ────────────────────────────────────────────────────────
+
+    const invoiceSnap = await db
+      .collection('invoices')
+      .where('status', 'in', ['unpaid', 'partial'])
+      .where('dueDate', '<=', todayStr)
+      .get();
+
+    console.log(`[dailyReminders] Found ${invoiceSnap.size} overdue invoices`);
+
+    let feeRemindersSent = 0;
+
+    for (const invoiceDoc of invoiceSnap.docs) {
+      const invoice = invoiceDoc.data();
+      const { schoolId, studentId, studentName, amount, dueDate } = invoice;
+      if (!schoolId || !studentId) continue;
+
+      try {
+        // Look up student to find guardian UID
+        const studentDoc = await db.doc(`students/${studentId}`).get();
+        const student = studentDoc.data();
+        if (!student?.guardianUserId) continue;
+
+        // Get guardian's FCM token
+        const userDoc = await db.doc(`users/${student.guardianUserId}`).get();
+        const userData = userDoc.data();
+        if (!userData?.fcmToken) continue;
+
+        const overdueDays = Math.round((today.getTime() - new Date(dueDate).getTime()) / 86400000);
+        const title = overdueDays > 0 ? '⚠️ Fee Overdue' : '💳 Fee Due Today';
+        const body = `${studentName ?? 'Your child'}'s school fee of ₦${(amount ?? 0).toLocaleString()} is ${overdueDays > 0 ? `${overdueDays} day${overdueDays > 1 ? 's' : ''} overdue` : 'due today'}.`;
+
+        await sendFcmNotification(userData.fcmToken, title, body, {
+          type: 'fee_due',
+          invoiceId: invoiceDoc.id,
+          schoolId,
+        });
+
+        // Write in-app notification
+        await db.collection('notifications').add({
+          recipientId: student.guardianUserId,
+          title,
+          body,
+          type: 'fee_due',
+          read: false,
+          schoolId,
+          createdAt: Timestamp.now(),
+        });
+
+        feeRemindersSent++;
+      } catch (err: any) {
+        console.error(`[dailyReminders] Error processing invoice ${invoiceDoc.id}:`, err.message);
+      }
+    }
+
+    console.log(`[dailyReminders] Fee reminders sent: ${feeRemindersSent}`);
+
+    // ── CONSECUTIVE ABSENCE ALERTS ────────────────────────────────────────────
+
+    // Build the last 3 school days (Mon–Fri only, going backwards from today)
+    const schoolDays: string[] = [];
+    const cursor = new Date(today);
+    while (schoolDays.length < 3) {
+      const dow = cursor.getDay();
+      if (dow !== 0 && dow !== 6) {
+        schoolDays.push(cursor.toISOString().split('T')[0]);
+      }
+      cursor.setDate(cursor.getDate() - 1);
+    }
+
+    // Fetch attendance for these 3 days in one query
+    const attSnap = await db
+      .collection('attendance')
+      .where('date', 'in', schoolDays)
+      .where('status', '==', 'absent')
+      .get();
+
+    // Group by studentId
+    const absentByStudent: Record<string, Set<string>> = {};
+    for (const d of attSnap.docs) {
+      const { studentId, date } = d.data();
+      if (!studentId || !date) continue;
+      if (!absentByStudent[studentId]) absentByStudent[studentId] = new Set();
+      absentByStudent[studentId].add(date);
+    }
+
+    // Find students absent all 3 days
+    const consecutivelyAbsent = Object.entries(absentByStudent)
+      .filter(([, dates]) => schoolDays.every(d => dates.has(d)))
+      .map(([studentId]) => studentId);
+
+    console.log(`[dailyReminders] Students absent 3+ consecutive days: ${consecutivelyAbsent.length}`);
+
+    let absenceAlertsSent = 0;
+
+    for (const studentId of consecutivelyAbsent) {
+      try {
+        // Check for approved absence request covering today
+        const absenceReqSnap = await db
+          .collection('absence_requests')
+          .where('studentId', '==', studentId)
+          .where('status', '==', 'approved')
+          .where('startDate', '<=', todayStr)
+          .where('endDate', '>=', todayStr)
+          .limit(1)
+          .get();
+
+        if (!absenceReqSnap.empty) continue; // authorised — skip
+
+        // Get student and parent info
+        const studentDoc = await db.doc(`students/${studentId}`).get();
+        const student = studentDoc.data();
+        if (!student?.guardianUserId) continue;
+
+        const userDoc = await db.doc(`users/${student.guardianUserId}`).get();
+        const userData = userDoc.data();
+        if (!userData?.fcmToken) continue;
+
+        const title = '📋 Absence Alert';
+        const body = `${student.studentName ?? 'Your child'} has been absent for 3 consecutive school days. Please contact the school.`;
+
+        await sendFcmNotification(userData.fcmToken, title, body, {
+          type: 'attendance',
+          studentId,
+          schoolId: student.schoolId ?? '',
+        });
+
+        await db.collection('notifications').add({
+          recipientId: student.guardianUserId,
+          title,
+          body,
+          type: 'attendance',
+          read: false,
+          schoolId: student.schoolId ?? '',
+          createdAt: Timestamp.now(),
+        });
+
+        absenceAlertsSent++;
+      } catch (err: any) {
+        console.error(`[dailyReminders] Error processing absence for student ${studentId}:`, err.message);
+      }
+    }
+
+    console.log(`[dailyReminders] Absence alerts sent: ${absenceAlertsSent}`);
+    console.log(`[dailyReminders] Complete. Fee: ${feeRemindersSent}, Absence: ${absenceAlertsSent}`);
   }
 );

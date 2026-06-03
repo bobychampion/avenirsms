@@ -309,7 +309,9 @@ export function SchoolProvider({ children }: { children: React.ReactNode }) {
             .map(d => ({ id: d.id, ...d.data() } as SchoolClass))
             .sort((a, b) => a.name.localeCompare(b.name));
           setClasses(list);
-          setClassNames(list.map(c => c.name));
+          // Deduplicate: two Firestore docs with the same name would produce
+          // duplicate option keys (React warning) in every class <select>.
+          setClassNames([...new Set(list.map(c => c.name))]);
         }
         setLoading(false);
       },

@@ -1,77 +1,16 @@
 import React, { useState, useEffect } from 'react';
 import { useSearchParams, Link } from 'react-router-dom';
 import { db, handleFirestoreError, OperationType } from '../firebase';
-import { collection, query, onSnapshot, orderBy, where, getDocs, updateDoc, doc, setDoc, serverTimestamp } from 'firebase/firestore';
-import { initializeApp, getApps } from 'firebase/app';
-import { getAuth, createUserWithEmailAndPassword, signOut as firebaseSignOut } from 'firebase/auth';
-import firebaseConfig from '../../firebase-applet-config.json';
+import { collection, query, onSnapshot, orderBy, where } from 'firebase/firestore';
 import { Student, SCHOOL_CLASSES, SchoolClass } from '../types';
 import { useSchoolId } from '../hooks/useSchoolId';
-import { useSchoolSettings } from './SchoolSettings';
-import { buildStudentLoginEmail, upsertStudentLoginIndex } from '../utils/studentAccount';
 import { motion } from 'motion/react';
-import { Search, Filter, User, Phone, Mail, Calendar, ArrowRight, ArrowLeft, ChevronLeft, ChevronRight, KeyRound, X, Loader2, CheckCircle, Copy, CheckCheck, Zap, AlertCircle } from 'lucide-react';
-import toast from 'react-hot-toast';
+import { Search, Filter, User, Phone, Mail, Calendar, ArrowRight, ArrowLeft, ChevronLeft, ChevronRight } from 'lucide-react';
 
 const PAGE_SIZE = 20;
 
-// ── Copyable credentials modal shown after password is set ────────────────────
-function PasswordSetModal({
-  studentName, studentId, password,
-  onClose,
-}: { studentName: string; studentId: string; password: string; onClose: () => void }) {
-  const [copiedField, setCopiedField] = useState<string | null>(null);
-  const copy = async (value: string, field: string) => {
-    await navigator.clipboard.writeText(value);
-    setCopiedField(field);
-    setTimeout(() => setCopiedField(null), 2000);
-  };
-  const copyAll = () => copy(`Student ID: ${studentId}\nPassword: ${password}`, 'all');
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40">
-      <div className="bg-white rounded-3xl shadow-2xl w-full max-w-sm p-6 space-y-4">
-        <div className="flex items-center gap-2">
-          <CheckCircle className="w-5 h-5 text-emerald-500" />
-          <h2 className="text-base font-extrabold text-slate-900">Password set!</h2>
-        </div>
-        <p className="text-sm text-slate-600">
-          Share these credentials with <strong>{studentName}</strong>. They sign in with their Student ID.
-        </p>
-        <div className="rounded-xl bg-slate-50 border border-slate-200 divide-y divide-slate-200">
-          <div className="flex items-center justify-between px-4 py-3">
-            <div>
-              <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-0.5">Student ID</p>
-              <p className="text-sm font-mono text-slate-900 select-all">{studentId}</p>
-            </div>
-            <button onClick={() => copy(studentId, 'id')} className="ml-2 p-1 rounded hover:bg-slate-200 text-slate-500 transition-colors" title="Copy">
-              {copiedField === 'id' ? <CheckCheck className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
-            </button>
-          </div>
-          <div className="flex items-center justify-between px-4 py-3">
-            <div>
-              <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-0.5">Password</p>
-              <p className="text-sm font-mono text-slate-900 select-all">{password}</p>
-            </div>
-            <button onClick={() => copy(password, 'pw')} className="ml-2 p-1 rounded hover:bg-slate-200 text-slate-500 transition-colors" title="Copy">
-              {copiedField === 'pw' ? <CheckCheck className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
-            </button>
-          </div>
-        </div>
-        <div className="flex justify-between items-center pt-1">
-          <button onClick={copyAll} className="inline-flex items-center gap-1.5 text-xs font-bold text-indigo-600 hover:underline">
-            {copiedField === 'all' ? <CheckCheck className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
-            {copiedField === 'all' ? 'Copied!' : 'Copy both'}
-          </button>
-          <button onClick={onClose} className="px-5 py-2 rounded-xl bg-indigo-600 text-sm font-bold text-white hover:bg-indigo-700">Done</button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 export default function StudentList() {
   const schoolId = useSchoolId();
-  const { settings: schoolSettings } = useSchoolSettings();
   const [searchParams, setSearchParams] = useSearchParams();
   const initialClass = searchParams.get('class') || 'all';
 
@@ -81,112 +20,6 @@ export default function StudentList() {
   const [searchTerm, setSearchTerm] = useState('');
   const [classFilter, setClassFilter] = useState(initialClass);
   const [currentPage, setCurrentPage] = useState(0);
-
-  // Set-password modal state
-  const [pwStudent, setPwStudent] = useState<Student | null>(null);
-  const [newPassword, setNewPassword] = useState('');
-  const [pwSaving, setPwSaving] = useState(false);
-  const [pwDone, setPwDone] = useState<{ studentName: string; studentId: string; password: string } | null>(null);
-
-  // Bulk provision state
-  const [provisioning, setProvisioning] = useState(false);
-  const [provisionResult, setProvisionResult] = useState<{ done: number; failed: number } | null>(null);
-
-  const handleBulkProvision = async () => {
-    const missing = students.filter(s => !s.loginEmail);
-    if (missing.length === 0) { toast.success('All students already have portal accounts.'); return; }
-    setProvisioning(true);
-    setProvisionResult(null);
-    let done = 0; let failed = 0;
-    const secondaryApp = getApps().find(a => a.name === 'student-bulk-provision')
-      || initializeApp(firebaseConfig as any, 'student-bulk-provision');
-    const secondaryAuth = getAuth(secondaryApp);
-    for (const student of missing) {
-      try {
-        const suffix = Date.now().toString(36);
-        const email = buildStudentLoginEmail(`${student.studentId}-${suffix}`, schoolSettings);
-        const { generateStudentTempPassword } = await import('../utils/studentAccount');
-        const tempPw = generateStudentTempPassword(student.studentId);
-        const cred = await createUserWithEmailAndPassword(secondaryAuth, email, tempPw);
-        await firebaseSignOut(secondaryAuth);
-        await setDoc(doc(db, 'users', cred.user.uid), {
-          uid: cred.user.uid, email, role: 'student',
-          displayName: student.studentName,
-          schoolId: student.schoolId ?? schoolId ?? undefined,
-          linkedStudentIds: [student.id!],
-          mustChangePassword: true, syntheticLogin: true,
-          createdAt: serverTimestamp(),
-        });
-        await updateDoc(doc(db, 'students', student.id!), { loginEmail: email });
-        await upsertStudentLoginIndex(db, student.schoolId ?? schoolId ?? '', student.studentId, email);
-        done++;
-      } catch { failed++; }
-    }
-    setProvisioning(false);
-    setProvisionResult({ done, failed });
-    if (failed === 0) toast.success(`${done} student account${done !== 1 ? 's' : ''} provisioned.`);
-    else toast.error(`${done} provisioned, ${failed} failed. Check console for details.`);
-  };
-
-  const handleSetPassword = async () => {
-    if (!pwStudent || !newPassword || newPassword.length < 8) {
-      toast.error('Password must be at least 8 characters.');
-      return;
-    }
-    setPwSaving(true);
-    try {
-      const suffix = Date.now().toString(36);
-      const newEmail = buildStudentLoginEmail(`${pwStudent.studentId}-${suffix}`, schoolSettings);
-
-      // Create new Firebase Auth account via secondary app
-      const secondaryApp = getApps().find(a => a.name === 'student-pw-reset')
-        || initializeApp(firebaseConfig as any, 'student-pw-reset');
-      const secondaryAuth = getAuth(secondaryApp);
-      const cred = await createUserWithEmailAndPassword(secondaryAuth, newEmail, newPassword);
-      await firebaseSignOut(secondaryAuth);
-
-      // Disable old auth account's Firestore profile (if one exists)
-      if (pwStudent.loginEmail) {
-        const oldUserSnap = await getDocs(
-          query(collection(db, 'users'), where('email', '==', pwStudent.loginEmail))
-        );
-        for (const d of oldUserSnap.docs) {
-          await updateDoc(d.ref, { disabled: true });
-        }
-      }
-
-      // Write new users profile
-      await setDoc(doc(db, 'users', cred.user.uid), {
-        uid: cred.user.uid,
-        email: newEmail,
-        role: 'student',
-        displayName: pwStudent.studentName,
-        schoolId: pwStudent.schoolId ?? schoolId ?? undefined,
-        linkedStudentIds: [pwStudent.id!],
-        mustChangePassword: false,
-        syntheticLogin: true,
-        createdAt: serverTimestamp(),
-      });
-
-      // CRITICAL: Update student doc with new loginEmail so the login lookup works.
-      // This MUST succeed — if it fails the student cannot log in.
-      await updateDoc(doc(db, 'students', pwStudent.id!), { loginEmail: newEmail });
-      await upsertStudentLoginIndex(db, pwStudent.schoolId ?? schoolId ?? '', pwStudent.studentId, newEmail);
-
-      toast.success(`Password set for ${pwStudent.studentName}.`);
-      const savedStudentName = pwStudent.studentName;
-      const savedStudentId = pwStudent.studentId;
-      const savedPassword = newPassword;
-      setPwStudent(null);
-      setNewPassword('');
-      setPwDone({ studentName: savedStudentName, studentId: savedStudentId, password: savedPassword });
-    } catch (err: any) {
-      console.error('Set password failed:', err);
-      toast.error(err.message || 'Could not set password.');
-    } finally {
-      setPwSaving(false);
-    }
-  };
 
   useEffect(() => {
     if (!schoolId) return;
@@ -244,40 +77,6 @@ export default function StudentList() {
         <h1 className="text-3xl font-bold text-slate-900 tracking-tight">Student Directory</h1>
         <p className="text-slate-500 mt-1">Manage and view all currently enrolled students.</p>
       </div>
-
-      {/* Bulk provision banner */}
-      {(() => {
-        const missing = students.filter(s => !s.loginEmail);
-        if (missing.length === 0 && !provisionResult) return null;
-        return (
-          <div className={`mb-6 flex items-center gap-4 px-5 py-4 rounded-2xl border ${provisionResult?.failed === 0 && provisionResult.done > 0 ? 'bg-emerald-50 border-emerald-200' : 'bg-amber-50 border-amber-200'}`}>
-            <AlertCircle className={`w-5 h-5 shrink-0 ${provisionResult?.failed === 0 && provisionResult.done > 0 ? 'text-emerald-600' : 'text-amber-600'}`} />
-            <div className="flex-1 min-w-0">
-              {provisionResult ? (
-                <p className="text-sm font-bold text-slate-800">
-                  {provisionResult.done} account{provisionResult.done !== 1 ? 's' : ''} provisioned
-                  {provisionResult.failed > 0 ? `, ${provisionResult.failed} failed` : ' successfully'}.
-                </p>
-              ) : (
-                <>
-                  <p className="text-sm font-bold text-amber-800">{missing.length} student{missing.length !== 1 ? 's' : ''} without a portal account</p>
-                  <p className="text-xs text-amber-700 mt-0.5">These students cannot log in until an account is provisioned.</p>
-                </>
-              )}
-            </div>
-            {missing.length > 0 && !provisionResult && (
-              <button
-                onClick={handleBulkProvision}
-                disabled={provisioning}
-                className="shrink-0 inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-amber-600 hover:bg-amber-700 disabled:opacity-60 text-white text-xs font-bold transition-colors"
-              >
-                {provisioning ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Zap className="w-3.5 h-3.5" />}
-                {provisioning ? 'Provisioning...' : 'Provision All'}
-              </button>
-            )}
-          </div>
-        );
-      })()}
 
       <div className="flex flex-col md:flex-row gap-4 mb-8">
         <div className="relative flex-grow">
@@ -354,13 +153,7 @@ export default function StudentList() {
                 </div>
               </div>
 
-              <div className="mt-6 pt-6 border-t border-slate-100 flex justify-between items-center gap-2">
-                <button
-                  onClick={() => { setPwStudent(student); setNewPassword(''); }}
-                  className="inline-flex items-center gap-1 text-xs font-bold text-amber-600 hover:text-amber-700"
-                >
-                  <KeyRound className="w-3 h-3" /> Set Password
-                </button>
+              <div className="mt-6 pt-6 border-t border-slate-100 flex justify-end items-center">
                 <Link
                   to={`/admin/students/${student.id}`}
                   className="inline-flex items-center text-xs font-bold text-indigo-600 hover:text-indigo-700"
@@ -390,65 +183,6 @@ export default function StudentList() {
           </div>
         )}
         </>
-      )}
-
-      {/* ── Set Password Modal ── */}
-      {pwStudent && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40">
-          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-sm p-6">
-            <div className="flex items-center justify-between mb-5">
-              <div>
-                <h2 className="text-base font-extrabold text-slate-900">Set Portal Password</h2>
-                <p className="text-xs text-slate-500 mt-0.5">{pwStudent.studentName} · {pwStudent.studentId}</p>
-              </div>
-              <button onClick={() => setPwStudent(null)} className="text-slate-400 hover:text-slate-600">
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-            <div className="space-y-4">
-              <div>
-                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">New Password</label>
-                <input
-                  type="text"
-                  value={newPassword}
-                  onChange={e => setNewPassword(e.target.value)}
-                  className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm font-mono"
-                  placeholder="Min. 8 characters"
-                  autoFocus
-                />
-                <p className="mt-1 text-[11px] text-slate-400">
-                  The student signs in with their Student ID + this password. Share it with them directly.
-                </p>
-              </div>
-              <div className="flex gap-2">
-                <button
-                  onClick={() => setPwStudent(null)}
-                  className="flex-1 py-2 rounded-xl border border-slate-200 text-sm font-bold text-slate-600 hover:bg-slate-50"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={handleSetPassword}
-                  disabled={pwSaving || newPassword.length < 8}
-                  className="flex-1 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white text-sm font-bold inline-flex items-center justify-center gap-2"
-                >
-                  {pwSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle className="w-4 h-4" />}
-                  {pwSaving ? 'Saving...' : 'Set Password'}
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ── Password Set (credentials) Modal ── */}
-      {pwDone && (
-        <PasswordSetModal
-          studentName={pwDone.studentName}
-          studentId={pwDone.studentId}
-          password={pwDone.password}
-          onClose={() => setPwDone(null)}
-        />
       )}
     </div>
   );

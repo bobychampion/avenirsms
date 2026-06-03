@@ -54,6 +54,11 @@ service cloud.firestore {
       return isAuthenticated() && userProfile().role == 'librarian';
     }
 
+    /** School-scoped HR staff. */
+    function isHR() {
+      return isAuthenticated() && userProfile().role == 'hr';
+    }
+
     /** Caller belongs to the given schoolId. */
     function belongsToSchool(sid) {
       return isAuthenticated() && userProfile().schoolId == sid;
@@ -359,9 +364,45 @@ service cloud.firestore {
     }
 
     match /leave_requests/{leaveId} {
-      allow read: if isAuthenticated() && (isSuperAdmin() || (isAdmin() && docBelongsToCallerSchool()) || isOwner(resource.data.get('staffId', '')));
+      allow read: if isAuthenticated() && (isSuperAdmin() || (isAdmin() && docBelongsToCallerSchool()) ||
+                    (isHR() && docBelongsToCallerSchool()) ||
+                    isOwner(resource.data.get('staffId', '')));
       allow create: if isAuthenticated() && newDocBelongsToCallerSchool();
-      allow update: if isSuperAdmin() || (isAdmin() && docBelongsToCallerSchool());
+      // Admins and HR can approve/reject; staff can only update their own (e.g. withdraw)
+      allow update: if isSuperAdmin() ||
+                    (isAdmin() && docBelongsToCallerSchool()) ||
+                    (isHR() && docBelongsToCallerSchool());
+    }
+
+    // ─── HR Policies (Phase 3 — HR portal) ────────────────────────────────────
+
+    match /hr_policies/{policyId} {
+      allow read: if isAuthenticated() && (isSuperAdmin() || docBelongsToCallerSchool());
+      allow write: if isSuperAdmin() ||
+                    ((isAdmin() || isHR()) && newDocBelongsToCallerSchool());
+    }
+
+    // ─── Onboarding Records (Phase 3 — HR portal) ─────────────────────────────
+
+    match /onboarding_records/{recordId} {
+      allow read: if isAuthenticated() && (isSuperAdmin() || (isAdmin() && docBelongsToCallerSchool()) || isHR());
+      allow write: if isSuperAdmin() ||
+                    ((isAdmin() || isHR()) && newDocBelongsToCallerSchool());
+    }
+
+    // ─── Assignment Submissions (Phase 3 — parent/teacher portal) ─────────────
+
+    match /assignment_submissions/{subId} {
+      // Admins, teachers, and HR can read all school submissions
+      allow read: if isAuthenticated() && (isSuperAdmin() || (isAdmin() && docBelongsToCallerSchool()) ||
+                    (docBelongsToCallerSchool() && (isTeacher() || isParent())));
+      // Parents create submissions on behalf of their child
+      allow create: if isAuthenticated() && newDocBelongsToCallerSchool();
+      // Teachers can update (grade) submissions; admins can always update
+      allow update: if isSuperAdmin() ||
+                    (isAdmin() && docBelongsToCallerSchool()) ||
+                    (isTeacher() && docBelongsToCallerSchool());
+      allow delete: if isSuperAdmin() || (isAdmin() && docBelongsToCallerSchool());
     }
 
     match /payroll/{payrollId} {
@@ -541,6 +582,57 @@ service cloud.firestore {
       
       // Prevent deletion (only updates to mark as disconnected are allowed)
       allow delete: if false;
+    }
+
+    // ─── Cover Assignments (Cover Manager — admin) ────────────────────────────
+
+    match /cover_assignments/{coverId} {
+      allow read: if isAuthenticated() && (isSuperAdmin() || docBelongsToCallerSchool());
+      allow write: if isSuperAdmin() || (isAdmin() && newDocBelongsToCallerSchool());
+    }
+
+    // ─── School Trips & Registrations ────────────────────────────────────────
+
+    match /school_trips/{tripId} {
+      // Admins manage trips; teachers and parents can read
+      allow read: if isAuthenticated() && (isSuperAdmin() || docBelongsToCallerSchool());
+      allow write: if isSuperAdmin() || (isAdmin() && newDocBelongsToCallerSchool());
+    }
+
+    match /trip_registrations/{regId} {
+      // Admins and teachers can read all; parents can read their own child's registrations
+      allow read: if isAuthenticated() && (isSuperAdmin() || (isAdmin() && docBelongsToCallerSchool()) ||
+                    (docBelongsToCallerSchool() && (isTeacher() || isParent())));
+      allow create: if isAuthenticated() && newDocBelongsToCallerSchool();
+      // Admins update consent/payment fields; parents can also update consent
+      allow update: if isSuperAdmin() ||
+                    (isAdmin() && docBelongsToCallerSchool()) ||
+                    (isParent() && docBelongsToCallerSchool());
+      allow delete: if isSuperAdmin() || (isAdmin() && docBelongsToCallerSchool());
+    }
+
+    // ─── Absence Requests (Parent-submitted future absences) ─────────────────
+
+    match /absence_requests/{reqId} {
+      // Admins and form tutors (teachers) review requests; parents see their own
+      allow read: if isAuthenticated() && (isSuperAdmin() || (isAdmin() && docBelongsToCallerSchool()) ||
+                    (docBelongsToCallerSchool() && (isTeacher() || isParent())));
+      // Parents (and admins) create requests
+      allow create: if isAuthenticated() && newDocBelongsToCallerSchool();
+      // Admins and teachers approve/reject; parents cannot change status
+      allow update: if isSuperAdmin() ||
+                    (isAdmin() && docBelongsToCallerSchool()) ||
+                    (isTeacher() && docBelongsToCallerSchool());
+      allow delete: if isSuperAdmin() || (isAdmin() && docBelongsToCallerSchool());
+    }
+
+    // ─── Leave Entitlements (HR leave balance tracking) ───────────────────────
+
+    match /leave_entitlements/{entId} {
+      allow read: if isAuthenticated() && (isSuperAdmin() || (isAdmin() && docBelongsToCallerSchool()) ||
+                    (isHR() && docBelongsToCallerSchool()));
+      allow write: if isSuperAdmin() ||
+                    ((isAdmin() || isHR()) && newDocBelongsToCallerSchool());
     }
 
     // ─── Connection test (app connectivity check) ─────────────────────────────

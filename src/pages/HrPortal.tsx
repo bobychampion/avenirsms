@@ -50,10 +50,6 @@ export default function HrPortal() {
         <QuickLink to="/hr/policies" icon={<ClipboardList className="w-5 h-5" />} title="Policies & Documents" desc="Maintain the staff handbook and policy library." />
       </section>
 
-      <div className="rounded-2xl border-2 border-dashed border-slate-300 p-6 text-center text-sm text-slate-500">
-        🚧 Sub-pages (leave queue, onboarding tracker, policy library) ship in a follow-up release.
-        For now use the linked admin tools.
-      </div>
     </div>
   );
 }

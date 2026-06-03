@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { Link } from 'react-router-dom';
 import { db } from '../firebase';
 import { doc, getDoc, setDoc, updateDoc, serverTimestamp, collection, getDocs, writeBatch, onSnapshot, addDoc, deleteDoc, query, where } from 'firebase/firestore';
 import { motion } from 'motion/react';
@@ -1259,6 +1260,8 @@ export default function SchoolSettingsPage() {
                 <option value="percentage">Percentage (A+, A, B, C, D, F)</option>
                 <option value="gpa4">GPA 4.0 — US / International</option>
                 <option value="ib">IB Scale (1–7) — International Baccalaureate</option>
+                <option value="igcse">IGCSE (A*–U) — Cambridge / British</option>
+                <option value="alevel">A-Level (A*–U) — Cambridge / British</option>
                 <option value="custom">Custom Scale</option>
               </select>
               {form.gradingSystem === 'custom' && (
@@ -2413,147 +2416,26 @@ export default function SchoolSettingsPage() {
   );
 }
 
-// ─── Collections to wipe (excludes users & school_settings) ──────────────────
-const DEMO_COLLECTIONS = [
-  { key: 'students',      label: 'Students' },
-  { key: 'applications',  label: 'Applications' },
-  { key: 'attendance',    label: 'Attendance' },
-  { key: 'grades',        label: 'Grades' },
-  { key: 'classes',       label: 'Classes' },
-  { key: 'class_subjects',label: 'Class Subjects' },
-  { key: 'timetables',    label: 'Timetables' },
-  { key: 'invoices',      label: 'Invoices' },
-  { key: 'fee_payments',  label: 'Fee Payments' },
-  { key: 'expenses',      label: 'Expenses' },
-  { key: 'events',        label: 'Events' },
-  { key: 'assignments',   label: 'Assignments' },
-  { key: 'messages',      label: 'Messages' },
-  { key: 'exam_seating',  label: 'Exam Seating' },
-];
-
-async function deleteCollection(collectionName: string): Promise<number> {
-  const snap = await getDocs(collection(db, collectionName));
-  if (snap.empty) return 0;
-  // Firestore batch max is 500 writes
-  let deleted = 0;
-  const chunks: typeof snap.docs[] = [];
-  for (let i = 0; i < snap.docs.length; i += 490) {
-    chunks.push(snap.docs.slice(i, i + 490));
-  }
-  for (const chunk of chunks) {
-    const batch = writeBatch(db);
-    chunk.forEach(d => batch.delete(d.ref));
-    await batch.commit();
-    deleted += chunk.length;
-  }
-  return deleted;
-}
+// ─── DangerZone ───────────────────────────────────────────────────────────────
+// The full data-reset tool lives at /admin/data-reset (SchoolDataReset.tsx).
+// It correctly scopes all deletions to the current school's data only.
 
 function DangerZone() {
-  const [selected, setSelected] = useState<Set<string>>(new Set(DEMO_COLLECTIONS.map(c => c.key)));
-  const [confirm, setConfirm] = useState('');
-  const [clearing, setClearing] = useState(false);
-  const [step, setStep] = useState<'idle' | 'confirm'>('idle');
-
-  const toggle = (key: string) =>
-    setSelected(prev => {
-      const next = new Set(prev);
-      next.has(key) ? next.delete(key) : next.add(key);
-      return next;
-    });
-
-  const handleClear = async () => {
-    if (confirm.trim().toLowerCase() !== 'clear') {
-      toast.error('Type "clear" to confirm');
-      return;
-    }
-    setClearing(true);
-    const tid = toast.loading('Clearing data…');
-    let total = 0;
-    try {
-      for (const col of DEMO_COLLECTIONS) {
-        if (!selected.has(col.key)) continue;
-        const count = await deleteCollection(col.key);
-        total += count;
-      }
-      toast.success(`Done — ${total} documents deleted`, { id: tid });
-      setStep('idle');
-      setConfirm('');
-    } catch (e: any) {
-      toast.error('Error: ' + (e.message || 'Unknown'), { id: tid });
-    } finally {
-      setClearing(false);
-    }
-  };
-
   return (
     <section className="bg-white rounded-2xl border-2 border-red-200 shadow-sm p-6">
       <h2 className="font-bold text-red-700 text-sm flex items-center gap-2 mb-1">
-        <AlertTriangle className="w-4 h-4" /> Danger Zone — Clear Test / Demo Data
+        <AlertTriangle className="w-4 h-4" /> Danger Zone — Data Reset
       </h2>
-      <p className="text-xs text-slate-500 mb-5">
-        Permanently delete selected collections. <strong>Users</strong> and <strong>School Settings</strong> are always preserved.
-        This action <strong>cannot be undone</strong>.
+      <p className="text-xs text-slate-500 mb-4">
+        Permanently delete school data by category. Choose exactly what to remove — students, grades, finance,
+        admissions, and more. User accounts and school settings are never affected.
       </p>
-
-      {step === 'idle' && (
-        <button
-          onClick={() => setStep('confirm')}
-          className="flex items-center gap-2 px-5 py-2.5 bg-red-50 text-red-700 border border-red-200 font-bold rounded-xl hover:bg-red-100 transition-colors text-sm">
-          <Trash2 className="w-4 h-4" /> Clear Demo Data…
-        </button>
-      )}
-
-      {step === 'confirm' && (
-        <div className="space-y-4">
-          {/* Collection checkboxes */}
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-            {DEMO_COLLECTIONS.map(col => (
-              <label key={col.key} className="flex items-center gap-2 cursor-pointer select-none">
-                <input
-                  type="checkbox"
-                  checked={selected.has(col.key)}
-                  onChange={() => toggle(col.key)}
-                  className="rounded border-slate-300 text-red-600 focus:ring-red-500"
-                />
-                <span className="text-sm text-slate-700">{col.label}</span>
-              </label>
-            ))}
-          </div>
-
-          <div className="p-3 bg-red-50 rounded-xl border border-red-100 text-xs text-red-700">
-            <strong>{selected.size}</strong> collection{selected.size !== 1 ? 's' : ''} selected for deletion.
-          </div>
-
-          <div>
-            <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">
-              Type <span className="font-mono text-red-600">clear</span> to confirm
-            </label>
-            <input
-              value={confirm}
-              onChange={e => setConfirm(e.target.value)}
-              placeholder='Type "clear" here'
-              className="w-full sm:w-64 px-3 py-2.5 rounded-xl border border-red-200 focus:ring-2 focus:ring-red-400 outline-none text-sm font-mono"
-            />
-          </div>
-
-          <div className="flex gap-3">
-            <button
-              onClick={handleClear}
-              disabled={clearing || selected.size === 0}
-              className="flex items-center gap-2 px-5 py-2.5 bg-red-600 text-white font-bold rounded-xl hover:bg-red-700 transition-colors text-sm disabled:opacity-50">
-              {clearing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
-              {clearing ? 'Clearing…' : 'Confirm Clear'}
-            </button>
-            <button
-              onClick={() => { setStep('idle'); setConfirm(''); }}
-              disabled={clearing}
-              className="px-5 py-2.5 border border-slate-200 text-slate-600 font-semibold rounded-xl hover:bg-slate-50 transition-colors text-sm">
-              Cancel
-            </button>
-          </div>
-        </div>
-      )}
+      <Link
+        to="/admin/data-reset"
+        className="inline-flex items-center gap-2 px-5 py-2.5 bg-red-50 text-red-700 border border-red-200 font-bold rounded-xl hover:bg-red-100 transition-colors text-sm"
+      >
+        <Trash2 className="w-4 h-4" /> Open Data Reset Tool →
+      </Link>
     </section>
   );
 }

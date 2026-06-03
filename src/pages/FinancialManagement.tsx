@@ -558,12 +558,15 @@ export default function FinancialManagement() {
                 </div>
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
-                    <label className="text-xs font-bold text-slate-400 uppercase">Amount</label>
-                    <input required type="number" value={invoiceForm.amount} onChange={e => setInvoiceForm({...invoiceForm, amount: Number(e.target.value)})} className="w-full px-4 py-2 rounded-xl border border-slate-200 outline-none" />
+                    <label className="text-xs font-bold text-slate-400 uppercase">Amount ({currency})</label>
+                    <div className="relative">
+                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 font-bold text-sm select-none">{currency}</span>
+                      <input required type="number" min="0" step="0.01" value={invoiceForm.amount} onChange={e => setInvoiceForm({...invoiceForm, amount: Number(e.target.value)})} className="w-full pl-14 pr-4 py-2 rounded-xl border border-slate-200 outline-none focus:ring-2 focus:ring-indigo-500" placeholder="0.00" />
+                    </div>
                   </div>
                   <div className="space-y-2">
                     <label className="text-xs font-bold text-slate-400 uppercase">Due Date</label>
-                    <input required type="date" value={invoiceForm.dueDate} onChange={e => setInvoiceForm({...invoiceForm, dueDate: e.target.value})} className="w-full px-4 py-2 rounded-xl border border-slate-200 outline-none" />
+                    <input required type="date" value={invoiceForm.dueDate} onChange={e => setInvoiceForm({...invoiceForm, dueDate: e.target.value})} className="w-full px-4 py-2 rounded-xl border border-slate-200 outline-none focus:ring-2 focus:ring-indigo-500" />
                   </div>
                 </div>
                 <div className="grid grid-cols-2 gap-4">
@@ -603,8 +606,11 @@ export default function FinancialManagement() {
               <h3 className="text-2xl font-bold text-slate-900 mb-6">Record Fee Payment</h3>
               <form onSubmit={handleRecordPayment} className="space-y-4">
                 <div className="space-y-2">
-                  <label className="text-xs font-bold text-slate-400 uppercase">Amount Paid</label>
-                  <input required type="number" value={paymentForm.amount} onChange={e => setPaymentForm({...paymentForm, amount: Number(e.target.value)})} className="w-full px-4 py-2 rounded-xl border border-slate-200 outline-none" />
+                  <label className="text-xs font-bold text-slate-400 uppercase">Amount Paid ({currency})</label>
+                  <div className="relative">
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 font-bold text-sm select-none">{currency}</span>
+                    <input required type="number" min="0" step="0.01" value={paymentForm.amount} onChange={e => setPaymentForm({...paymentForm, amount: Number(e.target.value)})} className="w-full pl-14 pr-4 py-2 rounded-xl border border-slate-200 outline-none focus:ring-2 focus:ring-indigo-500" placeholder="0.00" />
+                  </div>
                 </div>
                 <div className="space-y-2">
                   <label className="text-xs font-bold text-slate-400 uppercase">Payment Method</label>
@@ -793,10 +799,13 @@ export default function FinancialManagement() {
                   </div>
                   <div className="grid grid-cols-2 gap-4">
                     <div>
-                      <label className="text-xs font-bold text-slate-500 uppercase tracking-wide block mb-1.5">Amount</label>
-                      <input type="number" value={scheduleForm.amount || ''}
-                        onChange={e => setScheduleForm(p => ({ ...p, amount: Number(e.target.value) }))}
-                        required min={1} className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm" />
+                      <label className="text-xs font-bold text-slate-500 uppercase tracking-wide block mb-1.5">Amount ({currency})</label>
+                      <div className="relative">
+                        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 font-bold text-sm select-none">{currency}</span>
+                        <input type="number" value={scheduleForm.amount || ''}
+                          onChange={e => setScheduleForm(p => ({ ...p, amount: Number(e.target.value) }))}
+                          required min={1} placeholder="0.00" className="w-full pl-14 pr-4 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm" />
+                      </div>
                     </div>
                     <div>
                       <label className="text-xs font-bold text-slate-500 uppercase tracking-wide block mb-1.5">Due Date</label>

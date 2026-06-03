@@ -295,6 +295,35 @@ export interface Assignment {
   dueDate: string;
   teacherId: string;
   createdAt: any;
+  /** Denormalized count — updated whenever a submission is added/removed */
+  submissionCount?: number;
+  schoolId?: string;
+}
+
+/**
+ * A student's submission for an assignment. Stored in `assignment_submissions`
+ * collection, scoped by schoolId. Parents submit on behalf of their child;
+ * teachers read and grade from the TeacherPortal.
+ */
+export interface AssignmentSubmission {
+  id?: string;
+  assignmentId: string;
+  assignmentTitle: string;
+  studentId: string;
+  studentName: string;
+  /** Firebase Auth UID of the parent who submitted */
+  submittedBy: string;
+  submitterName: string;
+  note: string;
+  /** Optional external file link (Drive, Cloudinary, etc.) */
+  fileUrl?: string;
+  status: 'submitted' | 'graded';
+  grade?: string;
+  feedback?: string;
+  schoolId: string;
+  submittedAt: any;
+  gradedAt?: any;
+  gradedBy?: string;
 }
 
 export interface Message {
@@ -540,7 +569,17 @@ export const SUBJECTS = [
   'Social Studies', 'Cultural & Creative Arts', 'Business Studies', 'History'
 ];
 
-export type GradingSystem = 'waec' | 'percentage' | 'gpa4' | 'ib' | 'custom';
+export type GradingSystem = 'waec' | 'percentage' | 'gpa4' | 'ib' | 'igcse' | 'alevel' | 'custom';
+
+export const GRADING_SYSTEM_OPTIONS: { value: GradingSystem; label: string; description: string }[] = [
+  { value: 'waec', label: 'WAEC / NECO (A1–F9)', description: 'Nigerian national grading — A1 ≥75, B2 ≥70 … F9 <40' },
+  { value: 'percentage', label: 'Percentage (A+–F)', description: 'Letter grades from percentage score — A+ ≥90 … F <50' },
+  { value: 'igcse', label: 'Cambridge IGCSE (A*–U)', description: 'International GCSE — A* ≥90, A ≥80 … U <20' },
+  { value: 'alevel', label: 'Cambridge A-Level (A*–U)', description: 'A-Level — A* ≥90, A ≥80 … U <40' },
+  { value: 'ib', label: 'IB (1–7)', description: 'International Baccalaureate 7-point scale' },
+  { value: 'gpa4', label: 'GPA 4.0', description: 'American-style A–F mapped to 4.0 scale' },
+  { value: 'custom', label: 'Custom Scale', description: 'Define your own grade boundaries in school settings' },
+];
 
 export interface CustomGradeScale {
   min: number;
@@ -587,6 +626,26 @@ export function calculateGrade(
       if (total >= 30) return '3';
       if (total >= 16) return '2';
       return '1';
+    case 'igcse':
+      // Cambridge IGCSE (A*–U)
+      if (total >= 90) return 'A*';
+      if (total >= 80) return 'A';
+      if (total >= 70) return 'B';
+      if (total >= 60) return 'C';
+      if (total >= 50) return 'D';
+      if (total >= 40) return 'E';
+      if (total >= 30) return 'F';
+      if (total >= 20) return 'G';
+      return 'U';
+    case 'alevel':
+      // Cambridge A-Level (A*–U)
+      if (total >= 90) return 'A*';
+      if (total >= 80) return 'A';
+      if (total >= 70) return 'B';
+      if (total >= 60) return 'C';
+      if (total >= 50) return 'D';
+      if (total >= 40) return 'E';
+      return 'U';
     case 'custom':
       if (customScale && customScale.length > 0) {
         const sorted = [...customScale].sort((a, b) => b.min - a.min);

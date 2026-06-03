@@ -1,8 +1,11 @@
 node_modules/
 build/
 dist/
+dev-dist/
 .firebase/
 .codebuddy/
+.claude/
+.kiro/
 tsc_out.txt
 coverage/
 .DS_Store

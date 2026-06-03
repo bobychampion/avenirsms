@@ -6,16 +6,18 @@ import {
   collection, query, onSnapshot, where, addDoc, serverTimestamp,
   orderBy, updateDoc, doc, getDocs
 } from 'firebase/firestore';
-import { Student, Assignment, Message, Grade, Attendance, SchoolEvent, Invoice, Notification, TERMS, CURRENT_SESSION, calculateGrade, SKILL_LABELS, SKILL_RATING_LABELS, SkillRating } from '../types';
+import { Student, Assignment, AssignmentSubmission, Message, Grade, Attendance, SchoolEvent, Invoice, Notification, TERMS, CURRENT_SESSION, calculateGrade, SKILL_LABELS, SKILL_RATING_LABELS, SkillRating } from '../types';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   BookOpen, Calendar, MessageSquare, Loader2, CheckCircle2, Clock,
   Bell, TrendingUp, AlertCircle, DollarSign, Receipt, Plus, Send,
-  User, Award, Activity, X, BarChart2, FileText, Printer, CreditCard
+  User, Award, Activity, X, BarChart2, FileText, Printer, CreditCard,
+  Upload, ExternalLink, GraduationCap, CalendarOff,
 } from 'lucide-react';
 import PaystackButton from '../components/PaystackPayment';
 import { DOCUMENT_TITLE_DEFAULT } from '../constants/appMeta';
 import { useSchoolId } from '../hooks/useSchoolId';
+import toast from 'react-hot-toast';
 
 const GRADE_COLORS: Record<string, string> = {
   A1: 'text-emerald-700 bg-emerald-50', B2: 'text-emerald-600 bg-emerald-50',
@@ -25,7 +27,7 @@ const GRADE_COLORS: Record<string, string> = {
   F9: 'text-rose-700 bg-rose-50',
 };
 
-type TabType = 'progress' | 'attendance' | 'assignments' | 'finance' | 'messages' | 'notifications' | 'report_card';
+type TabType = 'progress' | 'attendance' | 'assignments' | 'absences' | 'finance' | 'messages' | 'notifications' | 'report_card';
 
 export default function ParentPortal() {
   const { user, profile } = useAuth();
@@ -45,6 +47,17 @@ export default function ParentPortal() {
   const [newMessage, setNewMessage] = useState({ receiverId: '', content: '' });
   const [reportCardTerm, setReportCardTerm] = useState<string>(TERMS[0]);
   const [reportCardSkills, setReportCardSkills] = useState<any>(null);
+
+  // Assignment submission state
+  const [mySubmissions, setMySubmissions] = useState<AssignmentSubmission[]>([]);
+  const [submittingFor, setSubmittingFor] = useState<Assignment | null>(null);
+  const [submitForm, setSubmitForm] = useState({ note: '', fileUrl: '' });
+  const [submitSaving, setSubmitSaving] = useState(false);
+
+  // Absence request state
+  const [myAbsenceRequests, setMyAbsenceRequests] = useState<any[]>([]);
+  const [absenceForm, setAbsenceForm] = useState({ startDate: '', endDate: '', reason: '', type: 'other' as const });
+  const [absenceSaving, setAbsenceSaving] = useState(false);
 
   useEffect(() => {
     if (!user) return;
@@ -181,6 +194,8 @@ export default function ParentPortal() {
     setAttendance([]);
     setAssignments([]);
     setInvoices([]);
+    setMySubmissions([]);
+    setMyAbsenceRequests([]);
 
     const qGrades = query(collection(db, 'grades'), where('schoolId', '==', schoolId!), where('studentId', '==', selectedChild.id));
     const unsubGrades = onSnapshot(
@@ -203,6 +218,17 @@ export default function ParentPortal() {
       err => console.error('[ParentPortal] assignments query failed:', err.code, err.message)
     );
 
+    const qSubs = query(
+      collection(db, 'assignment_submissions'),
+      where('schoolId', '==', schoolId!),
+      where('studentId', '==', selectedChild.id),
+    );
+    const unsubSubs = onSnapshot(
+      qSubs,
+      snap => setMySubmissions(snap.docs.map(d => ({ id: d.id, ...d.data() } as AssignmentSubmission))),
+      err => console.error('[ParentPortal] submissions query failed:', err.code, err.message)
+    );
+
     const qInv = query(collection(db, 'invoices'), where('schoolId', '==', schoolId!), where('studentId', '==', selectedChild.id), orderBy('createdAt', 'desc'));
     const unsubInv = onSnapshot(
       qInv,
@@ -210,8 +236,74 @@ export default function ParentPortal() {
       err => console.error('[ParentPortal] invoices query failed:', err.code, err.message)
     );
 
-    return () => { unsubGrades(); unsubAtt(); unsubAssign(); unsubInv(); };
+    const qAbsence = query(
+      collection(db, 'absence_requests'),
+      where('schoolId', '==', schoolId!),
+      where('studentId', '==', selectedChild.id),
+    );
+    const unsubAbsence = onSnapshot(qAbsence,
+      snap => setMyAbsenceRequests(snap.docs.map(d => ({ id: d.id, ...d.data() }))),
+      err => console.error('[ParentPortal] absence_requests query failed:', err.code, err.message)
+    );
+
+    return () => { unsubGrades(); unsubAtt(); unsubAssign(); unsubSubs(); unsubInv(); unsubAbsence(); };
   }, [selectedChild, schoolId]);
+
+  const handleSubmitAbsence = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedChild?.id || !schoolId) return;
+    if (!absenceForm.startDate || !absenceForm.reason.trim()) { toast.error('Please fill in all required fields.'); return; }
+    const end = absenceForm.endDate || absenceForm.startDate;
+    if (new Date(end) < new Date(absenceForm.startDate)) { toast.error('End date must be on or after start date.'); return; }
+    setAbsenceSaving(true);
+    try {
+      await addDoc(collection(db, 'absence_requests'), {
+        studentId: selectedChild.id,
+        studentName: selectedChild.studentName,
+        class: selectedChild.currentClass,
+        parentId: user?.uid,
+        parentName: profile?.displayName || 'Parent',
+        startDate: absenceForm.startDate,
+        endDate: end,
+        reason: absenceForm.reason,
+        type: absenceForm.type,
+        status: 'pending',
+        schoolId,
+        createdAt: serverTimestamp(),
+      });
+      toast.success('Absence request submitted.');
+      setAbsenceForm({ startDate: '', endDate: '', reason: '', type: 'other' });
+    } catch { toast.error('Failed to submit absence request.'); }
+    finally { setAbsenceSaving(false); }
+  };
+
+  const handleSubmitAssignment = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!submittingFor?.id || !selectedChild?.id || !schoolId) return;
+    setSubmitSaving(true);
+    try {
+      await addDoc(collection(db, 'assignment_submissions'), {
+        assignmentId: submittingFor.id,
+        assignmentTitle: submittingFor.title,
+        studentId: selectedChild.id,
+        studentName: selectedChild.studentName,
+        submittedBy: user?.uid,
+        submitterName: profile?.displayName || 'Parent',
+        note: submitForm.note,
+        fileUrl: submitForm.fileUrl || null,
+        status: 'submitted',
+        schoolId,
+        submittedAt: serverTimestamp(),
+      } as Omit<AssignmentSubmission, 'id'>);
+      toast.success('Assignment submitted successfully!');
+      setSubmittingFor(null);
+      setSubmitForm({ note: '', fileUrl: '' });
+    } catch {
+      toast.error('Failed to submit assignment.');
+    } finally {
+      setSubmitSaving(false);
+    }
+  };
 
   const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -278,6 +370,7 @@ export default function ParentPortal() {
     { id: 'report_card', label: 'Report Card', Icon: FileText },
     { id: 'attendance', label: 'Attendance', Icon: CheckCircle2 },
     { id: 'assignments', label: 'Assignments', Icon: BookOpen },
+    { id: 'absences', label: 'Absence Requests', Icon: CalendarOff },
     { id: 'finance', label: 'Fees', Icon: DollarSign },
     { id: 'messages', label: 'Messages', Icon: MessageSquare, badge: unreadMsgs },
     { id: 'notifications', label: 'Notifications', Icon: Bell, badge: unreadNotifs },
@@ -616,26 +709,223 @@ export default function ParentPortal() {
             </div>
           ) : assignments.map(a => {
             const isOverdue = new Date(a.dueDate) < new Date();
+            const submission = mySubmissions.find(s => s.assignmentId === a.id);
             return (
-              <div key={a.id} className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex justify-between items-start gap-4">
-                <div className="flex items-start gap-3">
-                  <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${isOverdue ? 'bg-rose-50' : 'bg-indigo-50'}`}>
-                    <BookOpen className={`w-5 h-5 ${isOverdue ? 'text-rose-600' : 'text-indigo-600'}`} />
+              <div key={a.id} className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
+                <div className="flex justify-between items-start gap-4">
+                  <div className="flex items-start gap-3">
+                    <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${isOverdue && !submission ? 'bg-rose-50' : submission ? 'bg-emerald-50' : 'bg-indigo-50'}`}>
+                      <BookOpen className={`w-5 h-5 ${isOverdue && !submission ? 'text-rose-600' : submission ? 'text-emerald-600' : 'text-indigo-600'}`} />
+                    </div>
+                    <div>
+                      <h4 className="font-bold text-slate-900">{a.title}</h4>
+                      <p className="text-xs text-slate-500 mt-0.5">{a.subject} · {a.description}</p>
+                    </div>
                   </div>
-                  <div>
-                    <h4 className="font-bold text-slate-900">{a.title}</h4>
-                    <p className="text-xs text-slate-500 mt-0.5">{a.subject} · {a.description}</p>
+                  <div className="text-right shrink-0">
+                    <p className={`text-xs font-bold uppercase tracking-wider ${isOverdue && !submission ? 'text-rose-600' : 'text-slate-400'}`}>
+                      {isOverdue ? 'Overdue' : 'Due'}
+                    </p>
+                    <p className="text-sm font-medium text-slate-700 mt-0.5">{a.dueDate}</p>
                   </div>
                 </div>
-                <div className="text-right shrink-0">
-                  <p className={`text-xs font-bold uppercase tracking-wider ${isOverdue ? 'text-rose-600' : 'text-slate-400'}`}>
-                    {isOverdue ? 'Overdue' : 'Due'}
-                  </p>
-                  <p className="text-sm font-medium text-slate-700 mt-0.5">{a.dueDate}</p>
+
+                {/* Submission status / action */}
+                <div className="mt-3 pt-3 border-t border-slate-100 flex items-center justify-between gap-3">
+                  {submission ? (
+                    <div className="flex items-center gap-3 flex-wrap">
+                      <span className={`flex items-center gap-1.5 text-xs font-bold px-2.5 py-1 rounded-full border ${
+                        submission.status === 'graded'
+                          ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                          : 'bg-indigo-50 text-indigo-700 border-indigo-200'
+                      }`}>
+                        <CheckCircle2 className="w-3 h-3" />
+                        {submission.status === 'graded' ? 'Graded' : 'Submitted'}
+                      </span>
+                      {submission.grade && (
+                        <span className="text-xs font-bold bg-indigo-600 text-white px-2.5 py-1 rounded-full flex items-center gap-1">
+                          <GraduationCap className="w-3 h-3" /> {submission.grade}
+                        </span>
+                      )}
+                      {submission.feedback && (
+                        <p className="text-xs text-slate-500 italic">"{submission.feedback}"</p>
+                      )}
+                    </div>
+                  ) : (
+                    <p className="text-xs text-slate-400">Not yet submitted</p>
+                  )}
+                  <button
+                    onClick={() => { setSubmittingFor(a); setSubmitForm({ note: '', fileUrl: '' }); }}
+                    className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-indigo-600 bg-indigo-50 border border-indigo-200 rounded-xl hover:bg-indigo-100 transition-colors"
+                  >
+                    <Upload className="w-3.5 h-3.5" />
+                    {submission ? 'Resubmit' : 'Submit'}
+                  </button>
                 </div>
               </div>
             );
           })}
+        </div>
+      )}
+
+      {/* ── SUBMIT ASSIGNMENT MODAL ── */}
+      <AnimatePresence>
+        {submittingFor && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40"
+          >
+            <motion.form
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              onSubmit={handleSubmitAssignment}
+              className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6 space-y-4"
+              onClick={e => e.stopPropagation()}
+            >
+              <div className="flex justify-between items-center">
+                <h3 className="font-bold text-slate-900 text-lg flex items-center gap-2">
+                  <Upload className="w-5 h-5 text-indigo-600" />
+                  Submit Assignment
+                </h3>
+                <button type="button" onClick={() => setSubmittingFor(null)}>
+                  <X className="w-5 h-5 text-slate-400 hover:text-slate-600" />
+                </button>
+              </div>
+              <div className="bg-slate-50 rounded-xl p-3">
+                <p className="text-sm font-bold text-slate-900">{submittingFor.title}</p>
+                <p className="text-xs text-slate-500">{submittingFor.subject} · {submittingFor.class} · Due {submittingFor.dueDate}</p>
+                <p className="text-xs text-indigo-600 mt-1">For: {selectedChild?.studentName}</p>
+              </div>
+              <div>
+                <label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Notes / Answer *</label>
+                <textarea
+                  required
+                  placeholder="Write the answer or add notes about the submission…"
+                  value={submitForm.note}
+                  onChange={e => setSubmitForm({ ...submitForm, note: e.target.value })}
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 text-sm outline-none focus:ring-2 focus:ring-indigo-500 resize-none"
+                  rows={4}
+                />
+              </div>
+              <div>
+                <label className="text-xs font-bold text-slate-500 uppercase mb-1 block">
+                  File Link (optional)
+                </label>
+                <input
+                  type="url"
+                  placeholder="https://drive.google.com/… or similar"
+                  value={submitForm.fileUrl}
+                  onChange={e => setSubmitForm({ ...submitForm, fileUrl: e.target.value })}
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 text-sm outline-none focus:ring-2 focus:ring-indigo-500"
+                />
+                <p className="text-[11px] text-slate-400 mt-1">Paste a Google Drive or photo link if the work is in a file.</p>
+              </div>
+              <div className="flex justify-end gap-3 pt-2">
+                <button type="button" onClick={() => setSubmittingFor(null)}
+                  className="px-4 py-2 text-sm font-bold text-slate-600 bg-slate-100 rounded-xl hover:bg-slate-200 transition-colors">
+                  Cancel
+                </button>
+                <button type="submit" disabled={submitSaving}
+                  className="flex items-center gap-2 px-5 py-2 text-sm font-bold text-white bg-indigo-600 rounded-xl hover:bg-indigo-700 transition-colors disabled:opacity-50">
+                  {submitSaving && <Loader2 className="w-4 h-4 animate-spin" />}
+                  Submit
+                </button>
+              </div>
+            </motion.form>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* ── ABSENCE REQUESTS ── */}
+      {activeTab === 'absences' && (
+        <div className="space-y-6">
+          {/* Submit form */}
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
+            <h3 className="font-bold text-slate-900 mb-4 flex items-center gap-2">
+              <CalendarOff className="w-5 h-5 text-indigo-600" /> Request Planned Absence
+            </h3>
+            <form onSubmit={handleSubmitAbsence} className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Start Date *</label>
+                <input required type="date" value={absenceForm.startDate}
+                  onChange={e => setAbsenceForm({ ...absenceForm, startDate: e.target.value })}
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 text-sm outline-none focus:ring-2 focus:ring-indigo-500" />
+              </div>
+              <div>
+                <label className="text-xs font-bold text-slate-500 uppercase mb-1 block">End Date (if multi-day)</label>
+                <input type="date" value={absenceForm.endDate}
+                  onChange={e => setAbsenceForm({ ...absenceForm, endDate: e.target.value })}
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 text-sm outline-none focus:ring-2 focus:ring-indigo-500" />
+              </div>
+              <div>
+                <label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Type</label>
+                <select value={absenceForm.type}
+                  onChange={e => setAbsenceForm({ ...absenceForm, type: e.target.value as any })}
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 text-sm outline-none focus:ring-2 focus:ring-indigo-500">
+                  <option value="medical">Medical</option>
+                  <option value="holiday">Holiday / Travel</option>
+                  <option value="family">Family Event</option>
+                  <option value="other">Other</option>
+                </select>
+              </div>
+              <div>
+                <label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Reason *</label>
+                <input required placeholder="Brief reason for absence" value={absenceForm.reason}
+                  onChange={e => setAbsenceForm({ ...absenceForm, reason: e.target.value })}
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 text-sm outline-none focus:ring-2 focus:ring-indigo-500" />
+              </div>
+              <div className="sm:col-span-2 flex justify-end">
+                <button type="submit" disabled={absenceSaving}
+                  className="flex items-center gap-2 px-5 py-2.5 text-sm font-bold text-white bg-indigo-600 rounded-xl hover:bg-indigo-700 disabled:opacity-50 transition-colors">
+                  {absenceSaving && <Loader2 className="w-4 h-4 animate-spin" />}
+                  Submit Request
+                </button>
+              </div>
+            </form>
+          </div>
+
+          {/* Past requests */}
+          <div>
+            <h3 className="font-bold text-slate-900 mb-3">Past Requests ({myAbsenceRequests.length})</h3>
+            {myAbsenceRequests.length === 0 ? (
+              <div className="text-center py-10 bg-slate-50 rounded-2xl border border-slate-100">
+                <CalendarOff className="w-10 h-10 text-slate-200 mx-auto mb-2" />
+                <p className="text-sm text-slate-500">No absence requests submitted yet.</p>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {myAbsenceRequests.map((req: any) => (
+                  <div key={req.id} className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4 flex items-start gap-3">
+                    <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${
+                      req.status === 'approved' ? 'bg-emerald-50' :
+                      req.status === 'rejected' ? 'bg-rose-50' : 'bg-amber-50'
+                    }`}>
+                      {req.status === 'approved'
+                        ? <CheckCircle2 className="w-5 h-5 text-emerald-600" />
+                        : req.status === 'rejected'
+                        ? <X className="w-5 h-5 text-rose-600" />
+                        : <Clock className="w-5 h-5 text-amber-600" />}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <p className="font-bold text-slate-900 text-sm">{req.startDate}{req.endDate && req.endDate !== req.startDate ? ` → ${req.endDate}` : ''}</p>
+                        <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full border ${
+                          req.status === 'approved' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' :
+                          req.status === 'rejected' ? 'bg-rose-50 text-rose-700 border-rose-200' :
+                          'bg-amber-50 text-amber-700 border-amber-200'
+                        }`}>{req.status}</span>
+                      </div>
+                      <p className="text-xs text-slate-500 mt-0.5 capitalize">{req.type} · {req.reason}</p>
+                      {req.reviewNote && <p className="text-xs text-slate-400 mt-0.5 italic">"{req.reviewNote}"</p>}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
       )}
 

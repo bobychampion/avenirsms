@@ -23,7 +23,7 @@ import {
   UserCheck, Calendar, Bell, ArrowUpRight, Key, FileSpreadsheet, MessageSquare,
   Database, TrendingDown, Activity, Star, Layers, Target, RefreshCw,
   Shield, Wallet, ReceiptText, UserCog, CalendarDays, BookMarked,
-  MapPin, Radio, Minus,
+  MapPin, Radio, Minus, Trash2,
 } from 'lucide-react';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
@@ -96,7 +96,18 @@ const moduleGroups = [
       { to: '/admin/bulk-staff-import', label: 'Staff Import', icon: Users, color: 'bg-cyan-600' },
       { to: '/admin/users', label: 'User Mgmt', icon: Settings, color: 'bg-pink-500' },
       { to: '/admin/settings', label: 'School Settings', icon: Shield, color: 'bg-slate-600' },
+      { to: '/admin/data-reset', label: 'Data Reset', icon: Trash2, color: 'bg-red-600' },
       { to: '/admin/seed', label: 'Seed Data', icon: Database, color: 'bg-violet-600' },
+    ],
+  },
+  {
+    label: 'Operations',
+    color: 'border-rose-200 bg-rose-50',
+    labelColor: 'text-rose-700',
+    items: [
+      { to: '/admin/cover', label: 'Cover Manager', icon: UserCog, color: 'bg-indigo-600' },
+      { to: '/admin/trips', label: 'Trip Register', icon: MapPin, color: 'bg-cyan-600' },
+      { to: '/admin/absences', label: 'Absence Requests', icon: CalendarDays, color: 'bg-rose-500' },
     ],
   },
 ];

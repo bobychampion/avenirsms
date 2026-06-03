@@ -211,13 +211,16 @@ export default function UserManagement() {
   };
 
   const filteredUsers = users.filter(u =>
+    u.role !== 'student' && // Exclude student accounts
     (u.displayName?.toLowerCase().includes(searchTerm.toLowerCase()) ||
      u.email.toLowerCase().includes(searchTerm.toLowerCase())) &&
     (filterRole === 'all' || u.role === filterRole)
   );
 
   const roleCounts = users.reduce((acc, u) => {
-    acc[u.role] = (acc[u.role] || 0) + 1;
+    if (u.role !== 'student') { // Exclude student accounts from counts
+      acc[u.role] = (acc[u.role] || 0) + 1;
+    }
     return acc;
   }, {} as Record<string, number>);
 
@@ -238,7 +241,7 @@ export default function UserManagement() {
       {/* Role summary cards */}
       <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-8">
         {[
-          { role: 'all', label: 'All Users', count: users.length },
+          { role: 'all', label: 'All Users', count: users.filter(u => u.role !== 'student').length },
           { role: 'admin', label: 'Admins', count: roleCounts['admin'] || 0 },
           { role: 'teacher', label: 'Teachers', count: roleCounts['teacher'] || 0 },
           { role: 'parent', label: 'Parents', count: roleCounts['parent'] || 0 },
@@ -274,7 +277,7 @@ export default function UserManagement() {
             <option value="applicant">Applicant</option>
           </select>
         </div>
-        <p className="text-sm text-slate-400 ml-auto font-medium">{filteredUsers.length} / {users.length} users</p>
+        <p className="text-sm text-slate-400 ml-auto font-medium">{filteredUsers.length} / {users.filter(u => u.role !== 'student').length} users</p>
       </div>
 
       {/* Staff without login accounts */}

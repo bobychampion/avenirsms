@@ -13,6 +13,7 @@ import AdminDashboard from './pages/AdminDashboard';
 import ApplicationDetail from './pages/ApplicationDetail';
 import StudentList from './pages/StudentList';
 import StudentProfile from './pages/StudentProfile';
+import StudentLifecycle from './pages/StudentLifecycle';
 import TeacherPortal from './pages/TeacherPortal';
 import ParentPortal from './pages/ParentPortal';
 import SchoolCalendar from './pages/SchoolCalendar';
@@ -37,6 +38,8 @@ import PinManagement from './pages/PinManagement';
 import NotificationsManagement from './pages/NotificationsManagement';
 import BulkStudentImport from './pages/BulkStudentImport';
 import BulkStaffImport from './pages/BulkStaffImport';
+import IntegrationSettings from './pages/IntegrationSettings';
+import GoogleOAuthCallback from './pages/GoogleOAuthCallback';
 import WhatsAppNotifications from './pages/WhatsAppNotifications';
 import SeedData from './pages/SeedData';
 import OnboardingTutorial from './pages/OnboardingTutorial';
@@ -45,20 +48,22 @@ import AdminMobileDashboard from './pages/mobile/AdminMobileDashboard';
 import TeacherMobileAttendance from './pages/mobile/TeacherMobileAttendance';
 import ParentMobileHome from './pages/mobile/ParentMobileHome';
 import { Layout } from './components/Layout';
-import { StudentLayout } from './components/StudentLayout';
 import { StaffLayout } from './components/StaffLayout';
 import AccountantPortal from './pages/AccountantPortal';
 import HrPortal from './pages/HrPortal';
 import LibraryPortal from './pages/LibraryPortal';
 import RolesPermissions from './pages/RolesPermissions';
 import ParentList from './pages/ParentList';
-import {
-  StudentToday,
-  StudentAssignments,
-  StudentGrades,
-  StudentMessages,
-  StudentProfile as StudentPortalProfile,
-} from './pages/StudentPortal';
+import SchoolDataReset from './pages/SchoolDataReset';
+import HrLeave from './pages/hr/HrLeave';
+import HrOnboarding from './pages/hr/HrOnboarding';
+import HrPolicies from './pages/hr/HrPolicies';
+import LibraryCatalog from './pages/library/LibraryCatalog';
+import LibraryCirculation from './pages/library/LibraryCirculation';
+import LibraryFines from './pages/library/LibraryFines';
+import CoverManager from './pages/CoverManager';
+import TripRegister from './pages/TripRegister';
+import AbsenceRequests from './pages/AbsenceRequests';
 
 // Super Admin pages — lazy-loaded (only needed by super_admin users)
 const SuperAdminDashboard = lazy(() => import('./pages/super-admin/SuperAdminDashboard'));
@@ -85,7 +90,6 @@ type GuardRole =
   | 'admin'
   | 'School_admin'
   | 'applicant'
-  | 'student'
   | 'teacher'
   | 'parent'
   | 'super_admin'
@@ -243,6 +247,7 @@ function AppContent() {
           <Route path="/admin/admissions" element={<Layout><ProtectedRoute role="admin"><AdmissionsManagement /></ProtectedRoute></Layout>} />
           <Route path="/admin/students" element={<Layout><ProtectedRoute role="admin"><StudentList /></ProtectedRoute></Layout>} />
           <Route path="/admin/students/:id" element={<Layout><ProtectedRoute role="admin"><StudentProfile /></ProtectedRoute></Layout>} />
+          <Route path="/admin/students/:id/lifecycle" element={<Layout><ProtectedRoute role="admin"><StudentLifecycle /></ProtectedRoute></Layout>} />
           <Route path="/admin/gradebook" element={<Layout><ProtectedRoute role="admin"><Gradebook /></ProtectedRoute></Layout>} />
           <Route path="/admin/report-cards" element={<Layout><ProtectedRoute role="admin"><ReportCards /></ProtectedRoute></Layout>} />
           <Route path="/admin/users" element={<Layout><ProtectedRoute role="admin"><UserManagement /></ProtectedRoute></Layout>} />
@@ -261,12 +266,18 @@ function AppContent() {
           <Route path="/admin/promotion" element={<Layout><ProtectedRoute role="admin"><StudentPromotion /></ProtectedRoute></Layout>} />
           <Route path="/admin/pins" element={<Layout><ProtectedRoute role="admin"><PinManagement /></ProtectedRoute></Layout>} />
           <Route path="/admin/settings" element={<Layout><ProtectedRoute role="admin"><SchoolSettingsPage /></ProtectedRoute></Layout>} />
+          <Route path="/admin/data-reset" element={<Layout><ProtectedRoute role="admin"><SchoolDataReset /></ProtectedRoute></Layout>} />
+          <Route path="/admin/integrations/google" element={<Layout><ProtectedRoute role="admin"><IntegrationSettings /></ProtectedRoute></Layout>} />
+          <Route path="/auth/google/callback" element={<ProtectedRoute role="admin"><GoogleOAuthCallback /></ProtectedRoute>} />
           <Route path="/admin/notifications" element={<Layout><ProtectedRoute role="admin"><NotificationsManagement /></ProtectedRoute></Layout>} />
           <Route path="/admin/bulk-import" element={<Layout><ProtectedRoute role="admin"><BulkStudentImport /></ProtectedRoute></Layout>} />
           <Route path="/admin/bulk-staff-import" element={<Layout><ProtectedRoute role="admin"><BulkStaffImport /></ProtectedRoute></Layout>} />
           <Route path="/admin/whatsapp" element={<Layout><ProtectedRoute role="admin"><WhatsAppNotifications /></ProtectedRoute></Layout>} />
           <Route path="/admin/seed" element={<Layout><ProtectedRoute superAdminOnly><SeedData /></ProtectedRoute></Layout>} />
           <Route path="/admin/migrate" element={<Layout><ProtectedRoute superAdminOnly><DataMigration /></ProtectedRoute></Layout>} />
+          <Route path="/admin/cover" element={<Layout><ProtectedRoute role="admin"><CoverManager /></ProtectedRoute></Layout>} />
+          <Route path="/admin/trips" element={<Layout><ProtectedRoute role="admin"><TripRegister /></ProtectedRoute></Layout>} />
+          <Route path="/admin/absences" element={<Layout><ProtectedRoute role="admin"><AbsenceRequests /></ProtectedRoute></Layout>} />
 
           {/* Onboarding Tutorial — accessible to admin, teacher, parent */}
           <Route path="/onboarding" element={<Layout><ProtectedRoute><OnboardingTutorial /></ProtectedRoute></Layout>} />
@@ -275,21 +286,24 @@ function AppContent() {
           <Route path="/teacher" element={<Layout><ProtectedRoute role="teacher"><TeacherPortal /></ProtectedRoute></Layout>} />
           <Route path="/parent" element={<Layout><ProtectedRoute role="parent"><ParentPortal /></ProtectedRoute></Layout>} />
 
-          {/* Student portal — kid-friendly StudentLayout (no sidebar) */}
-          <Route path="/student" element={<ProtectedRoute role="student"><StudentLayout><StudentToday /></StudentLayout></ProtectedRoute>} />
-          <Route path="/student/assignments" element={<ProtectedRoute role="student"><StudentLayout><StudentAssignments /></StudentLayout></ProtectedRoute>} />
-          <Route path="/student/grades" element={<ProtectedRoute role="student"><StudentLayout><StudentGrades /></StudentLayout></ProtectedRoute>} />
-          <Route path="/student/messages" element={<ProtectedRoute role="student"><StudentLayout><StudentMessages /></StudentLayout></ProtectedRoute>} />
-          <Route path="/student/profile" element={<ProtectedRoute role="student"><StudentLayout><StudentPortalProfile /></StudentLayout></ProtectedRoute>} />
+          {/* Student portal removed — redirect to home */}
+          <Route path="/student/*" element={<Navigate to="/home" replace />} />
 
           {/* Accountant portal — dedicated landing + reuses /admin/finance pages */}
           <Route path="/accountant" element={<ProtectedRoute role="accountant"><StaffLayout role="accountant"><AccountantPortal /></StaffLayout></ProtectedRoute>} />
 
-          {/* HR portal */}
+          {/* HR portal + sub-pages */}
           <Route path="/hr" element={<ProtectedRoute roles={["hr", "admin", "School_admin"]}><StaffLayout role="hr"><HrPortal /></StaffLayout></ProtectedRoute>} />
+          <Route path="/hr/staff" element={<Layout><ProtectedRoute roles={["hr", "admin", "School_admin"]}><StaffManagement /></ProtectedRoute></Layout>} />
+          <Route path="/hr/leave" element={<ProtectedRoute roles={["hr", "admin", "School_admin"]}><StaffLayout role="hr"><HrLeave /></StaffLayout></ProtectedRoute>} />
+          <Route path="/hr/onboarding" element={<ProtectedRoute roles={["hr", "admin", "School_admin"]}><StaffLayout role="hr"><HrOnboarding /></StaffLayout></ProtectedRoute>} />
+          <Route path="/hr/policies" element={<ProtectedRoute roles={["hr", "admin", "School_admin"]}><StaffLayout role="hr"><HrPolicies /></StaffLayout></ProtectedRoute>} />
 
-          {/* Librarian portal */}
+          {/* Librarian portal + sub-pages */}
           <Route path="/library" element={<ProtectedRoute roles={["librarian", "admin", "School_admin"]}><StaffLayout role="librarian"><LibraryPortal /></StaffLayout></ProtectedRoute>} />
+          <Route path="/library/catalog" element={<ProtectedRoute roles={["librarian", "admin", "School_admin"]}><StaffLayout role="librarian"><LibraryCatalog /></StaffLayout></ProtectedRoute>} />
+          <Route path="/library/circulation" element={<ProtectedRoute roles={["librarian", "admin", "School_admin"]}><StaffLayout role="librarian"><LibraryCirculation /></StaffLayout></ProtectedRoute>} />
+          <Route path="/library/fines" element={<ProtectedRoute roles={["librarian", "admin", "School_admin"]}><StaffLayout role="librarian"><LibraryFines /></StaffLayout></ProtectedRoute>} />
 
           {/* Calendar (all roles) */}
           <Route path="/calendar" element={<Layout><ProtectedRoute><SchoolCalendar /></ProtectedRoute></Layout>} />

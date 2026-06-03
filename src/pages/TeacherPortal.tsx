@@ -6,7 +6,7 @@ import {
   collection, query, onSnapshot, where, addDoc, serverTimestamp,
   orderBy, updateDoc, doc, deleteDoc, getDocs, writeBatch, setDoc, getDoc,
 } from 'firebase/firestore';
-import { Student, Assignment, Message, SUBJECTS, TERMS, Grade, calculateGrade, StudentSkills, SKILL_LABELS, SkillRating, StudentSkillRecord, Timetable, DAYS_OF_WEEK, GeoFence, TeacherCheckIn, CurriculumDocument, ClassSubject, SchoolClass } from '../types';
+import { Student, Assignment, AssignmentSubmission, Message, SUBJECTS, TERMS, Grade, calculateGrade, StudentSkills, SKILL_LABELS, SkillRating, StudentSkillRecord, Timetable, DAYS_OF_WEEK, GeoFence, TeacherCheckIn, CurriculumDocument, ClassSubject, SchoolClass } from '../types';
 import { getCurrentPosition, isWithinFence, isAccuracyAcceptable, isSpoofedVelocity } from '../services/geofenceService';
 import { batchUpsertAttendance } from '../services/firestoreService';
 import { generateLessonNotes, generateExamQuestions, generateQuestionsFromCurriculum } from '../services/geminiService';
@@ -21,6 +21,7 @@ import {
   Edit2, Trash2, X, AlertCircle, ClipboardList, CheckSquare,
   Sparkles, FileText, Copy, ChevronDown, Star, Award,
   MapPin, Navigation, LogIn, LogOut, ShieldAlert, Lock,
+  ChevronRight, Inbox, GraduationCap,
 } from 'lucide-react';
 
 type TabType = 'students' | 'attendance' | 'assignments' | 'grades' | 'skills' | 'messages' | 'ai_tools' | 'timetable';
@@ -75,6 +76,13 @@ export default function TeacherPortal() {
   const [assignmentSearch, setAssignmentSearch] = useState('');
   const [editingAssignment, setEditingAssignment] = useState<Assignment | null>(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState<string | null>(null);
+
+  // Submission viewer state
+  const [viewingSubmissions, setViewingSubmissions] = useState<Assignment | null>(null);
+  const [submissions, setSubmissions] = useState<AssignmentSubmission[]>([]);
+  const [gradingSubmission, setGradingSubmission] = useState<AssignmentSubmission | null>(null);
+  const [gradeForm, setGradeForm] = useState({ grade: '', feedback: '' });
+  const [savingGrade, setSavingGrade] = useState(false);
 
   // Attendance state
   const [attendanceDate, setAttendanceDate] = useState(new Date().toISOString().split('T')[0]);
@@ -265,6 +273,23 @@ export default function TeacherPortal() {
       unsubTimetables(); unsubFence(); unsubCheckins();
     };
   }, [user, selectedClass, profile?.displayName, schoolId]);
+
+  // Load submissions for the currently-viewed assignment
+  useEffect(() => {
+    if (!viewingSubmissions?.id || !schoolId) {
+      setSubmissions([]);
+      return;
+    }
+    const q = query(
+      collection(db, 'assignment_submissions'),
+      where('schoolId', '==', schoolId),
+      where('assignmentId', '==', viewingSubmissions.id),
+    );
+    const unsub = onSnapshot(q, snap => {
+      setSubmissions(snap.docs.map(d => ({ id: d.id, ...d.data() } as AssignmentSubmission)));
+    });
+    return unsub;
+  }, [viewingSubmissions?.id, schoolId]);
 
   // Load curriculum documents for AI context injection
   useEffect(() => {
@@ -608,6 +633,28 @@ export default function TeacherPortal() {
   const handleDeleteAssignment = async (id: string) => {
     await deleteDoc(doc(db, 'assignments', id));
     setShowDeleteConfirm(null);
+  };
+
+  const handleGradeSubmission = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!gradingSubmission?.id) return;
+    setSavingGrade(true);
+    try {
+      await updateDoc(doc(db, 'assignment_submissions', gradingSubmission.id), {
+        grade: gradeForm.grade,
+        feedback: gradeForm.feedback,
+        status: 'graded',
+        gradedAt: serverTimestamp(),
+        gradedBy: profile?.displayName || user?.email,
+      });
+      toast.success('Submission graded.');
+      setGradingSubmission(null);
+      setGradeForm({ grade: '', feedback: '' });
+    } catch {
+      toast.error('Failed to save grade.');
+    } finally {
+      setSavingGrade(false);
+    }
   };
 
   const filteredAssignments = assignments.filter(a =>
@@ -1380,24 +1427,37 @@ export default function TeacherPortal() {
             <AnimatePresence mode="popLayout">
               {filteredAssignments.map(a => (
                 <motion.div key={a.id} layout initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, scale: 0.95 }}
-                  className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex justify-between items-start gap-4">
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 mb-1 flex-wrap">
-                      <h4 className="font-bold text-slate-900">{a.title}</h4>
-                      <span className="px-2 py-0.5 bg-indigo-50 text-indigo-600 text-[10px] font-bold rounded-full">{a.subject}</span>
+                  className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
+                  <div className="flex justify-between items-start gap-4">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 mb-1 flex-wrap">
+                        <h4 className="font-bold text-slate-900">{a.title}</h4>
+                        <span className="px-2 py-0.5 bg-indigo-50 text-indigo-600 text-[10px] font-bold rounded-full">{a.subject}</span>
+                      </div>
+                      <p className="text-xs text-slate-500 line-clamp-1 mb-2">{a.description}</p>
+                      <div className="flex items-center text-[10px] font-bold text-slate-400 uppercase gap-3">
+                        <span className="flex items-center gap-1"><Users className="w-3 h-3" />{a.class}</span>
+                        <span className="flex items-center gap-1"><Calendar className="w-3 h-3" />Due: {a.dueDate}</span>
+                      </div>
                     </div>
-                    <p className="text-xs text-slate-500 line-clamp-1 mb-2">{a.description}</p>
-                    <div className="flex items-center text-[10px] font-bold text-slate-400 uppercase gap-3">
-                      <span className="flex items-center gap-1"><Users className="w-3 h-3" />{a.class}</span>
-                      <span className="flex items-center gap-1"><Calendar className="w-3 h-3" />Due: {a.dueDate}</span>
+                    <div className="flex gap-1">
+                      <button onClick={() => { setEditingAssignment(a); setNewAssignment({ title: a.title, description: a.description, subject: a.subject, class: a.class, dueDate: a.dueDate }); window.scrollTo({ top: 0, behavior: 'smooth' }); }}
+                        className="p-2 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-all"><Edit2 className="w-4 h-4" /></button>
+                      <button onClick={() => setShowDeleteConfirm(a.id!)}
+                        className="p-2 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-all"><Trash2 className="w-4 h-4" /></button>
                     </div>
                   </div>
-                  <div className="flex gap-1">
-                    <button onClick={() => { setEditingAssignment(a); setNewAssignment({ title: a.title, description: a.description, subject: a.subject, class: a.class, dueDate: a.dueDate }); window.scrollTo({ top: 0, behavior: 'smooth' }); }}
-                      className="p-2 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-all"><Edit2 className="w-4 h-4" /></button>
-                    <button onClick={() => setShowDeleteConfirm(a.id!)}
-                      className="p-2 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-all"><Trash2 className="w-4 h-4" /></button>
-                  </div>
+                  <button
+                    onClick={() => setViewingSubmissions(viewingSubmissions?.id === a.id ? null : a)}
+                    className="mt-3 flex items-center gap-2 px-3 py-1.5 text-xs font-bold text-indigo-600 bg-indigo-50 rounded-xl hover:bg-indigo-100 transition-colors border border-indigo-200"
+                  >
+                    <Inbox className="w-3.5 h-3.5" />
+                    View Submissions
+                    {a.submissionCount != null && a.submissionCount > 0 && (
+                      <span className="ml-1 bg-indigo-600 text-white rounded-full px-1.5 py-0.5 text-[10px]">{a.submissionCount}</span>
+                    )}
+                    <ChevronRight className={`w-3.5 h-3.5 ml-auto transition-transform ${viewingSubmissions?.id === a.id ? 'rotate-90' : ''}`} />
+                  </button>
                 </motion.div>
               ))}
             </AnimatePresence>
@@ -1407,6 +1467,148 @@ export default function TeacherPortal() {
                 <p className="text-slate-500 font-medium">No assignments found.</p>
               </div>
             )}
+
+            {/* ── SUBMISSION PANEL ── */}
+            <AnimatePresence>
+              {viewingSubmissions && (
+                <motion.div
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: 10 }}
+                  className="bg-indigo-50 border border-indigo-200 rounded-2xl p-5"
+                >
+                  <div className="flex items-center justify-between mb-4">
+                    <h4 className="font-bold text-slate-900 flex items-center gap-2">
+                      <Inbox className="w-4 h-4 text-indigo-600" />
+                      Submissions for "{viewingSubmissions.title}"
+                      <span className="text-xs font-medium text-indigo-600">({submissions.length})</span>
+                    </h4>
+                    <button onClick={() => setViewingSubmissions(null)}>
+                      <X className="w-4 h-4 text-slate-400 hover:text-slate-600" />
+                    </button>
+                  </div>
+
+                  {submissions.length === 0 ? (
+                    <div className="text-center py-8 bg-white rounded-xl border border-dashed border-indigo-200">
+                      <Inbox className="w-8 h-8 text-slate-300 mx-auto mb-2" />
+                      <p className="text-sm text-slate-500">No submissions yet.</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      {submissions.map(sub => (
+                        <div key={sub.id} className="bg-white rounded-xl border border-slate-200 p-4">
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <p className="font-bold text-slate-900 text-sm">{sub.studentName}</p>
+                                <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full border ${
+                                  sub.status === 'graded'
+                                    ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                    : 'bg-amber-50 text-amber-700 border-amber-200'
+                                }`}>
+                                  {sub.status}
+                                </span>
+                                {sub.grade && (
+                                  <span className="text-[10px] font-bold bg-indigo-600 text-white px-2 py-0.5 rounded-full">
+                                    {sub.grade}
+                                  </span>
+                                )}
+                              </div>
+                              <p className="text-xs text-slate-500 mt-0.5">
+                                Submitted by {sub.submitterName}
+                              </p>
+                              {sub.note && <p className="text-sm text-slate-700 mt-2">{sub.note}</p>}
+                              {sub.fileUrl && (
+                                <a href={sub.fileUrl} target="_blank" rel="noopener noreferrer"
+                                  className="inline-flex items-center gap-1 text-xs text-indigo-600 hover:underline mt-1">
+                                  <ChevronRight className="w-3 h-3" /> View attached file
+                                </a>
+                              )}
+                              {sub.feedback && (
+                                <p className="text-xs text-slate-500 mt-2 italic">Feedback: {sub.feedback}</p>
+                              )}
+                            </div>
+                            <button
+                              onClick={() => { setGradingSubmission(sub); setGradeForm({ grade: sub.grade ?? '', feedback: sub.feedback ?? '' }); }}
+                              className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-indigo-600 bg-indigo-50 border border-indigo-200 rounded-xl hover:bg-indigo-100 transition-colors"
+                            >
+                              <GraduationCap className="w-3.5 h-3.5" />
+                              {sub.status === 'graded' ? 'Re-grade' : 'Grade'}
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </motion.div>
+              )}
+            </AnimatePresence>
+
+            {/* ── GRADE SUBMISSION MODAL ── */}
+            <AnimatePresence>
+              {gradingSubmission && (
+                <motion.div
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40"
+                >
+                  <motion.form
+                    initial={{ scale: 0.95, opacity: 0 }}
+                    animate={{ scale: 1, opacity: 1 }}
+                    exit={{ scale: 0.95, opacity: 0 }}
+                    onSubmit={handleGradeSubmission}
+                    className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6 space-y-4"
+                    onClick={e => e.stopPropagation()}
+                  >
+                    <div className="flex justify-between items-center">
+                      <h3 className="font-bold text-slate-900 flex items-center gap-2">
+                        <GraduationCap className="w-5 h-5 text-indigo-600" />
+                        Grade Submission
+                      </h3>
+                      <button type="button" onClick={() => setGradingSubmission(null)}>
+                        <X className="w-4 h-4 text-slate-400 hover:text-slate-600" />
+                      </button>
+                    </div>
+                    <div className="bg-slate-50 rounded-xl p-3">
+                      <p className="text-sm font-bold text-slate-900">{gradingSubmission.studentName}</p>
+                      <p className="text-xs text-slate-500">{gradingSubmission.note || '(No note provided)'}</p>
+                    </div>
+                    <div>
+                      <label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Grade *</label>
+                      <input
+                        required
+                        placeholder="e.g. A, 85%, Excellent"
+                        value={gradeForm.grade}
+                        onChange={e => setGradeForm({ ...gradeForm, grade: e.target.value })}
+                        className="w-full px-3 py-2 rounded-xl border border-slate-200 text-sm outline-none focus:ring-2 focus:ring-indigo-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Feedback (optional)</label>
+                      <textarea
+                        placeholder="Leave feedback for the student…"
+                        value={gradeForm.feedback}
+                        onChange={e => setGradeForm({ ...gradeForm, feedback: e.target.value })}
+                        className="w-full px-3 py-2 rounded-xl border border-slate-200 text-sm outline-none focus:ring-2 focus:ring-indigo-500 resize-none"
+                        rows={3}
+                      />
+                    </div>
+                    <div className="flex justify-end gap-3">
+                      <button type="button" onClick={() => setGradingSubmission(null)}
+                        className="px-4 py-2 text-sm font-bold text-slate-600 bg-slate-100 rounded-xl hover:bg-slate-200 transition-colors">
+                        Cancel
+                      </button>
+                      <button type="submit" disabled={savingGrade}
+                        className="flex items-center gap-2 px-5 py-2 text-sm font-bold text-white bg-indigo-600 rounded-xl hover:bg-indigo-700 transition-colors disabled:opacity-50">
+                        {savingGrade && <Loader2 className="w-4 h-4 animate-spin" />}
+                        Save Grade
+                      </button>
+                    </div>
+                  </motion.form>
+                </motion.div>
+              )}
+            </AnimatePresence>
           </div>
         </div>
       )}

@@ -7,7 +7,6 @@ export function getPostAuthHomePath(isAdmin: boolean, profile: UserProfile | nul
   if (isAdmin) return '/admin';
   if (role === 'teacher') return '/teacher';
   if (role === 'parent') return '/parent';
-  if (role === 'student') return '/student';
   if (role === 'accountant') return '/accountant';
   if (role === 'hr') return '/hr';
   if (role === 'librarian') return '/library';

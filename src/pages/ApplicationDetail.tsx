@@ -13,7 +13,6 @@ import { generateStudentId } from '../services/firestoreService';
 import { stripUndefined } from '../utils/firestoreSanitize';
 import { assertNotSuperAdminEmail } from '../utils/superAdminGuard';
 import { useSchoolSettings } from './SchoolSettings';
-import { buildStudentLoginEmail, generateStudentTempPassword, upsertStudentLoginIndex } from '../utils/studentAccount';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   ArrowLeft, CheckCircle, XCircle, Clock, ShieldCheck,
@@ -24,6 +23,7 @@ import {
 import { differenceInYears, parseISO } from 'date-fns';
 import { StatusBadge } from './AdminDashboard';
 import { useSchool } from '../components/SchoolContext';
+import toast from 'react-hot-toast';
 
 // ─── Guardian panel ───────────────────────────────────────────────────────────
 
@@ -36,8 +36,6 @@ interface AdmissionResult {
   className: string;
   parentEmail?: string;
   parentPassword?: string;
-  studentLogin?: string;
-  studentPassword?: string;
 }
 
 function CopyBtn({ value, label }: { value: string; label?: string }) {
@@ -72,9 +70,6 @@ function AdmissionSuccessModal({ result, onClose }: { result: AdmissionResult; o
     ];
     if (result.parentEmail) {
       lines.push('', 'Parent Portal Login', `  Email    : ${result.parentEmail}`, `  Password : ${result.parentPassword}`);
-    }
-    if (result.studentLogin) {
-      lines.push('', 'Student Portal Login', `  Login    : ${result.studentLogin}`, `  Password : ${result.studentPassword}`);
     }
     lines.push('', 'Please log in and change the temporary password on first sign-in.');
     return lines.join('\n');
@@ -154,31 +149,6 @@ function AdmissionSuccessModal({ result, onClose }: { result: AdmissionResult; o
                     <p className="text-sm font-mono text-slate-900 select-all">{result.parentPassword}</p>
                   </div>
                   <CopyBtn value={result.parentPassword!} />
-                </div>
-              </div>
-            </div>
-          )}
-
-          {result.studentLogin && (
-            <div className="border border-violet-100 rounded-2xl overflow-hidden">
-              <div className="bg-violet-50 px-4 py-2 flex items-center gap-2">
-                <GraduationCap className="w-4 h-4 text-violet-600" />
-                <span className="text-xs font-bold text-violet-700 uppercase tracking-wider">Student Portal Account</span>
-              </div>
-              <div className="divide-y divide-slate-100">
-                <div className="flex items-center justify-between px-4 py-3">
-                  <div>
-                    <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-0.5">Login</p>
-                    <p className="text-sm font-mono text-slate-900 select-all">{result.studentLogin}</p>
-                  </div>
-                  <CopyBtn value={result.studentLogin} />
-                </div>
-                <div className="flex items-center justify-between px-4 py-3">
-                  <div>
-                    <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-0.5">Temporary Password</p>
-                    <p className="text-sm font-mono text-slate-900 select-all">{result.studentPassword}</p>
-                  </div>
-                  <CopyBtn value={result.studentPassword!} />
                 </div>
               </div>
             </div>
@@ -402,7 +372,6 @@ export default function ApplicationDetail() {
   const [parentUsers, setParentUsers] = useState<{ uid: string; displayName: string; email: string }[]>([]);
   const [linkExistingParent, setLinkExistingParent] = useState(false);
   const [linkedUserId, setLinkedUserId] = useState('');
-  const [enrolledLoginEmail, setEnrolledLoginEmail] = useState<string | null>(null);
 
   useEffect(() => {
     if (!id) return;
@@ -439,7 +408,6 @@ export default function ApplicationDetail() {
     getDocs(query(collection(db, 'students'), where('applicationId', '==', id))).then(snap => {
       if (!snap.empty) {
         const s = snap.docs[0].data() as Student;
-        if (s.loginEmail) setEnrolledLoginEmail(s.loginEmail);
         setGuardianForm(prev => ({
           ...prev,
           g1Name: s.guardianName || '',
@@ -642,7 +610,9 @@ export default function ApplicationDetail() {
           // ── Applicant → Student role upgrade ──────────────────────────
           // If the applicant registered their own account via /apply, promote
           // them from 'applicant' to 'student' and link to the student record.
-          let existingStudentAccount = false;
+          // Note: Student login functionality has been removed. This upgrade
+          // is preserved for legacy applicant accounts but no new student
+          // authentication accounts are created.
           if (application.applicantUid && application.applicantUid !== 'admin') {
             try {
               const applicantUserSnap = await getDoc(doc(db, 'users', application.applicantUid));
@@ -655,77 +625,27 @@ export default function ApplicationDetail() {
                     linkedStudentIds: arrayUnion(studentRef.id),
                     schoolId: application.schoolId ?? schoolId ?? undefined,
                   });
-                  existingStudentAccount = true;
                 } else if (applicantRole === 'student') {
                   // Already a student (re-approval or duplicate) — just link
                   batch.update(doc(db, 'users', application.applicantUid), {
                     linkedStudentIds: arrayUnion(studentRef.id),
                   });
-                  existingStudentAccount = true;
                 }
                 // Any other role (parent, teacher, etc.) applied via the form —
-                // do NOT count as an existing student account. A fresh synthetic
-                // login will be provisioned for the child instead.
+                // do NOT count as an existing student account.
               }
             } catch (upgradeErr) {
               console.warn('Applicant role upgrade skipped:', upgradeErr);
             }
           }
 
-          // ── Synthetic student login provisioning ─────────────────────
-          // Always provision a school-issued login for every new student.
-          // Students sign in with Student ID + password — the synthetic email
-          // is internal only and never shown to the student.
-          let studentSyntheticEmail: string | undefined;
-          let studentTempPassword: string | undefined;
-          if (!existingStudentAccount) {
-            studentSyntheticEmail = buildStudentLoginEmail(studentId, schoolSettings);
-            studentTempPassword = generateStudentTempPassword(studentId);
-            try {
-              const secondaryApp = getApps().find(a => a.name === 'student-creator')
-                || initializeApp(firebaseConfig as any, 'student-creator');
-              const studentAuth = getAuth(secondaryApp);
-              const cred = await createUserWithEmailAndPassword(
-                studentAuth, studentSyntheticEmail, studentTempPassword
-              );
-              batch.set(doc(db, 'users', cred.user.uid), stripUndefined({
-                uid: cred.user.uid,
-                email: studentSyntheticEmail,
-                role: 'student',
-                displayName: application.applicantName,
-                schoolId: application.schoolId ?? schoolId ?? undefined,
-                linkedStudentIds: [studentRef.id],
-                mustChangePassword: true,
-                syntheticLogin: true,
-                createdAt: serverTimestamp(),
-              }) as Record<string, unknown>);
-              batch.update(studentRef, { loginEmail: studentSyntheticEmail });
-              await firebaseSignOut(studentAuth);
-            } catch (studentAuthErr: any) {
-              console.error('Student Auth provisioning failed:', studentAuthErr);
-              alert(
-                `⚠ Student portal account could not be created ` +
-                `(${studentAuthErr.message || studentAuthErr.code}). ` +
-                `Student is still enrolled; use "Set Password" in the Student Directory to fix this.`
-              );
-              studentSyntheticEmail = undefined;
-              studentTempPassword = undefined;
-            }
-          }
-
           await batch.commit();
-          // Write student_logins index AFTER batch so schoolId is available
-          if (studentSyntheticEmail && (application.schoolId ?? schoolId)) {
-            await upsertStudentLoginIndex(db, application.schoolId ?? schoolId!, studentId, studentSyntheticEmail).catch(console.warn);
-          }
 
           setAdmissionResult({
             studentId,
             className: assignedClass,
             parentEmail: (parentNewlyCreated && tempPassword) ? normalizedEmail : undefined,
             parentPassword: (parentNewlyCreated && tempPassword) ? tempPassword : undefined,
-            studentLogin: studentSyntheticEmail,
-            studentPassword: studentTempPassword,
           });
           return;
         } else {
@@ -1025,40 +945,6 @@ export default function ApplicationDetail() {
               <button onClick={() => navigate('/admin/students')}
                 className="mt-4 w-full flex items-center justify-center px-4 py-2.5 bg-white border border-emerald-300 text-emerald-700 font-bold rounded-xl hover:bg-emerald-100 transition-all text-sm">
                 <Users className="w-4 h-4 mr-2" /> Go to Student Panel
-              </button>
-              <button
-                onClick={async () => {
-                  // Try stored loginEmail first, then live-query the student doc
-                  let loginEmail = enrolledLoginEmail;
-                  if (!loginEmail) {
-                    const snap = await getDocs(
-                      query(collection(db, 'students'), where('applicationId', '==', id))
-                    );
-                    if (!snap.empty) loginEmail = (snap.docs[0].data() as Student).loginEmail ?? null;
-                  }
-                  if (loginEmail) {
-                    const localPart = loginEmail.split('@')[0];
-                    const pw = generateStudentTempPassword(localPart);
-                    alert(
-                      `🎒 Student portal credentials\n\n` +
-                      `Login: ${loginEmail}\n` +
-                      `Temporary password: ${pw}\n\n` +
-                      `Note: if the student already changed their password, ` +
-                      `use Admin → Roles & Permissions → Re-provision login instead.`
-                    );
-                  } else {
-                    alert(
-                      `No school-issued login found for this student.\n\n` +
-                      `This happens when:\n` +
-                      `• The student was enrolled before auto-provisioning was enabled, or\n` +
-                      `• Their class was below the configured minimum.\n\n` +
-                      `To create a login now, go to Admin → Roles & Permissions, find the student, and use Re-provision login.`
-                    );
-                  }
-                }}
-                className="mt-2 w-full flex items-center justify-center px-4 py-2.5 bg-white border border-emerald-300 text-emerald-700 font-bold rounded-xl hover:bg-emerald-100 transition-all text-sm"
-              >
-                <ShieldCheck className="w-4 h-4 mr-2" /> Show student login credentials
               </button>
             </div>
           ) : application.status === 'rejected' ? (

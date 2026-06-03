@@ -75,7 +75,7 @@ function generatePassword(name: string): string {
 
 function generateEmail(name: string, slug: string): string {
   const clean = name.toLowerCase().replace(/[^a-z\s]/g, '').trim().replace(/\s+/g, '.');
-  return `${clean}@staff.${slug}.local`;
+  return `${clean}@staff.${slug}`;
 }
 
 const TEMPLATE_HEADERS = [
@@ -263,7 +263,7 @@ export default function BulkStaffImport() {
         }
 
         try {
-          const staffDoc: Omit<Staff, 'id'> & { schoolId: string; loginEmail: string; generatedLogin: boolean } = {
+          const staffDoc: Omit<Staff, 'id'> & { schoolId: string; loginEmail: string; generatedLogin: boolean; pendingPassword?: string } = {
             staffName: row.staffName,
             email: row.loginEmail,
             phone: row.phone?.trim() || '',
@@ -279,6 +279,9 @@ export default function BulkStaffImport() {
             schoolId: sid,
             loginEmail: row.loginEmail,
             generatedLogin: !!row.generatedEmail,
+            // Store the generated password so User Management can pre-fill it
+            // when creating the Firebase Auth account. Cleared after account creation.
+            pendingPassword: row.generatedPassword,
           };
 
           await addDoc(collection(db, 'staff'), staffDoc);
@@ -398,7 +401,7 @@ export default function BulkStaffImport() {
         <Info className="w-4 h-4 text-amber-600 flex-shrink-0 mt-0.5" />
         <div className="text-sm text-amber-800">
           <strong>Staff without emails</strong> will receive a generated login like{' '}
-          <code className="bg-amber-100 px-1 rounded text-xs">firstname.lastname@staff.{slug}.local</code>{' '}
+          <code className="bg-amber-100 px-1 rounded text-xs">firstname.lastname@staff.{slug}</code>{' '}
           and a temporary password. They must change it on first login. You can view and copy all
           generated credentials after import.
         </div>

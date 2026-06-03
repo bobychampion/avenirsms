@@ -33,6 +33,16 @@ import toast from 'react-hot-toast';
 type InvoiceStatus = 'draft' | 'sent' | 'paid' | 'overdue' | 'cancelled';
 type BillingCycle = 'termly' | 'yearly';
 type TemplateStyle = 'standard' | 'formal' | 'minimal';
+type InvoiceCurrency = 'NGN' | 'USD' | 'GBP' | 'EUR' | 'ZAR' | 'GHS' | 'KES';
+
+const CURRENCY_SYMBOLS: Record<InvoiceCurrency, string> = {
+  NGN: '₦', USD: '$', GBP: '£', EUR: '€', ZAR: 'R', GHS: 'GH₵', KES: 'KSh',
+};
+
+function fmtAmount(amount: number, currency: InvoiceCurrency = 'NGN'): string {
+  const sym = CURRENCY_SYMBOLS[currency] ?? currency;
+  return `${sym}${amount.toLocaleString('en', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
 
 interface LineItem {
   description: string;
@@ -49,7 +59,7 @@ interface PlatformInvoice {
   schoolCountry: string;
   subscriptionPlan: School['subscriptionPlan'];
   billingCycle: BillingCycle;
-  issueDate: string;   // ISO date string
+  issueDate: string;
   dueDate: string;
   periodStart: string;
   periodEnd: string;
@@ -58,6 +68,7 @@ interface PlatformInvoice {
   discount: number;
   tax: number;
   total: number;
+  currency: InvoiceCurrency;
   status: InvoiceStatus;
   notes: string;
   template: TemplateStyle;
@@ -136,6 +147,7 @@ function buildLineItems(plan: School['subscriptionPlan'], cycle: BillingCycle): 
 // ─── Invoice print template ────────────────────────────────────────────────
 
 function InvoicePrintView({ inv, template }: { inv: PlatformInvoice; template: TemplateStyle }) {
+  const fmt = (n: number) => fmtAmount(n, inv.currency ?? 'NGN');
   const isStandard = template === 'standard';
   const isFormal   = template === 'formal';
 
@@ -234,7 +246,7 @@ function InvoicePrintView({ inv, template }: { inv: PlatformInvoice; template: T
                     {isFeature ? '' : item.quantity}
                   </td>
                   <td className={`px-4 py-2 text-right ${isFeature ? 'text-slate-300 text-xs' : 'text-slate-800 font-semibold'}`}>
-                    {isFeature ? '' : item.unitPrice === 0 ? '—' : formatNaira(item.unitPrice * item.quantity)}
+                    {isFeature ? '' : item.unitPrice === 0 ? '—' : fmt(item.unitPrice * item.quantity)}
                   </td>
                 </tr>
               );
@@ -246,20 +258,20 @@ function InvoicePrintView({ inv, template }: { inv: PlatformInvoice; template: T
         <div className="flex justify-end mb-8">
           <div className="w-64 space-y-2">
             <div className="flex justify-between text-sm text-slate-500">
-              <span>Subtotal</span><span>{formatNaira(inv.subtotal)}</span>
+              <span>Subtotal</span><span>{fmt(inv.subtotal)}</span>
             </div>
             {inv.discount > 0 && (
               <div className="flex justify-between text-sm text-emerald-600">
-                <span>Discount</span><span>–{formatNaira(inv.discount)}</span>
+                <span>Discount</span><span>–{fmt(inv.discount)}</span>
               </div>
             )}
             {inv.tax > 0 && (
               <div className="flex justify-between text-sm text-slate-500">
-                <span>Tax / VAT</span><span>{formatNaira(inv.tax)}</span>
+                <span>Tax / VAT</span><span>{fmt(inv.tax)}</span>
               </div>
             )}
             <div className={`flex justify-between font-bold text-base pt-2 border-t ${isStandard ? 'border-indigo-200 text-indigo-700' : 'border-slate-200 text-slate-900'}`}>
-              <span>Total Due</span><span>{formatNaira(inv.total)}</span>
+              <span>Total Due</span><span>{fmt(inv.total)}</span>
             </div>
           </div>
         </div>
@@ -302,14 +314,31 @@ function CreateInvoiceModal({ schools, onClose, onCreated }: CreateModalProps) {
   const [tax, setTax] = useState(0);
   const [notes, setNotes] = useState('Thank you for choosing Avenir SIS. Please make payment within 7 days of invoice date.');
   const [saving, setSaving] = useState(false);
+  const [currency, setCurrency] = useState<InvoiceCurrency>('NGN');
+  const [useCustomAmount, setUseCustomAmount] = useState(false);
+  const [customAmount, setCustomAmount] = useState<number>(0);
 
   const selectedSchool = schools.find(s => s.id === selectedSchoolId) ?? null;
 
-  const lineItems = selectedSchool
+  const planLineItems = selectedSchool
     ? buildLineItems(selectedSchool.subscriptionPlan, billingCycle)
     : [];
+
+  // When custom amount is on, replace the main line item price
+  const lineItems: LineItem[] = useCustomAmount && selectedSchool
+    ? [
+        {
+          description: `Avenir SIS ${PLAN_PRICES[selectedSchool.subscriptionPlan].label} Plan — ${billingCycle === 'termly' ? 'Termly' : 'Annual'} Subscription`,
+          quantity: 1,
+          unitPrice: customAmount,
+        },
+        ...planLineItems.slice(1), // keep feature bullet points
+      ]
+    : planLineItems;
+
   const subtotal = lineItems.reduce((sum, i) => sum + i.unitPrice * i.quantity, 0);
   const total = subtotal - discount + tax;
+  const sym = CURRENCY_SYMBOLS[currency];
 
   const handleCreate = async () => {
     if (!selectedSchool) { toast.error('Select a school first'); return; }
@@ -333,6 +362,7 @@ function CreateInvoiceModal({ schools, onClose, onCreated }: CreateModalProps) {
         discount,
         tax,
         total,
+        currency,
         status:           'draft',
         notes,
         template,
@@ -414,6 +444,57 @@ function CreateInvoiceModal({ schools, onClose, onCreated }: CreateModalProps) {
             <input type="date" className={inputCls} value={issueDate} onChange={e => setIssueDate(e.target.value)} />
           </div>
 
+          {/* Currency + Amount */}
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-sm font-semibold text-slate-700 mb-1.5">Currency</label>
+              <select
+                className={inputCls}
+                value={currency}
+                onChange={e => setCurrency(e.target.value as InvoiceCurrency)}
+              >
+                {(Object.entries(CURRENCY_SYMBOLS) as [InvoiceCurrency, string][]).map(([code, sym]) => (
+                  <option key={code} value={code}>{sym} {code}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-semibold text-slate-700 mb-1.5">
+                Amount
+                {selectedSchool && !useCustomAmount && (
+                  <span className="ml-1 text-xs text-slate-400 font-normal">(from plan)</span>
+                )}
+              </label>
+              <div className="relative">
+                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 font-bold text-sm select-none">
+                  {sym}
+                </span>
+                <input
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  className={`${inputCls} pl-8 ${!useCustomAmount ? 'bg-slate-50 text-slate-400' : ''}`}
+                  value={useCustomAmount ? customAmount : subtotal}
+                  readOnly={!useCustomAmount}
+                  onChange={e => setCustomAmount(+e.target.value)}
+                  placeholder="0.00"
+                />
+              </div>
+              <label className="flex items-center gap-1.5 mt-1.5 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={useCustomAmount}
+                  onChange={e => {
+                    setUseCustomAmount(e.target.checked);
+                    if (e.target.checked) setCustomAmount(subtotal);
+                  }}
+                  className="rounded text-indigo-600"
+                />
+                <span className="text-xs text-slate-500">Set custom amount</span>
+              </label>
+            </div>
+          </div>
+
           {/* Template */}
           <div>
             <label className="block text-sm font-semibold text-slate-700 mb-1.5">Template Style</label>
@@ -436,11 +517,11 @@ function CreateInvoiceModal({ schools, onClose, onCreated }: CreateModalProps) {
           {/* Discount / Tax */}
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block text-sm font-semibold text-slate-700 mb-1.5">Discount (₦)</label>
+              <label className="block text-sm font-semibold text-slate-700 mb-1.5">Discount ({sym})</label>
               <input type="number" min={0} className={inputCls} value={discount} onChange={e => setDiscount(+e.target.value)} />
             </div>
             <div>
-              <label className="block text-sm font-semibold text-slate-700 mb-1.5">Tax / VAT (₦)</label>
+              <label className="block text-sm font-semibold text-slate-700 mb-1.5">Tax / VAT ({sym})</label>
               <input type="number" min={0} className={inputCls} value={tax} onChange={e => setTax(+e.target.value)} />
             </div>
           </div>
@@ -458,11 +539,11 @@ function CreateInvoiceModal({ schools, onClose, onCreated }: CreateModalProps) {
           {/* Summary */}
           {selectedSchool && (
             <div className="bg-slate-50 rounded-xl p-4 space-y-1 text-sm">
-              <div className="flex justify-between text-slate-500"><span>Subtotal</span><span>{formatNaira(subtotal)}</span></div>
-              {discount > 0 && <div className="flex justify-between text-emerald-600"><span>Discount</span><span>–{formatNaira(discount)}</span></div>}
-              {tax > 0 && <div className="flex justify-between text-slate-500"><span>Tax</span><span>+{formatNaira(tax)}</span></div>}
+              <div className="flex justify-between text-slate-500"><span>Subtotal</span><span>{fmtAmount(subtotal, currency)}</span></div>
+              {discount > 0 && <div className="flex justify-between text-emerald-600"><span>Discount</span><span>–{fmtAmount(discount, currency)}</span></div>}
+              {tax > 0 && <div className="flex justify-between text-slate-500"><span>Tax</span><span>+{fmtAmount(tax, currency)}</span></div>}
               <div className="flex justify-between font-bold text-base pt-1 border-t border-slate-200 text-indigo-700">
-                <span>Total Due</span><span>{formatNaira(total)}</span>
+                <span>Total Due</span><span>{fmtAmount(total, currency)}</span>
               </div>
             </div>
           )}
@@ -544,6 +625,7 @@ function BulkGenerateModal({ schools, onClose, onDone }: BulkModalProps) {
         discount,
         tax: 0,
         total,
+        currency:         'NGN' as InvoiceCurrency,
         status:           'draft',
         notes:            'Thank you for choosing Avenir SIS. Please make payment within 7 days.',
         template,
@@ -639,7 +721,7 @@ function BulkGenerateModal({ schools, onClose, onDone }: BulkModalProps) {
                   </div>
                   <span className="text-xs font-bold text-slate-500 shrink-0">{PLAN_PRICES[school.subscriptionPlan].label}</span>
                   <span className="text-xs font-bold text-indigo-600 shrink-0">
-                    {formatNaira(PLAN_PRICES[school.subscriptionPlan][billingCycle])}
+                    {fmtAmount(PLAN_PRICES[school.subscriptionPlan][billingCycle], 'NGN')}
                   </span>
                 </label>
               ))}
@@ -656,8 +738,7 @@ function BulkGenerateModal({ schools, onClose, onDone }: BulkModalProps) {
                     .filter(s => s.id && selectedIds.has(s.id))
                     .reduce((sum, s) => sum + PLAN_PRICES[s.subscriptionPlan][billingCycle] - discount, 0)
                 )}
-              </p>
-              <p className="text-xs text-amber-600 mt-0.5">All will be created as <strong>Draft</strong> — you can mark them Sent individually.</p>
+              </p>              <p className="text-xs text-amber-600 mt-0.5">All will be created as <strong>Draft</strong> — you can mark them Sent individually.</p>
             </div>
           )}
 
@@ -872,7 +953,6 @@ export default function InvoiceGenerator() {
     { label: 'Overdue',         value: formatNaira(overdueAmt),   icon: AlertCircle,  color: 'bg-rose-500',    sub: `${invoices.filter(i => i.status === 'overdue').length} invoices` },
     { label: 'Total Invoices',  value: invoices.length,           icon: FileText,     color: 'bg-indigo-600',  sub: `${schools.length} schools` },
   ];
-
   return (
     <div className="p-6 max-w-7xl mx-auto space-y-6">
       {/* Header */}
@@ -1021,7 +1101,7 @@ export default function InvoiceGenerator() {
                       </td>
                       <td className="px-4 py-3 text-slate-500">{fmtDate(inv.issueDate)}</td>
                       <td className="px-4 py-3 text-slate-500">{fmtDate(inv.dueDate)}</td>
-                      <td className="px-4 py-3 text-right font-bold text-slate-800">{formatNaira(inv.total)}</td>
+                      <td className="px-4 py-3 text-right font-bold text-slate-800">{fmtAmount(inv.total, inv.currency ?? 'NGN')}</td>
                       <td className="px-4 py-3">
                         <span className={`inline-flex items-center gap-1 text-xs font-bold px-2 py-0.5 rounded-full ${sm.bg} ${sm.color}`}>
                           <sm.Icon className="w-3 h-3" />

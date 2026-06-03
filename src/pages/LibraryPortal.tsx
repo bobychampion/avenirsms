@@ -60,9 +60,6 @@ export default function LibraryPortal() {
         <QuickLink to="/library/fines" icon={<AlertCircle className="w-5 h-5" />} title="Fines" desc="Track and waive overdue and lost-book fines." />
       </section>
 
-      <div className="rounded-2xl border-2 border-dashed border-slate-300 p-6 text-center text-sm text-slate-500">
-        🚧 Catalog CRUD and circulation flows ship in a follow-up release.
-      </div>
     </div>
   );
 }

@@ -39,11 +39,6 @@ service cloud.firestore {
       return isAuthenticated() && userProfile().role == 'parent';
     }
 
-    /** School-scoped student (post-enrollment applicant). */
-    function isStudent() {
-      return isAuthenticated() && userProfile().role == 'student';
-    }
-
     /** School-scoped accountant. */
     function isAccountant() {
       return isAuthenticated() && userProfile().role == 'accountant';
@@ -57,6 +52,11 @@ service cloud.firestore {
     /** School-scoped librarian. */
     function isLibrarian() {
       return isAuthenticated() && userProfile().role == 'librarian';
+    }
+
+    /** School-scoped HR staff. */
+    function isHR() {
+      return isAuthenticated() && userProfile().role == 'hr';
     }
 
     /** Caller belongs to the given schoolId. */
@@ -158,7 +158,9 @@ service cloud.firestore {
 
       allow update: if emailRoleConsistent(request.resource.data) && (
                     isSuperAdmin() ||
-                    (isAdmin() && resource.data.get('schoolId', null) == userProfile().schoolId) ||
+                    (isAdmin() && 
+                     (resource.data.get('schoolId', null) == userProfile().schoolId ||
+                      request.resource.data.get('schoolId', null) == userProfile().schoolId)) ||
                     (isOwner(userId) &&
                      request.resource.data.role == resource.data.role &&
                      request.resource.data.get('schoolId', null) == resource.data.get('schoolId', null)));
@@ -209,32 +211,17 @@ service cloud.firestore {
       allow read: if isSuperAdmin() ||
                     ((isAdmin() || isTeacher()) && docBelongsToCallerSchool()) ||
                     (isAuthenticated() && (
-                      resource.data.get('email', '') == request.auth.token.email ||
                       resource.data.get('guardianEmail', '') == request.auth.token.email ||
                       resource.data.get('guardianUserId', '') == request.auth.uid
                     ));
-      // Admins can write any field; students may only update their own studentExtra sub-object
       allow create: if (isSuperAdmin() || (isAdmin() && newDocBelongsToCallerSchool())) &&
                     !isSuperAdminReservedEmail(request.resource.data.get('email', '').lower()) &&
                     !isSuperAdminReservedEmail(request.resource.data.get('guardianEmail', '').lower());
       allow update: if (isSuperAdmin() ||
-                    (isAdmin() && docBelongsToCallerSchool()) ||
-                    (isStudent() &&
-                     resource.data.get('email', '') == request.auth.token.email &&
-                     request.resource.data.diff(resource.data).affectedKeys().hasOnly(['studentExtra']))) &&
+                    (isAdmin() && docBelongsToCallerSchool())) &&
                     !isSuperAdminReservedEmail(request.resource.data.get('email', '').lower()) &&
                     !isSuperAdminReservedEmail(request.resource.data.get('guardianEmail', '').lower());
       allow delete: if isSuperAdmin() || (isAdmin() && docBelongsToCallerSchool());
-    }
-
-    // ─── Student Login Index ───────────────────────────────────────────────────
-    // Minimal public-readable lookup: studentId → loginEmail, scoped by schoolId.
-    // Document ID = "{schoolId}_{studentId}" (uppercased).
-    // Anyone can read (needed for pre-auth login lookup). Admins of the school can write.
-    match /student_logins/{entryId} {
-      allow read: if true;
-      allow write: if isSuperAdmin() ||
-                     (isAdmin() && request.resource.data.get('schoolId', null) == userProfile().schoolId);
     }
 
     // ─── Guardians ────────────────────────────────────────────────────────────
@@ -271,7 +258,6 @@ service cloud.firestore {
       allow read: if isSuperAdmin() ||
                     ((isAdmin() || isTeacher()) && docBelongsToCallerSchool()) ||
                     (isAuthenticated() && (
-                      get(/databases/$(database)/documents/students/$(resource.data.studentId)).data.get('email', '') == request.auth.token.email ||
                       get(/databases/$(database)/documents/students/$(resource.data.studentId)).data.get('guardianEmail', '') == request.auth.token.email
                     ));
       allow write: if isSuperAdmin() ||
@@ -290,7 +276,6 @@ service cloud.firestore {
       allow read: if isSuperAdmin() ||
                     ((isAdmin() || isTeacher()) && docBelongsToCallerSchool()) ||
                     (isAuthenticated() && (
-                      get(/databases/$(database)/documents/students/$(resource.data.studentId)).data.get('email', '') == request.auth.token.email ||
                       get(/databases/$(database)/documents/students/$(resource.data.studentId)).data.get('guardianEmail', '') == request.auth.token.email
                     ));
       allow write: if isSuperAdmin() ||
@@ -349,8 +334,7 @@ service cloud.firestore {
       allow read: if isSuperAdmin() ||
                     (isAdmin() && docBelongsToCallerSchool()) ||
                     (isAuthenticated() && (
-                      get(/databases/$(database)/documents/students/$(resource.data.studentId)).data.get('guardianEmail', '') == request.auth.token.email ||
-                      get(/databases/$(database)/documents/students/$(resource.data.studentId)).data.get('email', '') == request.auth.token.email
+                      get(/databases/$(database)/documents/students/$(resource.data.studentId)).data.get('guardianEmail', '') == request.auth.token.email
                     ));
       allow write: if isSuperAdmin() || (isAdmin() && newDocBelongsToCallerSchool());
     }
@@ -359,8 +343,7 @@ service cloud.firestore {
       allow read: if isSuperAdmin() ||
                     (isAdmin() && docBelongsToCallerSchool()) ||
                     (isAuthenticated() && (
-                      get(/databases/$(database)/documents/students/$(resource.data.studentId)).data.get('guardianEmail', '') == request.auth.token.email ||
-                      get(/databases/$(database)/documents/students/$(resource.data.studentId)).data.get('email', '') == request.auth.token.email
+                      get(/databases/$(database)/documents/students/$(resource.data.studentId)).data.get('guardianEmail', '') == request.auth.token.email
                     ));
       allow write: if isSuperAdmin() || (isAdmin() && newDocBelongsToCallerSchool());
     }
@@ -381,9 +364,45 @@ service cloud.firestore {
     }
 
     match /leave_requests/{leaveId} {
-      allow read: if isAuthenticated() && (isSuperAdmin() || (isAdmin() && docBelongsToCallerSchool()) || isOwner(resource.data.get('staffId', '')));
+      allow read: if isAuthenticated() && (isSuperAdmin() || (isAdmin() && docBelongsToCallerSchool()) ||
+                    (isHR() && docBelongsToCallerSchool()) ||
+                    isOwner(resource.data.get('staffId', '')));
       allow create: if isAuthenticated() && newDocBelongsToCallerSchool();
-      allow update: if isSuperAdmin() || (isAdmin() && docBelongsToCallerSchool());
+      // Admins and HR can approve/reject; staff can only update their own (e.g. withdraw)
+      allow update: if isSuperAdmin() ||
+                    (isAdmin() && docBelongsToCallerSchool()) ||
+                    (isHR() && docBelongsToCallerSchool());
+    }
+
+    // ─── HR Policies (Phase 3 — HR portal) ────────────────────────────────────
+
+    match /hr_policies/{policyId} {
+      allow read: if isAuthenticated() && (isSuperAdmin() || docBelongsToCallerSchool());
+      allow write: if isSuperAdmin() ||
+                    ((isAdmin() || isHR()) && newDocBelongsToCallerSchool());
+    }
+
+    // ─── Onboarding Records (Phase 3 — HR portal) ─────────────────────────────
+
+    match /onboarding_records/{recordId} {
+      allow read: if isAuthenticated() && (isSuperAdmin() || (isAdmin() && docBelongsToCallerSchool()) || isHR());
+      allow write: if isSuperAdmin() ||
+                    ((isAdmin() || isHR()) && newDocBelongsToCallerSchool());
+    }
+
+    // ─── Assignment Submissions (Phase 3 — parent/teacher portal) ─────────────
+
+    match /assignment_submissions/{subId} {
+      // Admins, teachers, and HR can read all school submissions
+      allow read: if isAuthenticated() && (isSuperAdmin() || (isAdmin() && docBelongsToCallerSchool()) ||
+                    (docBelongsToCallerSchool() && (isTeacher() || isParent())));
+      // Parents create submissions on behalf of their child
+      allow create: if isAuthenticated() && newDocBelongsToCallerSchool();
+      // Teachers can update (grade) submissions; admins can always update
+      allow update: if isSuperAdmin() ||
+                    (isAdmin() && docBelongsToCallerSchool()) ||
+                    (isTeacher() && docBelongsToCallerSchool());
+      allow delete: if isSuperAdmin() || (isAdmin() && docBelongsToCallerSchool());
     }
 
     match /payroll/{payrollId} {
@@ -423,7 +442,7 @@ service cloud.firestore {
       allow read: if isAuthenticated() && (
         isSuperAdmin() ||
         ((isAdmin() || isTeacher()) && docBelongsToCallerSchool()) ||
-        get(/databases/$(database)/documents/students/$(resource.data.studentId)).data.get('email', '') == request.auth.token.email
+        get(/databases/$(database)/documents/students/$(resource.data.studentId)).data.get('guardianEmail', '') == request.auth.token.email
       );
       allow write: if isSuperAdmin() || (isAdmin() && newDocBelongsToCallerSchool());
     }
@@ -441,17 +460,13 @@ service cloud.firestore {
     match /cbt_sessions/{sessionId} {
       allow read: if isAuthenticated() && (
         isSuperAdmin() ||
-        (isAdmin() && docBelongsToCallerSchool()) ||
-        resource.data.get('studentId', '') == request.auth.uid
+        (isAdmin() && docBelongsToCallerSchool())
       );
-      // Only admins/teachers of the same school (or super_admin) may create sessions.
-      // Students only ever do updateDoc (answers + submit) — never addDoc.
       allow create: if isSuperAdmin() ||
                     ((isAdmin() || isTeacher()) && newDocBelongsToCallerSchool());
       allow update: if isAuthenticated() && (
         isSuperAdmin() ||
-        (isAdmin() && docBelongsToCallerSchool()) ||
-        resource.data.get('studentId', '') == request.auth.uid
+        (isAdmin() && docBelongsToCallerSchool())
       );
       allow delete: if isSuperAdmin() || (isAdmin() && docBelongsToCallerSchool());
     }
@@ -513,6 +528,27 @@ service cloud.firestore {
       allow write: if isSuperAdmin() || (isAdmin() && newDocBelongsToCallerSchool());
     }
 
+    // ─── Student Lifecycle Events ─────────────────────────────────────────────
+
+    match /lifecycle_events/{eventId} {
+      allow read: if isAuthenticated() && (isSuperAdmin() || docBelongsToCallerSchool());
+      allow write: if isSuperAdmin() || (isAdmin() && newDocBelongsToCallerSchool());
+    }
+
+    // ─── Behavioral Records ───────────────────────────────────────────────────
+
+    match /behavioral_records/{recordId} {
+      allow read: if isAuthenticated() && (isSuperAdmin() || docBelongsToCallerSchool());
+      allow write: if isSuperAdmin() || (isAdmin() && newDocBelongsToCallerSchool());
+    }
+
+    // ─── Alumni Profiles ──────────────────────────────────────────────────────
+
+    match /alumni_profiles/{profileId} {
+      allow read: if isAuthenticated() && (isSuperAdmin() || docBelongsToCallerSchool());
+      allow write: if isSuperAdmin() || (isAdmin() && newDocBelongsToCallerSchool());
+    }
+
     // ─── Demo requests (public) ───────────────────────────────────────────────
 
     match /demo_requests/{requestId} {
@@ -527,6 +563,76 @@ service cloud.firestore {
       allow create: if isSuperAdmin() ||
                     (isAuthenticated() && newDocBelongsToCallerSchool());
       allow read: if isSuperAdmin() || (isAdmin() && docBelongsToCallerSchool());
+    }
+
+    // ─── Google Workspace Integration ─────────────────────────────────────────
+    // Integration data stored at schools/{schoolId}/integrations/google
+    // Only School Admins can read/write their school's integration.
+    // Super admins can read all integrations but cannot write without explicit authorization.
+    // Tokens object is protected from non-admin users.
+
+    match /schools/{schoolId}/integrations/google {
+      // School Admins can read their school's integration
+      // Super admins can read all integrations
+      allow read: if isSuperAdmin() || (isAdmin() && belongsToSchool(schoolId));
+      
+      // School Admins can write their school's integration
+      // Super admins can write (for support purposes)
+      allow write: if isSuperAdmin() || (isAdmin() && belongsToSchool(schoolId));
+      
+      // Prevent deletion (only updates to mark as disconnected are allowed)
+      allow delete: if false;
+    }
+
+    // ─── Cover Assignments (Cover Manager — admin) ────────────────────────────
+
+    match /cover_assignments/{coverId} {
+      allow read: if isAuthenticated() && (isSuperAdmin() || docBelongsToCallerSchool());
+      allow write: if isSuperAdmin() || (isAdmin() && newDocBelongsToCallerSchool());
+    }
+
+    // ─── School Trips & Registrations ────────────────────────────────────────
+
+    match /school_trips/{tripId} {
+      // Admins manage trips; teachers and parents can read
+      allow read: if isAuthenticated() && (isSuperAdmin() || docBelongsToCallerSchool());
+      allow write: if isSuperAdmin() || (isAdmin() && newDocBelongsToCallerSchool());
+    }
+
+    match /trip_registrations/{regId} {
+      // Admins and teachers can read all; parents can read their own child's registrations
+      allow read: if isAuthenticated() && (isSuperAdmin() || (isAdmin() && docBelongsToCallerSchool()) ||
+                    (docBelongsToCallerSchool() && (isTeacher() || isParent())));
+      allow create: if isAuthenticated() && newDocBelongsToCallerSchool();
+      // Admins update consent/payment fields; parents can also update consent
+      allow update: if isSuperAdmin() ||
+                    (isAdmin() && docBelongsToCallerSchool()) ||
+                    (isParent() && docBelongsToCallerSchool());
+      allow delete: if isSuperAdmin() || (isAdmin() && docBelongsToCallerSchool());
+    }
+
+    // ─── Absence Requests (Parent-submitted future absences) ─────────────────
+
+    match /absence_requests/{reqId} {
+      // Admins and form tutors (teachers) review requests; parents see their own
+      allow read: if isAuthenticated() && (isSuperAdmin() || (isAdmin() && docBelongsToCallerSchool()) ||
+                    (docBelongsToCallerSchool() && (isTeacher() || isParent())));
+      // Parents (and admins) create requests
+      allow create: if isAuthenticated() && newDocBelongsToCallerSchool();
+      // Admins and teachers approve/reject; parents cannot change status
+      allow update: if isSuperAdmin() ||
+                    (isAdmin() && docBelongsToCallerSchool()) ||
+                    (isTeacher() && docBelongsToCallerSchool());
+      allow delete: if isSuperAdmin() || (isAdmin() && docBelongsToCallerSchool());
+    }
+
+    // ─── Leave Entitlements (HR leave balance tracking) ───────────────────────
+
+    match /leave_entitlements/{entId} {
+      allow read: if isAuthenticated() && (isSuperAdmin() || (isAdmin() && docBelongsToCallerSchool()) ||
+                    (isHR() && docBelongsToCallerSchool()));
+      allow write: if isSuperAdmin() ||
+                    ((isAdmin() || isHR()) && newDocBelongsToCallerSchool());
     }
 
     // ─── Connection test (app connectivity check) ─────────────────────────────

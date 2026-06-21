@@ -10,7 +10,7 @@ import {
   ClipboardList, Calendar, DollarSign, FileText, Settings, BarChart3,
   Clock, Award, Briefcase, CreditCard, Map, Menu, X, Bell,
   ArrowUpRight, Key, Sparkles, MessageSquare, Star, CheckSquare, FileSpreadsheet, Database,
-  HelpCircle, Building2, ShieldCheck, LogIn, MapPin, WifiOff, Chrome,
+  HelpCircle, Building2, ShieldCheck, LogIn, MapPin, WifiOff, Chrome, Package,
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { db } from '../firebase';
@@ -204,6 +204,7 @@ const adminNavGroups = [
       { to: '/admin/pins', label: 'Result PINs', icon: Key },
       { to: '/admin/settings', label: 'School Settings', icon: Settings },
       { to: '/admin/integrations/google', label: 'Google Workspace', icon: Chrome },
+      { to: '/admin/data-portability', label: 'Import / Export', icon: Package },
       { to: '/admin/bulk-import', label: 'Bulk Import', icon: FileSpreadsheet },
       { to: '/admin/whatsapp', label: 'WhatsApp', icon: MessageSquare },
       { to: '/admin/seed', label: 'Seed Demo Data', icon: Database },

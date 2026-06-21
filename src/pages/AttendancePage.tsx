@@ -10,8 +10,9 @@ import { motion } from 'motion/react';
 import toast from 'react-hot-toast';
 import {
   ClipboardList, Search, CheckCircle, XCircle, Clock, Save,
-  BarChart3, Filter, Calendar, Users, Sparkles, Bell
+  BarChart3, Filter, Calendar, Users, Sparkles, Bell, Download
 } from 'lucide-react';
+import { exportAttendanceCsv } from '../services/dataExport/csvModules';
 
 type AttendanceStatus = 'present' | 'absent' | 'late';
 
@@ -252,14 +253,39 @@ export default function AttendancePage() {
     return 'bg-amber-50 border-amber-200';
   };
 
+  const exportAllAttendance = async () => {
+    if (!schoolId) return;
+    const tid = toast.loading('Preparing export…');
+    try {
+      const snap = await getDocs(query(collection(db, 'attendance'), where('schoolId', '==', schoolId)));
+      const nameById = Object.fromEntries(students.map(s => [s.id, s.studentName]));
+      exportAttendanceCsv(snap.docs.map(d => {
+        const data = d.data() as Attendance;
+        return { ...data, studentName: nameById[data.studentId] ?? '' };
+      }));
+      toast.success('Attendance CSV downloaded', { id: tid });
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Export failed', { id: tid });
+    }
+  };
+
   return (
     <div className="p-6 lg:p-8 max-w-5xl mx-auto">
-      <div className="mb-8">
-        <h1 className="text-2xl font-bold text-slate-900 flex items-center gap-2">
-          <ClipboardList className="w-6 h-6 text-indigo-600" />
-          Attendance Management
-        </h1>
-        <p className="text-slate-500 mt-1 text-sm">Mark and track daily attendance for each class.</p>
+      <div className="mb-8 flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-bold text-slate-900 flex items-center gap-2">
+            <ClipboardList className="w-6 h-6 text-indigo-600" />
+            Attendance Management
+          </h1>
+          <p className="text-slate-500 mt-1 text-sm">Mark and track daily attendance for each class.</p>
+        </div>
+        <button
+          type="button"
+          onClick={exportAllAttendance}
+          className="flex items-center gap-2 px-4 py-2 rounded-xl border border-slate-200 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+        >
+          <Download className="w-4 h-4" /> Export CSV
+        </button>
       </div>
 
       {/* Filters */}

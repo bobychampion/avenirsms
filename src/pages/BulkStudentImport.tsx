@@ -1,10 +1,5 @@
 import React, { useState, useRef } from 'react';
-import { db } from '../firebase';
-import { collection, addDoc, serverTimestamp, getDocs, query, where } from 'firebase/firestore';
-import { Student } from '../types';
-import { generateStudentId } from '../services/firestoreService';
 import { useSchoolId } from '../hooks/useSchoolId';
-import Papa from 'papaparse';
 import toast from 'react-hot-toast';
 import { motion, AnimatePresence } from 'motion/react';
 import {
@@ -12,177 +7,78 @@ import {
   Loader2, Users, FileSpreadsheet, ArrowLeft, RefreshCw
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
-
-interface CSVRow {
-  studentName: string;
-  email: string;
-  phone: string;
-  dob: string;
-  gender: string;
-  currentClass: string;
-  guardianName?: string;
-  guardianPhone?: string;
-  guardianEmail?: string;
-  homeAddress?: string;
-  stateOfOrigin?: string;
-  bloodGroup?: string;
-  religion?: string;
-}
-
-interface ImportResult {
-  row: number;
-  name: string;
-  status: 'success' | 'error' | 'duplicate';
-  message?: string;
-  studentId?: string;
-}
-
-function validateRow(row: CSVRow, idx: number): string | null {
-  if (!row.studentName?.trim()) return `Row ${idx}: Student name is required`;
-  if (!row.currentClass?.trim()) return `Row ${idx}: Class is required`;
-  if (!row.gender?.trim()) return `Row ${idx}: Gender is required`;
-  if (!['male', 'female', 'other'].includes(row.gender.trim().toLowerCase())) {
-    return `Row ${idx}: Gender must be male, female, or other`;
-  }
-  return null;
-}
-
-const TEMPLATE_HEADERS = [
-  'studentName', 'email', 'phone', 'dob', 'gender', 'currentClass',
-  'guardianName', 'guardianPhone', 'guardianEmail', 'homeAddress', 'stateOfOrigin',
-  'bloodGroup', 'religion'
-];
-
-const TEMPLATE_SAMPLE = [
-  'Adaeze Okonkwo', 'adaeze@email.com', '08012345678', '2010-05-15', 'female', 'JSS 1',
-  'Mrs Okonkwo', '08012345679', 'parent@email.com', '5 Main Street Lagos', 'Anambra',
-  'O+', 'Christianity'
-];
+import {
+  type StudentCsvRow,
+  type StudentImportResult,
+  validateStudentRow,
+  downloadStudentTemplate,
+  parseSpreadsheetFile,
+  importStudentsFromRows,
+} from '../services/dataExport/csvModules';
 
 export default function BulkStudentImport() {
   const schoolId = useSchoolId();
   const [file, setFile] = useState<File | null>(null);
-  const [preview, setPreview] = useState<CSVRow[]>([]);
+  const [preview, setPreview] = useState<StudentCsvRow[]>([]);
   const [errors, setErrors] = useState<string[]>([]);
-  const [results, setResults] = useState<ImportResult[]>([]);
+  const [results, setResults] = useState<StudentImportResult[]>([]);
   const [importing, setImporting] = useState(false);
   const [done, setDone] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
-  const handleFile = (file: File) => {
+  const handleFile = async (file: File) => {
     setFile(file);
     setResults([]);
     setDone(false);
-    Papa.parse<CSVRow>(file, {
-      header: true,
-      skipEmptyLines: true,
-      complete: (result) => {
-        const rows = result.data as CSVRow[];
-        const validationErrors: string[] = [];
-        rows.forEach((row, i) => {
-          const err = validateRow(row, i + 2);
-          if (err) validationErrors.push(err);
-        });
-        setPreview(rows);
-        setErrors(validationErrors);
-      },
-      error: () => toast.error('Failed to parse CSV file'),
-    });
+    try {
+      const rows = await parseSpreadsheetFile<StudentCsvRow>(file);
+      const validationErrors: string[] = [];
+      rows.forEach((row, i) => {
+        const err = validateStudentRow(row, i + 2);
+        if (err) validationErrors.push(err);
+      });
+      setPreview(rows);
+      setErrors(validationErrors);
+    } catch {
+      toast.error('Failed to parse file');
+    }
   };
 
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
     const f = e.dataTransfer.files[0];
-    if (f && (f.name.endsWith('.csv') || f.type === 'text/csv')) handleFile(f);
-    else toast.error('Please drop a CSV file');
+    if (f && (f.name.endsWith('.csv') || f.name.endsWith('.xlsx') || f.name.endsWith('.xls') || f.type === 'text/csv')) {
+      handleFile(f);
+    } else {
+      toast.error('Please drop a CSV or Excel file');
+    }
   };
 
   const handleImport = async () => {
     if (preview.length === 0 || errors.length > 0) return;
     setImporting(true);
-    const importResults: ImportResult[] = [];
     const tid = toast.loading(`Importing ${preview.length} students…`);
     const sid = schoolId ?? 'main';
 
     try {
-      // Pre-fetch all existing emails for this school in one query to avoid per-row round trips
-      const existingSnap = await getDocs(
-        query(collection(db, 'students'), where('schoolId', '==', sid))
-      );
-      const existingEmails = new Set(
-        existingSnap.docs.map(d => (d.data().email ?? '').toLowerCase().trim()).filter(Boolean)
-      );
-      // Starting sequence offset so generated IDs don't collide within this batch
-      let seqOffset = existingSnap.size;
-
-      for (let i = 0; i < preview.length; i++) {
-        const row = preview[i];
-        try {
-          // Duplicate check against pre-fetched set (no extra Firestore call)
-          const emailKey = row.email?.trim().toLowerCase() ?? '';
-          if (emailKey && existingEmails.has(emailKey)) {
-            importResults.push({ row: i + 2, name: row.studentName, status: 'duplicate', message: 'Email already exists' });
-            continue;
-          }
-
-          // Generate ID using schoolId so it counts the right school's students
-          const newId = await generateStudentId(sid);
-          seqOffset++;
-
-          const student: Omit<Student, 'id'> = {
-            studentName: row.studentName.trim(),
-            email: row.email?.trim() || '',
-            phone: row.phone?.trim() || '',
-            dob: row.dob?.trim() || '',
-            gender: row.gender.trim().toLowerCase(),
-            nin: '',
-            currentClass: row.currentClass.trim(),
-            studentId: newId,
-            enrolledAt: serverTimestamp(),
-            applicationId: 'bulk_import',
-            admissionStatus: 'active',
-            guardianName: row.guardianName?.trim() || '',
-            guardianPhone: row.guardianPhone?.trim() || '',
-            guardianEmail: row.guardianEmail?.trim() || '',
-            homeAddress: row.homeAddress?.trim() || '',
-            stateOfOrigin: row.stateOfOrigin?.trim() || '',
-            bloodGroup: row.bloodGroup?.trim() || '',
-            religion: row.religion?.trim() || '',
-            schoolId: sid,
-          };
-
-          await addDoc(collection(db, 'students'), student);
-          if (emailKey) existingEmails.add(emailKey); // prevent intra-batch duplicates
-          importResults.push({ row: i + 2, name: row.studentName, status: 'success', studentId: newId });
-        } catch (e: any) {
-          importResults.push({ row: i + 2, name: row.studentName, status: 'error', message: e.message });
-        }
-      }
-    } catch (e: any) {
-      toast.error('Import failed: ' + (e.message || 'Unknown error'), { id: tid });
+      const importResults = await importStudentsFromRows(preview, sid, {
+        checkStudentId: true,
+        autoCreateClasses: true,
+      });
+      setResults(importResults);
+      setDone(true);
+      const successCount = importResults.filter(r => r.status === 'success').length;
+      const dupCount = importResults.filter(r => r.status === 'duplicate').length;
+      const errCount = importResults.filter(r => r.status === 'error').length;
+      toast.success(`Import complete: ${successCount} added · ${dupCount} duplicates · ${errCount} errors`, { id: tid, duration: 6000 });
+    } catch (e: unknown) {
+      toast.error('Import failed: ' + (e instanceof Error ? e.message : 'Unknown error'), { id: tid });
+    } finally {
       setImporting(false);
-      return;
     }
-
-    setResults(importResults);
-    setDone(true);
-    setImporting(false);
-    const successCount = importResults.filter(r => r.status === 'success').length;
-    const dupCount = importResults.filter(r => r.status === 'duplicate').length;
-    const errCount = importResults.filter(r => r.status === 'error').length;
-    toast.success(`Import complete: ${successCount} added · ${dupCount} duplicates · ${errCount} errors`, { id: tid, duration: 6000 });
   };
 
-  const downloadTemplate = () => {
-    const csv = [TEMPLATE_HEADERS.join(','), TEMPLATE_SAMPLE.join(',')].join('\n');
-    const blob = new Blob([csv], { type: 'text/csv' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'student_import_template.csv';
-    a.click();
-    URL.revokeObjectURL(url);
-  };
+  const downloadTemplate = () => downloadStudentTemplate();
 
   const reset = () => {
     setFile(null);

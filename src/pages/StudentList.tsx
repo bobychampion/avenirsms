@@ -5,7 +5,8 @@ import { collection, query, onSnapshot, orderBy, where } from 'firebase/firestor
 import { Student, SCHOOL_CLASSES, SchoolClass } from '../types';
 import { useSchoolId } from '../hooks/useSchoolId';
 import { motion } from 'motion/react';
-import { Search, Filter, User, Phone, Mail, Calendar, ArrowRight, ArrowLeft, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Search, Filter, User, Phone, Mail, Calendar, ArrowRight, ArrowLeft, ChevronLeft, ChevronRight, Download } from 'lucide-react';
+import { exportStudentsCsv } from '../services/dataExport/csvModules';
 
 const PAGE_SIZE = 20;
 
@@ -73,9 +74,18 @@ export default function StudentList() {
           Back to Dashboard
         </Link>
       </div>
-      <div className="mb-10">
-        <h1 className="text-3xl font-bold text-slate-900 tracking-tight">Student Directory</h1>
-        <p className="text-slate-500 mt-1">Manage and view all currently enrolled students.</p>
+      <div className="mb-10 flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <h1 className="text-3xl font-bold text-slate-900 tracking-tight">Student Directory</h1>
+          <p className="text-slate-500 mt-1">Manage and view all currently enrolled students.</p>
+        </div>
+        <button
+          type="button"
+          onClick={() => exportStudentsCsv(filteredStudents)}
+          className="flex items-center gap-2 px-4 py-2 rounded-xl border border-slate-200 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+        >
+          <Download className="w-4 h-4" /> Export CSV
+        </button>
       </div>
 
       <div className="flex flex-col md:flex-row gap-4 mb-8">

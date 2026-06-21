@@ -55,6 +55,7 @@ import LibraryPortal from './pages/LibraryPortal';
 import RolesPermissions from './pages/RolesPermissions';
 import ParentList from './pages/ParentList';
 import SchoolDataReset from './pages/SchoolDataReset';
+import DataPortability from './pages/DataPortability';
 import HrLeave from './pages/hr/HrLeave';
 import HrOnboarding from './pages/hr/HrOnboarding';
 import HrPolicies from './pages/hr/HrPolicies';
@@ -267,6 +268,7 @@ function AppContent() {
           <Route path="/admin/pins" element={<Layout><ProtectedRoute role="admin"><PinManagement /></ProtectedRoute></Layout>} />
           <Route path="/admin/settings" element={<Layout><ProtectedRoute role="admin"><SchoolSettingsPage /></ProtectedRoute></Layout>} />
           <Route path="/admin/data-reset" element={<Layout><ProtectedRoute role="admin"><SchoolDataReset /></ProtectedRoute></Layout>} />
+          <Route path="/admin/data-portability" element={<Layout><ProtectedRoute role="admin"><DataPortability /></ProtectedRoute></Layout>} />
           <Route path="/admin/integrations/google" element={<Layout><ProtectedRoute role="admin"><IntegrationSettings /></ProtectedRoute></Layout>} />
           <Route path="/auth/google/callback" element={<ProtectedRoute role="admin"><GoogleOAuthCallback /></ProtectedRoute>} />
           <Route path="/admin/notifications" element={<Layout><ProtectedRoute role="admin"><NotificationsManagement /></ProtectedRoute></Layout>} />

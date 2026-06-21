@@ -258,11 +258,22 @@ export interface ExamSeating {
 }
 
 export interface TimetablePeriod {
+  /** Links to school_settings.timetablePeriods[].id */
+  slotId?: string;
   subject: string;
   startTime: string;
   endTime: string;
   teacher?: string;
 }
+
+export type { TimetablePeriodSlot, TimetablePeriodSlotType } from './utils/timetablePeriods';
+export {
+  DEFAULT_TIMETABLE_PERIODS,
+  resolveTimetablePeriodSlots,
+  sortedPeriodSlots,
+  lessonSlots,
+  periodTimesFromSlots,
+} from './utils/timetablePeriods';
 
 export interface Timetable {
   id?: string;

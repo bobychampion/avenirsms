@@ -8,7 +8,12 @@ import {
 import { Staff } from '../types';
 import { useSchoolId } from '../hooks/useSchoolId';
 import { useSchool } from '../components/SchoolContext';
-import Papa from 'papaparse';
+import {
+  type StaffCsvRow,
+  resolveStaffRole,
+  downloadStaffTemplate,
+  parseSpreadsheetFile,
+} from '../services/dataExport/csvModules';
 import toast from 'react-hot-toast';
 import { motion, AnimatePresence } from 'motion/react';
 import {
@@ -19,19 +24,7 @@ import {
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-interface CSVRow {
-  staffName: string;
-  email?: string;
-  phone?: string;
-  role?: string;
-  subject?: string;
-  department?: string;
-  qualification?: string;
-  basicSalary?: string;
-  allowances?: string;
-  bankName?: string;
-  accountNumber?: string;
-}
+interface CSVRow extends StaffCsvRow {}
 
 interface ProcessedRow extends CSVRow {
   resolvedRole: Staff['role'];
@@ -51,19 +44,8 @@ interface ImportResult {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-const ROLE_MAP: Record<string, Staff['role']> = {
-  teacher: 'teacher', tutor: 'teacher', lecturer: 'teacher', instructor: 'teacher',
-  admin: 'admin_staff', administrator: 'admin_staff', admin_staff: 'admin_staff',
-  secretary: 'admin_staff', clerk: 'admin_staff', accountant: 'admin_staff',
-  bursar: 'admin_staff', librarian: 'admin_staff', 'it officer': 'admin_staff',
-  support: 'support', cleaner: 'support', security: 'support', driver: 'support',
-  janitor: 'support', cook: 'support', 'kitchen staff': 'support',
-};
-
 function resolveRole(raw?: string): Staff['role'] {
-  if (!raw) return 'teacher';
-  const key = raw.trim().toLowerCase();
-  return ROLE_MAP[key] ?? 'teacher';
+  return resolveStaffRole(raw);
 }
 
 function generatePassword(name: string): string {
@@ -77,18 +59,6 @@ function generateEmail(name: string, slug: string): string {
   const clean = name.toLowerCase().replace(/[^a-z\s]/g, '').trim().replace(/\s+/g, '.');
   return `${clean}@staff.${slug}`;
 }
-
-const TEMPLATE_HEADERS = [
-  'staffName', 'email', 'phone', 'role', 'subject',
-  'department', 'qualification', 'basicSalary', 'allowances',
-  'bankName', 'accountNumber',
-];
-
-const TEMPLATE_SAMPLES = [
-  ['Amara Okafor', 'amara@school.com', '08012345678', 'teacher', 'Mathematics', 'Sciences', 'B.Sc', '80000', '5000', 'GTBank', '0123456789'],
-  ['Bola Adeyemi', '', '08098765432', 'admin_staff', '', 'Admin', 'HND', '60000', '3000', 'Access Bank', '9876543210'],
-  ['Chidi Eze', '', '07011223344', 'support', '', '', 'SSCE', '40000', '2000', '', ''],
-];
 
 // ─── Credentials reveal modal ─────────────────────────────────────────────────
 
@@ -210,27 +180,28 @@ export default function BulkStaffImport() {
     return { processed, errs };
   };
 
-  const handleFile = (f: File) => {
+  const handleFile = async (f: File) => {
     setFile(f);
     setResults([]);
     setDone(false);
-    Papa.parse<CSVRow>(f, {
-      header: true,
-      skipEmptyLines: true,
-      complete: (result) => {
-        const { processed, errs } = processRows(result.data as CSVRow[]);
-        setPreview(processed);
-        setErrors(errs);
-      },
-      error: () => toast.error('Failed to parse CSV file'),
-    });
+    try {
+      const rows = await parseSpreadsheetFile<CSVRow>(f);
+      const { processed, errs } = processRows(rows);
+      setPreview(processed);
+      setErrors(errs);
+    } catch {
+      toast.error('Failed to parse file');
+    }
   };
 
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
     const f = e.dataTransfer.files[0];
-    if (f && (f.name.endsWith('.csv') || f.type === 'text/csv')) handleFile(f);
-    else toast.error('Please drop a CSV file');
+    if (f && (f.name.endsWith('.csv') || f.name.endsWith('.xlsx') || f.name.endsWith('.xls') || f.type === 'text/csv')) {
+      handleFile(f);
+    } else {
+      toast.error('Please drop a CSV or Excel file');
+    }
   };
 
   const handleImport = async () => {
@@ -320,17 +291,7 @@ export default function BulkStaffImport() {
     if (successCount > 0) setShowCredentials(true);
   };
 
-  const downloadTemplate = () => {
-    const rows = [TEMPLATE_HEADERS, ...TEMPLATE_SAMPLES];
-    const csv = rows.map(r => r.map(v => `"${v}"`).join(',')).join('\n');
-    const blob = new Blob([csv], { type: 'text/csv' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'staff_import_template.csv';
-    a.click();
-    URL.revokeObjectURL(url);
-  };
+  const downloadTemplate = () => downloadStaffTemplate();
 
   const reset = () => {
     setFile(null); setPreview([]); setErrors([]); setResults([]); setDone(false);

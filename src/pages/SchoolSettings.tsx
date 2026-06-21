@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { db } from '../firebase';
 import { doc, getDoc, setDoc, updateDoc, serverTimestamp, collection, getDocs, writeBatch, onSnapshot, addDoc, deleteDoc, query, where } from 'firebase/firestore';
 import { motion } from 'motion/react';
@@ -10,8 +10,15 @@ import {
   Globe, DollarSign, Image as ImageIcon, Award, ChevronUp, ChevronDown,
   Upload, Eye, EyeOff, Users, Bell, ShieldCheck, FileText, ClipboardCheck,
   MapPin, Navigation, CheckCircle2, XCircle, RefreshCw, Brain,
-  Palette, Link as LinkIcon, Monitor, ExternalLink, Brush,
+  Palette, Link as LinkIcon, Monitor, ExternalLink, Brush, Clock,
 } from 'lucide-react';
+import TimetablePeriodEditor from '../components/TimetablePeriodEditor';
+import {
+  TimetablePeriodSlot,
+  DEFAULT_TIMETABLE_PERIODS,
+  resolveTimetablePeriodSlots,
+  periodTimesFromSlots,
+} from '../utils/timetablePeriods';
 import { GeoFence } from '../types';
 import { haversineDistance } from '../services/geofenceService';
 import { SCHOOL_CLASSES, SUBJECTS, TERMS, GradingSystem, CustomGradeScale, SubjectDefinition, UserProfile } from '../types';
@@ -85,7 +92,10 @@ export interface SchoolSettings {
   // Dynamic lists
   schoolLevels: string[];
   customSubjects: string[];
+  /** @deprecated Legacy start-time list — kept in sync with lesson slots for backward compatibility */
   periodTimes: string[];
+  /** School bell schedule — drives dynamic timetable columns */
+  timetablePeriods: TimetablePeriodSlot[];
   // Internationalisation
   country: string;           // ISO 3166-1 alpha-2, e.g. 'NG', 'SI', 'US'
   timezone: string;          // IANA tz string, e.g. 'Africa/Lagos', 'Europe/Ljubljana'
@@ -192,11 +202,6 @@ export interface SchoolSettings {
 
 const SETTINGS_DOC = 'school_settings';
 
-const DEFAULT_PERIOD_TIMES = [
-  '07:00', '07:40', '08:20', '09:00', '09:40', '10:20',
-  '11:00', '11:40', '12:20', '13:00', '14:00', '14:40', '15:20'
-];
-
 export const defaultSettings: SchoolSettings = {
   schoolName: 'Avenir International School',
   address: '',
@@ -234,7 +239,8 @@ export const defaultSettings: SchoolSettings = {
   studentAccountMinClass: 'Primary 1',
   schoolLevels: [...SCHOOL_CLASSES],
   customSubjects: [],
-  periodTimes: [...DEFAULT_PERIOD_TIMES],
+  periodTimes: periodTimesFromSlots(DEFAULT_TIMETABLE_PERIODS),
+  timetablePeriods: [...DEFAULT_TIMETABLE_PERIODS],
   // Internationalisation
   country: '',
   timezone: '',
@@ -633,12 +639,13 @@ function ToggleRow({
   );
 }
 
-type TabId = 'school' | 'academic' | 'subjects' | 'admissions' | 'attendance' | 'notifications' | 'access' | 'geofence' | 'customize';
+type TabId = 'school' | 'academic' | 'timetable' | 'subjects' | 'admissions' | 'attendance' | 'notifications' | 'access' | 'geofence' | 'customize';
 
 const TABS: { id: TabId; label: string; icon: React.ReactNode }[] = [
   { id: 'school',        label: 'School',           icon: <School className="w-4 h-4" /> },
   { id: 'customize',     label: 'Customization',    icon: <Palette className="w-4 h-4" /> },
   { id: 'academic',      label: 'Academic',         icon: <Award className="w-4 h-4" /> },
+  { id: 'timetable',     label: 'Timetable',        icon: <Clock className="w-4 h-4" /> },
   { id: 'subjects',      label: 'Subjects',         icon: <BookOpen className="w-4 h-4" /> },
   { id: 'admissions',    label: 'Admissions',       icon: <ClipboardCheck className="w-4 h-4" /> },
   { id: 'attendance',    label: 'Attendance',       icon: <Users className="w-4 h-4" /> },
@@ -738,6 +745,7 @@ export default function SchoolSettingsPage() {
   const [showPreset, setShowPreset] = useState(false);
   const [isDirty, setIsDirty] = useState(false);
   const [activeTab, setActiveTab] = useState<TabId>('school');
+  const [searchParams] = useSearchParams();
 
   // URL slug management (super admin only)
   const [slugInput, setSlugInput] = useState('');
@@ -772,10 +780,23 @@ export default function SchoolSettingsPage() {
   const { blocker } = useUnsavedChanges(isDirty);
 
   useEffect(() => {
+    const tab = searchParams.get('tab');
+    if (tab === 'timetable' || tab === 'academic' || tab === 'subjects' || tab === 'school') {
+      setActiveTab(tab as TabId);
+    }
+  }, [searchParams]);
+
+  useEffect(() => {
     if (!schoolId) return;
     getDoc(doc(db, SETTINGS_DOC, schoolId)).then(snap => {
       if (snap.exists()) {
-        const data = { ...defaultSettings, ...snap.data() } as SchoolSettings;
+        const raw = { ...defaultSettings, ...snap.data() } as SchoolSettings;
+        const timetablePeriods = resolveTimetablePeriodSlots(raw);
+        const data: SchoolSettings = {
+          ...raw,
+          timetablePeriods,
+          periodTimes: periodTimesFromSlots(timetablePeriods),
+        };
         setForm(data);
         setSlugInput(data.urlSlug || '');
       }
@@ -940,6 +961,7 @@ export default function SchoolSettingsPage() {
     try {
       await setDoc(doc(db, SETTINGS_DOC, schoolId!), {
         ...form,
+        periodTimes: periodTimesFromSlots(form.timetablePeriods),
         updatedAt: serverTimestamp(),
         // Mark settings step done for onboarding wizard
         onboardingSettingsDone: true,
@@ -982,13 +1004,6 @@ export default function SchoolSettingsPage() {
     if (!window.confirm('Delete this subject?')) return;
     await deleteDoc(doc(db, 'subjects', id)).catch(e => toast.error(e.message));
     toast.success('Subject deleted');
-  };
-
-  const validateTime = (v: string) => {
-    if (!/^\d{2}:\d{2}$/.test(v)) return 'Format must be HH:MM (e.g. 08:30)';
-    const [h, m] = v.split(':').map(Number);
-    if (h < 0 || h > 23 || m < 0 || m > 59) return 'Invalid time value';
-    return null;
   };
 
   if (loading) return (
@@ -1250,7 +1265,7 @@ export default function SchoolSettingsPage() {
             <h2 className="font-bold text-slate-800 text-sm flex items-center gap-2 mb-1">
               <Award className="w-4 h-4 text-indigo-600" /> Academic Configuration
             </h2>
-            <p className="text-xs text-slate-500 mb-5">Grading system, academic levels, custom subjects, and timetable periods.</p>
+            <p className="text-xs text-slate-500 mb-5">Grading system, academic levels, and custom subjects. Configure timetable periods under the Timetable tab.</p>
 
             <div className="mb-6">
               <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">Grading System</label>
@@ -1284,13 +1299,6 @@ export default function SchoolSettingsPage() {
               <TagListEditor label="Additional / Custom Subjects" items={form.customSubjects} placeholder="e.g. Slovenian Language, IB Theory of Knowledge"
                 onAdd={v => field('customSubjects', [...form.customSubjects, v])}
                 onRemove={i => field('customSubjects', form.customSubjects.filter((_, idx) => idx !== i))} />
-            </div>
-
-            <div>
-              <TagListEditor label="Timetable Period Times (HH:MM)" items={form.periodTimes} placeholder="e.g. 08:30"
-                validate={validateTime}
-                onAdd={v => field('periodTimes', [...form.periodTimes, v].sort())}
-                onRemove={i => field('periodTimes', form.periodTimes.filter((_, idx) => idx !== i))} />
             </div>
           </section>
 
@@ -1403,6 +1411,28 @@ export default function SchoolSettingsPage() {
             </div>
           </section>
         </div>
+      )}
+
+      {/* ══════════════════════════════════════════════════════════════
+          TAB: TIMETABLE
+      ══════════════════════════════════════════════════════════════ */}
+      {activeTab === 'timetable' && (
+        <section className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
+          <h2 className="font-bold text-slate-800 text-sm flex items-center gap-2 mb-1">
+            <Clock className="w-4 h-4 text-indigo-600" /> Period Management
+          </h2>
+          <p className="text-xs text-slate-500 mb-5">
+            Define your school day structure. Each lesson period becomes a column in the class timetable.
+            Add breaks for recess or lunch — they appear in the grid but cannot be assigned subjects.
+          </p>
+          <TimetablePeriodEditor
+            slots={form.timetablePeriods}
+            onChange={slots => {
+              field('timetablePeriods', slots);
+              field('periodTimes', periodTimesFromSlots(slots));
+            }}
+          />
+        </section>
       )}
 
       {/* ══════════════════════════════════════════════════════════════

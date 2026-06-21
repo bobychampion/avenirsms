@@ -4,7 +4,8 @@ import { db } from '../firebase';
 import { collection, query, onSnapshot, addDoc, updateDoc, deleteDoc, doc, serverTimestamp, orderBy, where, getDocs } from 'firebase/firestore';
 import { Staff, LeaveRequest, UserProfile } from '../types';
 import { AnimatePresence, motion } from 'motion/react';
-import { Briefcase, Plus, X, Edit2, Trash2, Mail, Phone, DollarSign, ChevronDown, CheckCircle, XCircle, Upload, Camera, ChevronLeft, ChevronRight as ChevronRightIcon, Link2, UserCheck } from 'lucide-react';
+import { Briefcase, Plus, X, Edit2, Trash2, Mail, Phone, DollarSign, ChevronDown, CheckCircle, XCircle, Upload, Camera, ChevronLeft, ChevronRight as ChevronRightIcon, Link2, UserCheck, Download } from 'lucide-react';
+import { exportStaffCsv } from '../services/dataExport/csvModules';
 import { useSchool } from '../components/SchoolContext';
 import { useSchoolId } from '../hooks/useSchoolId';
 import { uploadToCloudinary } from '../utils/cloudinaryUpload';
@@ -138,6 +139,13 @@ export default function StaffManagement() {
           <p className="text-slate-500 mt-1 text-sm">Manage staff records, roles, and leave requests.</p>
         </div>
         <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => exportStaffCsv(staff)}
+            className="flex items-center gap-2 px-4 py-2.5 border border-slate-200 text-slate-700 font-bold rounded-xl hover:bg-slate-50 transition-all text-sm"
+          >
+            <Download className="w-4 h-4" /> Export CSV
+          </button>
           <Link
             to="/admin/bulk-staff-import"
             className="flex items-center gap-2 px-4 py-2.5 border border-slate-200 text-slate-700 font-bold rounded-xl hover:bg-slate-50 transition-all text-sm"

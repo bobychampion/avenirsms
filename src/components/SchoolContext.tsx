@@ -15,15 +15,17 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { db } from '../firebase';
 import { collection, onSnapshot, orderBy, query, doc, where } from 'firebase/firestore';
-import { SchoolClass, SCHOOL_CLASSES, SUBJECTS, CURRENT_SESSION, TERMS, GradingSystem, CustomGradeScale, SubjectDefinition } from '../types';
+import { SchoolClass, SCHOOL_CLASSES, SUBJECTS, CURRENT_SESSION, TERMS, GradingSystem, CustomGradeScale, SubjectDefinition, TimetablePeriodSlot } from '../types';
+import {
+  DEFAULT_TIMETABLE_PERIODS,
+  resolveTimetablePeriodSlots,
+  periodTimesFromSlots,
+} from '../utils/timetablePeriods';
 import { SchoolSettings, defaultSettings } from '../pages/SchoolSettings';
 import { useAuth } from './FirebaseProvider';
 import { useSuperAdmin } from './SuperAdminContext';
 
-const DEFAULT_PERIOD_TIMES = [
-  '07:00', '07:40', '08:20', '09:00', '09:40', '10:20',
-  '11:00', '11:40', '12:20', '13:00', '14:00', '14:40', '15:20'
-];
+const DEFAULT_PERIOD_TIMES = periodTimesFromSlots(DEFAULT_TIMETABLE_PERIODS);
 
 export type TermStructure = '3-term' | '2-semester' | '4-quarter';
 
@@ -41,7 +43,8 @@ interface SchoolContextValue {
   classNames: string[];            // derived string list for selects
   subjects: string[];              // merged: built-in SUBJECTS + school customSubjects
   schoolLevels: string[];          // from school_settings (dynamic, fallback SCHOOL_CLASSES)
-  periodTimes: string[];           // from school_settings (dynamic, fallback DEFAULT_PERIOD_TIMES)
+  periodTimes: string[];           // legacy start times — derived from timetablePeriods
+  timetablePeriods: TimetablePeriodSlot[]; // school bell schedule for timetable columns
   currentSession: string;          // from school_settings (dynamic, fallback CURRENT_SESSION)
   currentTerm: string;
   setCurrentTerm: (t: string) => void;
@@ -85,6 +88,7 @@ const SchoolContext = createContext<SchoolContextValue>({
   subjects: SUBJECTS,
   schoolLevels: SCHOOL_CLASSES,
   periodTimes: DEFAULT_PERIOD_TIMES,
+  timetablePeriods: [...DEFAULT_TIMETABLE_PERIODS],
   currentSession: CURRENT_SESSION,
   currentTerm: '1st Term',
   setCurrentTerm: () => {},
@@ -133,6 +137,7 @@ export function SchoolProvider({ children }: { children: React.ReactNode }) {
   // Dynamic settings from school_settings/{schoolId}
   const [schoolLevels, setSchoolLevels] = useState<string[]>([...SCHOOL_CLASSES]);
   const [periodTimes, setPeriodTimes] = useState<string[]>([...DEFAULT_PERIOD_TIMES]);
+  const [timetablePeriods, setTimetablePeriods] = useState<TimetablePeriodSlot[]>([...DEFAULT_TIMETABLE_PERIODS]);
   const [customSubjects, setCustomSubjects] = useState<string[]>([]);
   const [currentSession, setCurrentSession] = useState<string>(CURRENT_SESSION);
   const [termStructure, setTermStructure] = useState<TermStructure>('3-term');
@@ -252,7 +257,12 @@ export function SchoolProvider({ children }: { children: React.ReactNode }) {
         if (snap.exists()) {
           const data = { ...defaultSettings, ...snap.data() } as SchoolSettings;
           if (data.schoolLevels?.length) setSchoolLevels(data.schoolLevels);
-          if (data.periodTimes?.length) setPeriodTimes(data.periodTimes);
+          const resolvedSlots = resolveTimetablePeriodSlots({
+            timetablePeriods: data.timetablePeriods,
+            periodTimes: data.periodTimes,
+          });
+          setTimetablePeriods(resolvedSlots);
+          setPeriodTimes(periodTimesFromSlots(resolvedSlots));
           if (data.customSubjects) setCustomSubjects(data.customSubjects);
           if (data.currentSession) setCurrentSession(data.currentSession);
           if (data.currentTerm) setCurrentTerm(data.currentTerm);
@@ -362,6 +372,7 @@ export function SchoolProvider({ children }: { children: React.ReactNode }) {
       subjects: mergedSubjects,
       schoolLevels,
       periodTimes,
+      timetablePeriods,
       currentSession,
       currentTerm,
       setCurrentTerm,

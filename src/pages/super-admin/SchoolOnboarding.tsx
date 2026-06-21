@@ -17,6 +17,7 @@ import {
   Building2, User, CheckCircle2, ArrowRight, ArrowLeft, Loader2, LogIn
 } from 'lucide-react';
 import toast from 'react-hot-toast';
+import { DEFAULT_TIMETABLE_PERIODS, periodTimesFromSlots } from '../../utils/timetablePeriods';
 
 // Generate a URL-safe school ID from the school name
 function generateSchoolId(name: string): string {
@@ -92,7 +93,8 @@ export default function SchoolOnboarding() {
         currentTerm: '1st Term',
         termStructure: '3-term',
         schoolLevels: [],
-        periodTimes: [],
+        periodTimes: periodTimesFromSlots(DEFAULT_TIMETABLE_PERIODS),
+        timetablePeriods: [...DEFAULT_TIMETABLE_PERIODS],
         customSubjects: [],
         currency: 'NGN',
         locale: 'en',

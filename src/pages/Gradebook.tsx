@@ -6,7 +6,8 @@ import { Student, Grade, SUBJECTS, calculateGrade, CURRENT_SESSION, TERMS } from
 import { suggestGradingComment } from '../services/geminiService';
 import { motion } from 'motion/react';
 import toast from 'react-hot-toast';
-import { Save, Loader2, BookOpen, ArrowLeft, Sparkles, CheckCircle } from 'lucide-react';
+import { Save, Loader2, BookOpen, ArrowLeft, Sparkles, CheckCircle, Download } from 'lucide-react';
+import { exportGradesCsv } from '../services/dataExport/csvModules';
 import { useClassSelectOptions } from '../components/SchoolContext';
 import { useSchoolId } from '../hooks/useSchoolId';
 
@@ -135,12 +136,39 @@ export default function Gradebook() {
 
   return (
     <div className="p-6 lg:p-8 max-w-[1200px] mx-auto">
-      <div className="mb-8">
-        <h1 className="text-2xl font-bold text-slate-900 flex items-center gap-2">
-          <BookOpen className="w-6 h-6 text-indigo-600" />
-          Gradebook
-        </h1>
-        <p className="text-slate-500 mt-1 text-sm">Enter CA and exam scores. Nigerian grading: A1(75+), B2(70+), B3(65+), C4(60+), C5(55+), C6(50+), D7(45+), E8(40+), F9.</p>
+      <div className="mb-8 flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-bold text-slate-900 flex items-center gap-2">
+            <BookOpen className="w-6 h-6 text-indigo-600" />
+            Gradebook
+          </h1>
+          <p className="text-slate-500 mt-1 text-sm">Enter CA and exam scores. Nigerian grading: A1(75+), B2(70+), B3(65+), C4(60+), C5(55+), C6(50+), D7(45+), E8(40+), F9.</p>
+        </div>
+        <button
+          type="button"
+          onClick={() => {
+            const rows = students
+              .map(s => {
+                const g = grades[s.id!];
+                if (!g) return null;
+                return {
+                  ...g,
+                  studentId: s.studentId,
+                  studentName: s.studentName,
+                  class: selectedClass,
+                  subject: selectedSubject,
+                  term: selectedTerm,
+                  session,
+                };
+              })
+              .filter((g): g is Grade & { studentName: string } => g !== null);
+            exportGradesCsv(rows);
+          }}
+          disabled={!selectedClass || students.length === 0}
+          className="flex items-center gap-2 px-4 py-2 rounded-xl border border-slate-200 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+        >
+          <Download className="w-4 h-4" /> Export CSV
+        </button>
       </div>
 
       {/* Filters */}

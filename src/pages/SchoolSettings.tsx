@@ -21,9 +21,10 @@ import {
 } from '../utils/timetablePeriods';
 import { GeoFence } from '../types';
 import { haversineDistance } from '../services/geofenceService';
-import { SCHOOL_CLASSES, SUBJECTS, TERMS, GradingSystem, CustomGradeScale, SubjectDefinition, UserProfile } from '../types';
+import { SCHOOL_CLASSES, SUBJECTS, TERMS, GradingSystem, CustomGradeScale, LevelGradingOverride, GRADING_SYSTEM_OPTIONS, SubjectDefinition, UserProfile } from '../types';
 import { useUnsavedChanges } from '../hooks/useUnsavedChanges';
 import UnsavedChangesDialog from '../components/UnsavedChangesDialog';
+import StorageSettingsPanel from '../components/StorageSettingsPanel';
 import { useSchool } from '../components/SchoolContext';
 import { useAuth } from '../components/FirebaseProvider';
 
@@ -105,6 +106,8 @@ export interface SchoolSettings {
   // Academic configuration
   gradingSystem: GradingSystem;
   customGradingScale: CustomGradeScale[];
+  /** Per-level overrides (keyed by entry in schoolLevels), e.g. Kindergarten uses a descriptive scale while Secondary uses WAEC. */
+  levelGradingOverrides?: Record<string, LevelGradingOverride>;
   termStructure: '3-term' | '2-semester' | '4-quarter';
   // Finance & Payroll
   taxModel: 'nigeria_paye' | 'flat_rate' | 'none';
@@ -250,6 +253,7 @@ export const defaultSettings: SchoolSettings = {
   // Academic
   gradingSystem: 'percentage',
   customGradingScale: [],
+  levelGradingOverrides: {},
   termStructure: '3-term',
   // Finance
   taxModel: 'none',
@@ -456,6 +460,65 @@ function CustomGradeScaleEditor({ scale, onChange }: { scale: CustomGradeScale[]
         <input placeholder="Grade" value={row.grade} onChange={e => setRow({ ...row, grade: e.target.value })} className="px-2 py-2 rounded-xl border border-slate-200 text-xs outline-none focus:ring-2 focus:ring-indigo-500" />
         <input placeholder="Label" value={row.label} onChange={e => setRow({ ...row, label: e.target.value })} className="px-2 py-2 rounded-xl border border-slate-200 text-xs outline-none focus:ring-2 focus:ring-indigo-500" />
         <button onClick={add} className="flex items-center justify-center gap-1 bg-indigo-600 text-white text-xs font-bold rounded-xl hover:bg-indigo-700 transition-colors"><Plus className="w-3.5 h-3.5" /></button>
+      </div>
+    </div>
+  );
+}
+
+// ─── Per-Level Grading Override Editor ────────────────────────────────────────
+function LevelGradingOverridesEditor({
+  levels, overrides, onChange
+}: {
+  levels: string[];
+  overrides: Record<string, LevelGradingOverride>;
+  onChange: (overrides: Record<string, LevelGradingOverride>) => void;
+}) {
+  const setOverride = (level: string, value: LevelGradingOverride | null) => {
+    const next = { ...overrides };
+    if (value) next[level] = value; else delete next[level];
+    onChange(next);
+  };
+
+  return (
+    <div>
+      <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">
+        Per-Level Grading Overrides
+      </label>
+      <p className="text-xs text-slate-500 mb-3">
+        Use a different grading system for specific levels — e.g. a descriptive scale for Kindergarten while Secondary uses WAEC.
+        Levels left as "Use school default" follow the Grading System above.
+      </p>
+      {levels.length === 0 && <span className="text-xs text-slate-400 italic">Add grade/year levels above first</span>}
+      <div className="space-y-2">
+        {levels.map(level => {
+          const ov = overrides[level];
+          return (
+            <div key={level} className="border border-slate-200 rounded-xl p-3">
+              <div className="flex items-center gap-3">
+                <span className="flex-1 text-xs font-semibold text-slate-700">{level}</span>
+                <select
+                  value={ov?.gradingSystem ?? ''}
+                  onChange={e => {
+                    const val = e.target.value as GradingSystem | '';
+                    setOverride(level, val ? { gradingSystem: val, customGradingScale: ov?.customGradingScale ?? [] } : null);
+                  }}
+                  className="px-2 py-1.5 rounded-lg border border-slate-200 text-xs outline-none focus:ring-2 focus:ring-indigo-500"
+                >
+                  <option value="">Use school default</option>
+                  {GRADING_SYSTEM_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                </select>
+              </div>
+              {ov?.gradingSystem === 'custom' && (
+                <div className="mt-3">
+                  <CustomGradeScaleEditor
+                    scale={ov.customGradingScale ?? []}
+                    onChange={s => setOverride(level, { ...ov, customGradingScale: s })}
+                  />
+                </div>
+              )}
+            </div>
+          );
+        })}
       </div>
     </div>
   );
@@ -1170,6 +1233,8 @@ export default function SchoolSettingsPage() {
             )}
           </section>
 
+          {schoolId && <StorageSettingsPanel schoolId={schoolId} />}
+
           {/* Media & Uploads */}
           <section className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
             <h2 className="font-bold text-slate-800 text-sm flex items-center gap-2 mb-1">
@@ -1292,6 +1357,14 @@ export default function SchoolSettingsPage() {
                 onReorder={levels => field('schoolLevels', levels)}
                 onAdd={v => field('schoolLevels', [...form.schoolLevels, v])}
                 onRemove={i => field('schoolLevels', form.schoolLevels.filter((_, idx) => idx !== i))}
+              />
+            </div>
+
+            <div className="mb-6">
+              <LevelGradingOverridesEditor
+                levels={form.schoolLevels}
+                overrides={form.levelGradingOverrides ?? {}}
+                onChange={ov => field('levelGradingOverrides', ov)}
               />
             </div>
 

@@ -113,6 +113,26 @@ service cloud.firestore {
       allow write: if isSuperAdmin() || (isAdmin() && belongsToSchool(schoolId));
     }
 
+    // ─── Storage provider connection (Cloudinary today; S3/Supabase/Firebase later) ──
+    // Metadata only — no secret here. Writes happen exclusively via Cloud Functions
+    // (testStorageConnection / connectStorageProvider / disconnectStorageProvider),
+    // which re-validate credentials server-side before persisting, so direct client
+    // writes are disabled entirely.
+
+    match /storage_settings/{schoolId} {
+      allow read: if isSuperAdmin() || (isAdmin() && belongsToSchool(schoolId));
+      allow write: if false;
+    }
+
+    // The encrypted API secret lives in its own doc, inaccessible from any client
+    // context under any role — only the Admin SDK (Cloud Functions) can read or
+    // write it. This guarantees the secret can never leak via a Firestore rule
+    // mistake, regardless of what the frontend code does.
+
+    match /storage_secrets/{schoolId} {
+      allow read, write: if false;
+    }
+
     // ─── School URL slugs (slug → schoolId reverse lookup) ────────────────────
     // Public read: needed to resolve slug URLs on landing pages without auth
     // Write: super_admin only — schools cannot set their own slugs
@@ -183,13 +203,22 @@ service cloud.firestore {
                     (isTeacher() && docBelongsToCallerSchool());
 
       // Public admissions form: allow unauthenticated submissions too.
-      // Authenticated users must still match their own uid.
-      allow create: if request.resource.data.status == 'pending' &&
-                    request.resource.data.applicantName is string &&
-                    request.resource.data.applicantName.size() > 0 &&
-                    (
-                      !isAuthenticated() ||
-                      request.resource.data.applicantUid == request.auth.uid
+      // Authenticated users must still match their own uid. Submissions must start 'pending'.
+      // School admins additionally get a "direct admission" path: they may create an
+      // application pre-stamped as 'approved' (or any status) for their own school,
+      // since direct admission bypasses the review queue by design.
+      allow create: if (
+                      (isSuperAdmin() || (isAdmin() && newDocBelongsToCallerSchool())) &&
+                      request.resource.data.applicantName is string &&
+                      request.resource.data.applicantName.size() > 0
+                    ) || (
+                      request.resource.data.status == 'pending' &&
+                      request.resource.data.applicantName is string &&
+                      request.resource.data.applicantName.size() > 0 &&
+                      (
+                        !isAuthenticated() ||
+                        request.resource.data.applicantUid == request.auth.uid
+                      )
                     );
 
       allow update: if isSuperAdmin() ||

@@ -15,7 +15,7 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { db } from '../firebase';
 import { collection, onSnapshot, orderBy, query, doc, where } from 'firebase/firestore';
-import { SchoolClass, SCHOOL_CLASSES, SUBJECTS, CURRENT_SESSION, TERMS, GradingSystem, CustomGradeScale, SubjectDefinition, TimetablePeriodSlot } from '../types';
+import { SchoolClass, SCHOOL_CLASSES, SUBJECTS, CURRENT_SESSION, TERMS, GradingSystem, CustomGradeScale, LevelGradingOverride, resolveGradingForLevel, SubjectDefinition, TimetablePeriodSlot } from '../types';
 import {
   DEFAULT_TIMETABLE_PERIODS,
   resolveTimetablePeriodSlots,
@@ -62,6 +62,9 @@ interface SchoolContextValue {
   phoneCountryCode: string;
   gradingSystem: GradingSystem;
   customGradingScale: CustomGradeScale[];
+  levelGradingOverrides: Record<string, LevelGradingOverride>;
+  /** Resolves the effective grading system/scale for a class name, honouring any per-level override. */
+  getGradingForClass: (className: string) => { gradingSystem: GradingSystem; customGradingScale?: CustomGradeScale[] };
   taxModel: 'nigeria_paye' | 'flat_rate' | 'none';
   taxFlatRate: number;
   cloudinaryConfig: { cloudName: string; uploadPreset: string };
@@ -104,6 +107,8 @@ const SchoolContext = createContext<SchoolContextValue>({
   phoneCountryCode: '',
   gradingSystem: 'percentage',
   customGradingScale: [],
+  levelGradingOverrides: {},
+  getGradingForClass: () => ({ gradingSystem: 'percentage', customGradingScale: [] }),
   taxModel: 'none',
   taxFlatRate: 0,
   cloudinaryConfig: { cloudName: '', uploadPreset: '' },
@@ -150,6 +155,7 @@ export function SchoolProvider({ children }: { children: React.ReactNode }) {
   const [phoneCountryCode, setPhoneCountryCode] = useState('');
   const [gradingSystem, setGradingSystem] = useState<GradingSystem>('percentage');
   const [customGradingScale, setCustomGradingScale] = useState<CustomGradeScale[]>([]);
+  const [levelGradingOverrides, setLevelGradingOverrides] = useState<Record<string, LevelGradingOverride>>({});
   const [taxModel, setTaxModel] = useState<'nigeria_paye' | 'flat_rate' | 'none'>('none');
   const [taxFlatRate, setTaxFlatRate] = useState(0);
   const [cloudinaryConfig, setCloudinaryConfig] = useState({ cloudName: '', uploadPreset: '' });
@@ -228,6 +234,7 @@ export function SchoolProvider({ children }: { children: React.ReactNode }) {
       setPhoneCountryCode('');
       setGradingSystem('percentage');
       setCustomGradingScale([]);
+      setLevelGradingOverrides({});
       setTaxModel('none');
       setTaxFlatRate(0);
       setCloudinaryConfig({ cloudName: '', uploadPreset: '' });
@@ -275,6 +282,7 @@ export function SchoolProvider({ children }: { children: React.ReactNode }) {
           setPhoneCountryCode(data.phoneCountryCode || '');
           setGradingSystem(data.gradingSystem || 'percentage');
           setCustomGradingScale(data.customGradingScale || []);
+          setLevelGradingOverrides(data.levelGradingOverrides || {});
           setTaxModel(data.taxModel || 'none');
           setTaxFlatRate(data.taxFlatRate || 0);
           setCloudinaryConfig({
@@ -356,6 +364,12 @@ export function SchoolProvider({ children }: { children: React.ReactNode }) {
   // Dynamic term labels derived from termStructure
   const terms = getTermLabels(termStructure);
 
+  // Helper: resolve the effective grading system/scale for a class, honouring per-level overrides
+  const getGradingForClass = (className: string) => {
+    const level = classes.find(c => c.name === className)?.level;
+    return resolveGradingForLevel(level, gradingSystem, customGradingScale, levelGradingOverrides);
+  };
+
   // Helper: get subjects for a specific class (from SubjectDefinitions, falling back to all merged subjects)
   const getSubjectsForClass = (className: string): string[] => {
     const custom = subjectDefinitions.filter(s => s.assignedClasses.includes(className));
@@ -388,6 +402,8 @@ export function SchoolProvider({ children }: { children: React.ReactNode }) {
       phoneCountryCode,
       gradingSystem,
       customGradingScale,
+      levelGradingOverrides,
+      getGradingForClass,
       taxModel,
       taxFlatRate,
       cloudinaryConfig,

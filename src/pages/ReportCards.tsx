@@ -4,7 +4,7 @@ import { collection, query, where, getDocs } from 'firebase/firestore';
 import { Student, Grade, calculateGrade, CURRENT_SESSION, formatDate, StudentSkillRecord, StudentSkills, SKILL_LABELS, SKILL_RATING_LABELS, SkillRating } from '../types';
 import { generateReportSummary } from '../services/geminiService';
 import toast from 'react-hot-toast';
-import { useClassSelectOptions } from '../components/SchoolContext';
+import { useClassSelectOptions, useSchool } from '../components/SchoolContext';
 import { useSchoolId } from '../hooks/useSchoolId';
 import { FileText, Printer, Sparkles, ChevronDown, Users } from 'lucide-react';
 
@@ -37,6 +37,7 @@ const GRADE_MAP: Record<string, { label: string; color: string }> = {
 
 export default function ReportCards() {
   const classSelectOptions = useClassSelectOptions();
+  const { getGradingForClass } = useSchool();
   const schoolId = useSchoolId();
   const [selectedClass, setSelectedClass] = useState('');
   const [selectedTerm, setSelectedTerm] = useState<'1st Term' | '2nd Term' | '3rd Term'>('1st Term');
@@ -263,7 +264,7 @@ export default function ReportCards() {
                         <td colSpan={2} className="py-2.5 font-bold text-slate-700 text-sm">Overall Average</td>
                         <td colSpan={2} className="py-2.5 text-center font-bold text-indigo-700 text-lg">{selectedReport.average}%</td>
                         <td colSpan={3} className="py-2.5 text-left font-bold text-slate-700">
-                          {calculateGrade(selectedReport.average)} &nbsp;—&nbsp; Position: <span className="text-indigo-700">{selectedReport.position} of {reports.length}</span>
+                          {(() => { const g = getGradingForClass(selectedClass); return calculateGrade(selectedReport.average, g.gradingSystem, g.customGradingScale); })()} &nbsp;—&nbsp; Position: <span className="text-indigo-700">{selectedReport.position} of {reports.length}</span>
                         </td>
                       </tr>
                     </tfoot>

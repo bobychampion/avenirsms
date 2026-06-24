@@ -7,6 +7,7 @@ import {
   notifyCheckIn, notifyCheckOut, notifyIdleClass,
   showBrowserNotification,
 } from '../services/notificationService';
+import StorageSetupBanner from '../components/StorageSetupBanner';
 
 const showBrowserNotificationRaw = (title: string, body: string) =>
   showBrowserNotification({ category: 'check_in', title, body });
@@ -484,7 +485,7 @@ export default function AdminDashboard() {
     }
   };
 
-  useEffect(() => { fetchStats(); }, []);
+  useEffect(() => { fetchStats(); }, [schoolId]);
 
   // ─── Derived Stats ──────────────────────────────────────────────────────────
   const appStats = {
@@ -594,6 +595,10 @@ export default function AdminDashboard() {
           <RefreshCw className={`w-3.5 h-3.5 ${statsLoading ? 'animate-spin' : ''}`} />
           Refresh
         </button>
+      </div>
+
+      <div className="mb-5">
+        <StorageSetupBanner />
       </div>
 
       {/* ── KPI Row ── */}

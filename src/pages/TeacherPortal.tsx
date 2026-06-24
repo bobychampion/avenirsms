@@ -37,7 +37,7 @@ export default function TeacherPortal() {
   const { user, profile } = useAuth();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
-  const { classNames, subjects, currentSession, gradingSystem, customGradingScale, terms } = useSchool();
+  const { classNames, subjects, currentSession, getGradingForClass, terms } = useSchool();
   const schoolId = useSchoolId();
 
   // Derived helpers (safe fallbacks)
@@ -536,7 +536,8 @@ export default function TeacherPortal() {
       const g = { ...prev[studentId] };
       g[field] = Math.min(field === 'caScore' ? 40 : 60, Math.max(0, val));
       g.totalScore = g.caScore + g.examScore;
-      g.grade = calculateGrade(g.totalScore, gradingSystem, customGradingScale);
+      const grading = getGradingForClass(selectedClass);
+      g.grade = calculateGrade(g.totalScore, grading.gradingSystem, grading.customGradingScale);
       return { ...prev, [studentId]: g };
     });
   };

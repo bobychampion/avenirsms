@@ -17,6 +17,7 @@ import {
 import PaystackButton from '../components/PaystackPayment';
 import { DOCUMENT_TITLE_DEFAULT } from '../constants/appMeta';
 import { useSchoolId } from '../hooks/useSchoolId';
+import { useSchool } from '../components/SchoolContext';
 import toast from 'react-hot-toast';
 
 const GRADE_COLORS: Record<string, string> = {
@@ -33,6 +34,7 @@ export default function ParentPortal() {
   const { user, profile } = useAuth();
   const navigate = useNavigate();
   const schoolId = useSchoolId();
+  const { getGradingForClass } = useSchool();
   const [children, setChildren] = useState<Student[]>([]);
   const [selectedChild, setSelectedChild] = useState<Student | null>(null);
   const [grades, setGrades] = useState<Grade[]>([]);
@@ -1158,7 +1160,7 @@ export default function ParentPortal() {
                       <td colSpan={2} className="py-3 font-bold text-slate-700 text-sm pl-1">Overall Average</td>
                       <td colSpan={2} className="py-3 text-center font-black text-indigo-700 text-lg">{reportCardAvg}%</td>
                       <td colSpan={3} className="py-3 text-left pl-2 font-bold text-slate-700 text-sm">
-                        {calculateGrade(reportCardAvg)} — <span className="text-xs text-slate-500">{CURRENT_SESSION}</span>
+                        {(() => { const g = getGradingForClass(selectedChild.currentClass); return calculateGrade(reportCardAvg, g.gradingSystem, g.customGradingScale); })()} — <span className="text-xs text-slate-500">{CURRENT_SESSION}</span>
                       </td>
                     </tr>
                   </tfoot>

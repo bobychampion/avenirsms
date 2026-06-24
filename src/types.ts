@@ -580,6 +580,30 @@ export const SUBJECTS = [
   'Social Studies', 'Cultural & Creative Arts', 'Business Studies', 'History'
 ];
 
+// ─── Storage Provider Connection ──────────────────────────────────────────────
+
+export type StorageProviderName = 'cloudinary' | 'firebase' | 's3' | 'supabase';
+
+/** Mirrors storage_settings/{schoolId} — never contains the secret. */
+export interface StorageSettings {
+  schoolId: string;
+  provider: StorageProviderName;
+  cloudName?: string;
+  apiKey?: string;
+  status: 'connected' | 'disconnected' | 'error';
+  connectedAt?: any;
+  connectedBy?: string;
+  updatedAt?: any;
+}
+
+/** Normalized result every StorageProviderAdapter.upload() resolves to. */
+export interface UploadResult {
+  url: string;
+  publicId: string;
+  type: string;
+  uploadedAt: string;
+}
+
 export type GradingSystem = 'waec' | 'percentage' | 'gpa4' | 'ib' | 'igcse' | 'alevel' | 'custom';
 
 export const GRADING_SYSTEM_OPTIONS: { value: GradingSystem; label: string; description: string }[] = [
@@ -597,6 +621,29 @@ export interface CustomGradeScale {
   max: number;
   grade: string;
   label: string;
+}
+
+/** Grading rules for one school level (e.g. "Kindergarten", "Primary 1"), overriding the school-wide default. */
+export interface LevelGradingOverride {
+  gradingSystem: GradingSystem;
+  customGradingScale?: CustomGradeScale[];
+}
+
+/**
+ * Resolves which grading system/scale applies to a given class level, falling back to the
+ * school-wide default when no override exists for that level (or no level is given).
+ */
+export function resolveGradingForLevel(
+  level: string | undefined,
+  defaultGradingSystem: GradingSystem,
+  defaultCustomScale: CustomGradeScale[] | undefined,
+  levelOverrides?: Record<string, LevelGradingOverride>
+): { gradingSystem: GradingSystem; customGradingScale?: CustomGradeScale[] } {
+  const override = level ? levelOverrides?.[level] : undefined;
+  if (override) {
+    return { gradingSystem: override.gradingSystem, customGradingScale: override.customGradingScale };
+  }
+  return { gradingSystem: defaultGradingSystem, customGradingScale: defaultCustomScale };
 }
 
 export function calculateGrade(

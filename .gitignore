@@ -16,3 +16,4 @@ functions/google-oauth-secret.json
 functions/.env
 functions/.env.local
 *client_secret*.json
+serviceAccountKey.json

@@ -8,7 +8,7 @@ import { motion } from 'motion/react';
 import toast from 'react-hot-toast';
 import { Save, Loader2, BookOpen, ArrowLeft, Sparkles, CheckCircle, Download } from 'lucide-react';
 import { exportGradesCsv } from '../services/dataExport/csvModules';
-import { useClassSelectOptions } from '../components/SchoolContext';
+import { useClassSelectOptions, useSchool } from '../components/SchoolContext';
 import { useSchoolId } from '../hooks/useSchoolId';
 
 const GRADE_COLORS: Record<string, string> = {
@@ -25,6 +25,7 @@ const GRADE_COLORS: Record<string, string> = {
 
 export default function Gradebook() {
   const classSelectOptions = useClassSelectOptions();
+  const { getGradingForClass } = useSchool();
   const schoolId = useSchoolId();
   const [students, setStudents] = useState<Student[]>([]);
   const [grades, setGrades] = useState<Record<string, Grade>>({});
@@ -79,7 +80,8 @@ export default function Gradebook() {
     const current = grades[studentId] || { studentId, subject: selectedSubject, class: selectedClass, term: selectedTerm, session, caScore: 0, examScore: 0, totalScore: 0, grade: 'F9', updatedAt: null };
     const updated = { ...current, [field]: numValue };
     updated.totalScore = updated.caScore + updated.examScore;
-    updated.grade = calculateGrade(updated.totalScore);
+    const grading = getGradingForClass(selectedClass);
+    updated.grade = calculateGrade(updated.totalScore, grading.gradingSystem, grading.customGradingScale);
     setGrades({ ...grades, [studentId]: updated });
   };
 

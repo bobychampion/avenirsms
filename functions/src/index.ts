@@ -40,6 +40,23 @@ import { storeTokens, getValidAccessToken, clearTokens } from './google/googleTo
 import { verifyConnection } from './google/googleVerificationService';
 import { createEvent, updateEvent, deleteEvent } from './google/googleCalendarService';
 import { createCourse, updateCourse, archiveCourse } from './google/googleClassroomService';
+import {
+  TestStorageConnectionRequest,
+  TestStorageConnectionResponse,
+  ConnectStorageProviderRequest,
+  ConnectStorageProviderResponse,
+  DisconnectStorageProviderRequest,
+  GetUploadSignatureRequest,
+  GetUploadSignatureResponse,
+  DeleteStorageFileRequest,
+  VerifyStorageConnectionRequest,
+  testStorageConnectionHandler,
+  connectStorageProviderHandler,
+  disconnectStorageProviderHandler,
+  getUploadSignatureHandler,
+  deleteStorageFileHandler,
+  verifyStorageConnectionHandler,
+} from './storage/storageHandlers';
 
 initializeApp();
 
@@ -939,6 +956,67 @@ export const archiveClassroomCourse = onCall<ArchiveClassroomCourseRequest>(
         `Failed to archive course in Google Classroom: ${error instanceof Error ? error.message : 'unknown error'}`
       );
     }
+  }
+);
+
+// ─── Storage Provider Connection (Cloudinary, with future S3/Supabase/Firebase) ──
+
+/** Validates credentials without persisting anything — backs the "Test Connection" button. */
+export const testStorageConnection = onCall<TestStorageConnectionRequest>(
+  async (request): Promise<TestStorageConnectionResponse> => {
+    const { auth, data } = request;
+    if (!auth) throw new HttpsError('unauthenticated', 'Sign-in required.');
+    return testStorageConnectionHandler(auth.uid, data ?? ({} as TestStorageConnectionRequest));
+  }
+);
+
+/** Re-validates, then encrypts + persists the credentials. Backs the "Connect" button. */
+export const connectStorageProvider = onCall<ConnectStorageProviderRequest>(
+  async (request): Promise<ConnectStorageProviderResponse> => {
+    const { auth, data } = request;
+    if (!auth) throw new HttpsError('unauthenticated', 'Sign-in required.');
+    return connectStorageProviderHandler(auth.uid, data ?? ({} as ConnectStorageProviderRequest));
+  }
+);
+
+/** Disconnects the active provider for a school. */
+export const disconnectStorageProvider = onCall<DisconnectStorageProviderRequest>(
+  async (request) => {
+    const { auth, data } = request;
+    if (!auth) throw new HttpsError('unauthenticated', 'Sign-in required.');
+    return disconnectStorageProviderHandler(auth.uid, data ?? ({} as DisconnectStorageProviderRequest));
+  }
+);
+
+/**
+ * Issues a short-lived signed-upload signature so the browser can upload
+ * directly to Cloudinary without ever seeing the API secret. Any
+ * authenticated member of the school may call this (not admin-only) —
+ * uploading a student photo or assignment is a normal teacher/parent action.
+ */
+export const getUploadSignature = onCall<GetUploadSignatureRequest>(
+  async (request): Promise<GetUploadSignatureResponse> => {
+    const { auth, data } = request;
+    if (!auth) throw new HttpsError('unauthenticated', 'Sign-in required.');
+    return getUploadSignatureHandler(auth.uid, data ?? ({} as GetUploadSignatureRequest));
+  }
+);
+
+/** Deletes a previously-uploaded file from the connected provider. */
+export const deleteStorageFile = onCall<DeleteStorageFileRequest>(
+  async (request) => {
+    const { auth, data } = request;
+    if (!auth) throw new HttpsError('unauthenticated', 'Sign-in required.');
+    return deleteStorageFileHandler(auth.uid, data ?? ({} as DeleteStorageFileRequest));
+  }
+);
+
+/** Re-tests an already-connected provider's stored credentials. Backs the Settings → Storage "Test Connection" button. */
+export const verifyStorageConnection = onCall<VerifyStorageConnectionRequest>(
+  async (request) => {
+    const { auth, data } = request;
+    if (!auth) throw new HttpsError('unauthenticated', 'Sign-in required.');
+    return verifyStorageConnectionHandler(auth.uid, data ?? ({} as VerifyStorageConnectionRequest));
   }
 );
 

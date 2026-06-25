@@ -12,6 +12,7 @@ coverage/
 *.log
 .env*
 !.env.example
+!.env.production
 functions/google-oauth-secret.json
 functions/.env
 functions/.env.local

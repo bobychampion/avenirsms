@@ -13,6 +13,8 @@ import {
 import { Link } from 'react-router-dom';
 import { cn } from '../../lib/utils';
 import { useSchoolId } from '../../hooks/useSchoolId';
+import { useSchool } from '../../components/SchoolContext';
+import { formatCurrency } from '../../utils/formatCurrency';
 
 interface Stats {
   pendingApplications: number;
@@ -35,6 +37,7 @@ const statusIcon = (s: string) =>
 export default function AdminMobileDashboard() {
   const { profile } = useAuth();
   const schoolId = useSchoolId();
+  const { locale, currency } = useSchool();
   const today = new Date().toLocaleDateString('en-NG', { weekday: 'long', month: 'short', day: 'numeric' });
 
   const [stats, setStats] = useState<Stats>({ pendingApplications: 0, overdueFeesTotal: 0, overdueCount: 0 });
@@ -108,7 +111,7 @@ export default function AdminMobileDashboard() {
           <StatCard
             icon={DollarSign}
             label="Overdue Fees"
-            value={`₦${(stats.overdueFeesTotal / 1000).toFixed(0)}k`}
+            value={new Intl.NumberFormat(locale, { style: 'currency', currency, notation: 'compact', maximumFractionDigits: 0 }).format(stats.overdueFeesTotal)}
             sublabel={`${stats.overdueCount} invoices`}
             accent="rose"
             to="/admin/finance"
@@ -169,7 +172,7 @@ export default function AdminMobileDashboard() {
                     <p className="text-sm font-semibold text-slate-900 truncate">{inv.studentName}</p>
                     <p className="text-xs text-slate-500">{inv.description} · Due {inv.dueDate}</p>
                   </div>
-                  <span className="text-sm font-bold text-rose-600">₦{inv.amount?.toLocaleString()}</span>
+                  <span className="text-sm font-bold text-rose-600">{formatCurrency(inv.amount ?? 0, locale, currency)}</span>
                 </div>
               ))}
             </div>

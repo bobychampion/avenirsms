@@ -12,6 +12,8 @@ import { Link } from 'react-router-dom';
 import { cn } from '../../lib/utils';
 import { format, subDays } from 'date-fns';
 import { useSchoolId } from '../../hooks/useSchoolId';
+import { useSchool } from '../../components/SchoolContext';
+import { formatCurrency } from '../../utils/formatCurrency';
 
 const ATT_COLOR: Record<string, string> = {
   present: 'bg-emerald-500',
@@ -28,6 +30,7 @@ const ATT_ICON: Record<string, React.ElementType> = {
 export default function ParentMobileHome() {
   const { profile } = useAuth();
   const schoolId = useSchoolId();
+  const { locale, currency } = useSchool();
   const [children, setChildren] = useState<(Student & { id: string })[]>([]);
   const [selectedChild, setSelectedChild] = useState<(Student & { id: string }) | null>(null);
   const [weekAttendance, setWeekAttendance] = useState<Record<string, Attendance>>({});
@@ -237,7 +240,7 @@ export default function ParentMobileHome() {
                 </div>
                 <div className="flex-1">
                   <p className={cn('text-xl font-bold', pendingBalance > 0 ? 'text-rose-700' : 'text-emerald-700')}>
-                    {pendingBalance > 0 ? `₦${pendingBalance.toLocaleString()}` : 'All Clear'}
+                    {pendingBalance > 0 ? formatCurrency(pendingBalance, locale, currency) : 'All Clear'}
                   </p>
                   <p className="text-xs text-slate-500">
                     {pendingBalance > 0 ? `${pendingCount} outstanding invoice${pendingCount > 1 ? 's' : ''}` : 'No outstanding fees'}

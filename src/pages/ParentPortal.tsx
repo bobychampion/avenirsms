@@ -18,6 +18,7 @@ import PaystackButton from '../components/PaystackPayment';
 import { DOCUMENT_TITLE_DEFAULT } from '../constants/appMeta';
 import { useSchoolId } from '../hooks/useSchoolId';
 import { useSchool } from '../components/SchoolContext';
+import { formatCurrency } from '../utils/formatCurrency';
 import toast from 'react-hot-toast';
 
 const GRADE_COLORS: Record<string, string> = {
@@ -34,7 +35,7 @@ export default function ParentPortal() {
   const { user, profile } = useAuth();
   const navigate = useNavigate();
   const schoolId = useSchoolId();
-  const { getGradingForClass } = useSchool();
+  const { getGradingForClass, locale, currency } = useSchool();
   const [children, setChildren] = useState<Student[]>([]);
   const [selectedChild, setSelectedChild] = useState<Student | null>(null);
   const [grades, setGrades] = useState<Grade[]>([]);
@@ -476,7 +477,7 @@ export default function ParentPortal() {
               { label: 'Class', value: selectedChild.currentClass, Icon: User, color: 'indigo' },
               { label: `${filterTerm} Avg Score`, value: avgScore ? `${avgScore}%` : 'N/A', Icon: Award, color: 'emerald' },
               { label: 'Attendance Rate', value: `${attendanceRate}%`, Icon: Activity, color: attendanceRate >= 75 ? 'emerald' : 'amber' },
-              { label: 'Outstanding Fees', value: `₦${unpaidInvoices.reduce((s, i) => s + i.amount, 0).toLocaleString()}`, Icon: DollarSign, color: unpaidInvoices.length > 0 ? 'rose' : 'emerald' },
+              { label: 'Outstanding Fees', value: formatCurrency(unpaidInvoices.reduce((s, i) => s + i.amount, 0), locale, currency), Icon: DollarSign, color: unpaidInvoices.length > 0 ? 'rose' : 'emerald' },
             ].map(card => (
               <div key={card.label} className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
                 <div className={`w-9 h-9 rounded-xl bg-${card.color}-50 flex items-center justify-center mb-3`}>
@@ -943,7 +944,7 @@ export default function ParentPortal() {
               <div key={card.label} className={`bg-white p-6 rounded-2xl border ${card.color === 'rose' && unpaidInvoices.length > 0 ? 'border-rose-200 shadow-rose-50' : 'border-slate-200'} shadow-sm`}>
                 <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1">{card.label}</p>
                 <h3 className={`text-2xl font-bold text-${card.color === 'slate' ? 'slate-900' : card.color + '-600'}`}>
-                  ₦{card.value.toLocaleString()}
+                  {formatCurrency(card.value, locale, currency)}
                 </h3>
               </div>
             ))}
@@ -964,7 +965,7 @@ export default function ParentPortal() {
                     <p className="text-xs text-slate-500">{inv.term} · {inv.session} · Due: {inv.dueDate}</p>
                   </div>
                   <div className="flex items-center gap-3 flex-shrink-0">
-                    <p className="text-sm font-bold text-slate-900">₦{inv.amount.toLocaleString()}</p>
+                    <p className="text-sm font-bold text-slate-900">{formatCurrency(inv.amount, locale, currency)}</p>
                     <span className={`px-2 py-1 rounded-full text-[10px] font-bold uppercase ${
                       inv.status === 'paid' ? 'bg-emerald-50 text-emerald-700' :
                       inv.status === 'pending' ? 'bg-amber-50 text-amber-700' : 'bg-rose-50 text-rose-700'

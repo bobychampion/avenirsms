@@ -7,10 +7,11 @@ import { Link } from 'react-router-dom';
 import { collection, query, where, onSnapshot } from 'firebase/firestore';
 import { db } from '../firebase';
 import { useSchool } from '../components/SchoolContext';
+import { formatCurrency } from '../utils/formatCurrency';
 import { DollarSign, Receipt, FileText, ArrowRight, TrendingUp, AlertCircle } from 'lucide-react';
 
 export default function AccountantPortal() {
-  const { schoolId, schoolName } = useSchool();
+  const { schoolId, schoolName, locale, currency } = useSchool();
   const [stats, setStats] = useState({ outstanding: 0, paidThisMonth: 0, expensesThisMonth: 0 });
 
   useEffect(() => {
@@ -72,19 +73,19 @@ export default function AccountantPortal() {
         <StatCard
           icon={<AlertCircle className="w-5 h-5" />}
           label="Outstanding fees"
-          value={`₦${stats.outstanding.toLocaleString()}`}
+          value={formatCurrency(stats.outstanding, locale, currency)}
           tone="rose"
         />
         <StatCard
           icon={<TrendingUp className="w-5 h-5" />}
           label="Collected this month"
-          value={`₦${stats.paidThisMonth.toLocaleString()}`}
+          value={formatCurrency(stats.paidThisMonth, locale, currency)}
           tone="emerald"
         />
         <StatCard
           icon={<Receipt className="w-5 h-5" />}
           label="Expenses this month"
-          value={`₦${stats.expensesThisMonth.toLocaleString()}`}
+          value={formatCurrency(stats.expensesThisMonth, locale, currency)}
           tone="indigo"
         />
       </section>

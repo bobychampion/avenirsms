@@ -17,6 +17,7 @@ import {
 } from '../types';
 import { useSchoolId } from '../hooks/useSchoolId';
 import { useSchool } from '../components/SchoolContext';
+import { getCurrencySymbol } from '../utils/formatCurrency';
 import { useAuth } from '../components/FirebaseProvider';
 import { motion, AnimatePresence } from 'motion/react';
 import toast from 'react-hot-toast';
@@ -915,6 +916,7 @@ interface AlumniTabProps {
 }
 
 function AlumniTab({ student, schoolId, profile }: AlumniTabProps) {
+  const { locale, currency } = useSchool();
   const [alumniData, setAlumniData] = useState<Partial<AlumniProfile>>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -1154,7 +1156,7 @@ function AlumniTab({ student, schoolId, profile }: AlumniTabProps) {
             </select>
           </div>
           <div className="space-y-1.5">
-            <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">Total Donations (₦)</label>
+            <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">Total Donations ({getCurrencySymbol(locale, currency)})</label>
             <input
               type="number"
               min="0"

@@ -16,6 +16,7 @@ import {
 } from 'firebase/firestore';
 import { db } from '../firebase';
 import { useSchool } from '../components/SchoolContext';
+import { formatCurrency, getCurrencySymbol } from '../utils/formatCurrency';
 import { Student } from '../types';
 import { motion, AnimatePresence } from 'motion/react';
 import {
@@ -66,7 +67,7 @@ const emptyTrip = (): Omit<SchoolTrip, 'id' | 'schoolId' | 'createdAt'> => ({
 });
 
 export default function TripRegister() {
-  const { schoolId } = useSchool();
+  const { schoolId, locale, currency } = useSchool();
 
   const [trips, setTrips] = useState<SchoolTrip[]>([]);
   const [students, setStudents] = useState<Student[]>([]);
@@ -256,7 +257,7 @@ export default function TripRegister() {
                     className="w-full px-3 py-2 rounded-xl border border-slate-200 text-sm outline-none focus:ring-2 focus:ring-indigo-500" />
                 </div>
                 <div>
-                  <label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Cost per Student (₦)</label>
+                  <label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Cost per Student ({getCurrencySymbol(locale, currency)})</label>
                   <input type="number" min="0" value={tripForm.cost}
                     onChange={e => setTripForm({ ...tripForm, cost: parseFloat(e.target.value) || 0 })}
                     className="w-full px-3 py-2 rounded-xl border border-slate-200 text-sm outline-none focus:ring-2 focus:ring-indigo-500" />
@@ -331,7 +332,7 @@ export default function TripRegister() {
                         <span className="flex items-center gap-1"><MapPin className="w-3 h-3" />{trip.destination}</span>
                         <span className="flex items-center gap-1"><Calendar className="w-3 h-3" />{trip.departureDate}{trip.returnDate ? ` → ${trip.returnDate}` : ''}</span>
                         <span className="flex items-center gap-1"><Users className="w-3 h-3" />{regs.length}/{trip.maxStudents} registered</span>
-                        {trip.cost > 0 && <span className="flex items-center gap-1"><DollarSign className="w-3 h-3" />₦{trip.cost.toLocaleString()}</span>}
+                        {trip.cost > 0 && <span className="flex items-center gap-1"><DollarSign className="w-3 h-3" />{formatCurrency(trip.cost, locale, currency)}</span>}
                       </div>
                       {trip.description && <p className="text-xs text-slate-400 mt-1 line-clamp-1">{trip.description}</p>}
                     </div>

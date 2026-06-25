@@ -1405,7 +1405,7 @@ export default function AdminDashboard() {
                   <BarChart data={revenueByMonth}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
                     <XAxis dataKey="month" tick={{ fontSize: 10 }} />
-                    <YAxis tick={{ fontSize: 10 }} width={40} tickFormatter={v => `₦${(v / 1000).toFixed(0)}k`} />
+                    <YAxis tick={{ fontSize: 10 }} width={40} tickFormatter={v => new Intl.NumberFormat(locale, { style: 'currency', currency, notation: 'compact', maximumFractionDigits: 0 }).format(v)} />
                     <Tooltip content={<CustomTooltip />} formatter={(v: any) => fmt(v)} />
                     <Legend wrapperStyle={{ fontSize: 11 }} />
                     <Bar dataKey="revenue" fill="#10b981" radius={[3, 3, 0, 0]} name="Revenue" />

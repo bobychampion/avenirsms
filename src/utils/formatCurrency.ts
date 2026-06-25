@@ -35,3 +35,18 @@ export function formatCurrency(
 export function formatNaira(amount: number): string {
   return formatCurrency(amount, 'en-NG', 'NGN');
 }
+
+/**
+ * Returns just the currency symbol (e.g. '₦', '€', '$') for use in labels
+ * like "Cost per Student (₦)" where a full formatted amount isn't wanted.
+ */
+export function getCurrencySymbol(locale: string = 'en', currency: string = 'USD'): string {
+  try {
+    const part = new Intl.NumberFormat(locale, { style: 'currency', currency })
+      .formatToParts(0)
+      .find(p => p.type === 'currency');
+    return part?.value ?? currency;
+  } catch {
+    return currency;
+  }
+}

@@ -15,6 +15,7 @@ import {
 } from 'firebase/firestore';
 import { db } from '../../firebase';
 import { useSchool } from '../../components/SchoolContext';
+import { formatCurrency } from '../../utils/formatCurrency';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   AlertCircle, CheckCircle2, MinusCircle, Loader2, Search,
@@ -43,7 +44,7 @@ function daysBetween(a: Date, b: Date) {
 }
 
 export default function LibraryFines() {
-  const { schoolId } = useSchool();
+  const { schoolId, locale, currency } = useSchool();
 
   const [records, setRecords] = useState<CirculationRecord[]>([]);
   const [loading, setLoading] = useState(true);
@@ -105,7 +106,7 @@ export default function LibraryFines() {
         fineAmount: fine,
         [`fineResolvedAt`]: new Date().toISOString().split('T')[0],
       });
-      toast.success(action === 'paid' ? `₦${fine.toLocaleString()} fine collected.` : 'Fine waived.');
+      toast.success(action === 'paid' ? `${formatCurrency(fine, locale, currency)} fine collected.` : 'Fine waived.');
     } catch {
       toast.error('Failed to update fine status.');
     } finally {
@@ -119,7 +120,7 @@ export default function LibraryFines() {
       <div>
         <p className="text-xs font-bold uppercase tracking-wider text-indigo-600">Library</p>
         <h1 className="mt-1 text-2xl font-extrabold text-slate-900">Fines Management</h1>
-        <p className="text-xs text-slate-400 mt-0.5">Rate: ₦{FINE_PER_DAY}/day per overdue book</p>
+        <p className="text-xs text-slate-400 mt-0.5">Rate: {formatCurrency(FINE_PER_DAY, locale, currency)}/day per overdue book</p>
       </div>
 
       {/* Summary Cards */}
@@ -127,14 +128,14 @@ export default function LibraryFines() {
         <div className="bg-rose-50 border border-rose-100 rounded-2xl p-5">
           <p className="text-xs font-bold uppercase tracking-wider text-rose-600">Outstanding Fines</p>
           <p className="text-2xl font-extrabold text-rose-700 mt-1">
-            ₦{totalFines.toLocaleString()}
+            {formatCurrency(totalFines, locale, currency)}
           </p>
           <p className="text-xs text-rose-500 mt-0.5">{records.filter(r => !r.fineStatus).length} borrowers</p>
         </div>
         <div className="bg-emerald-50 border border-emerald-100 rounded-2xl p-5">
           <p className="text-xs font-bold uppercase tracking-wider text-emerald-600">Collected</p>
           <p className="text-2xl font-extrabold text-emerald-700 mt-1">
-            ₦{totalCollected.toLocaleString()}
+            {formatCurrency(totalCollected, locale, currency)}
           </p>
           <p className="text-xs text-emerald-500 mt-0.5">{records.filter(r => r.fineStatus === 'paid').length} settled</p>
         </div>
@@ -241,7 +242,7 @@ export default function LibraryFines() {
                   <div className="flex items-center gap-3 shrink-0">
                     <div className="text-right">
                       <p className="text-xs text-slate-400">Fine</p>
-                      <p className="font-extrabold text-rose-600 text-lg">₦{fine.toLocaleString()}</p>
+                      <p className="font-extrabold text-rose-600 text-lg">{formatCurrency(fine, locale, currency)}</p>
                     </div>
                     {!settled && (
                       <div className="flex flex-col gap-1">

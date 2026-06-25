@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useState, ReactNode } from 'react';
 import { onAuthStateChanged, User, signInWithPopup, GoogleAuthProvider, signOut, signInWithEmailAndPassword, createUserWithEmailAndPassword } from 'firebase/auth';
-import { doc, setDoc, getDoc, updateDoc } from 'firebase/firestore';
+import { doc, setDoc, onSnapshot, updateDoc } from 'firebase/firestore';
 import { auth, db, handleFirestoreError, OperationType } from '../firebase';
 import { UserProfile } from '../types';
 import { hasPermission as checkPermission, type Permission } from '../utils/permissions';
@@ -33,7 +33,14 @@ export function FirebaseProvider({ children }: { children: ReactNode }) {
   const [authError, setAuthError] = useState<string | null>(null);
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
+    let unsubscribeProfile: (() => void) | null = null;
+
+    const unsubscribeAuth = onAuthStateChanged(auth, (currentUser) => {
+      if (unsubscribeProfile) {
+        unsubscribeProfile();
+        unsubscribeProfile = null;
+      }
+
       if (!currentUser) {
         setUser(null);
         setProfile(null);
@@ -46,48 +53,67 @@ export function FirebaseProvider({ children }: { children: ReactNode }) {
       setLoading(true);
 
       const profileRef = doc(db, 'users', currentUser.uid);
-      try {
-        const profileSnap = await getDoc(profileRef);
-        if (profileSnap.exists()) {
-          let profileData = profileSnap.data() as UserProfile;
-          // One-time role upgrade: if this is a bootstrap super_admin email but
-          // the Firestore doc still has the old 'admin' role, promote it now.
-          if (
-            SUPER_ADMIN_EMAILS.includes(currentUser.email ?? '') &&
-            profileData.role !== 'super_admin'
-          ) {
-            await updateDoc(profileRef, { role: 'super_admin' });
-            profileData = { ...profileData, role: 'super_admin' };
+      let bootstrapping = false;
+
+      // Live listener (not a one-time getDoc) so that profile edits — e.g. a
+      // self-service profile-picture upload — are reflected immediately
+      // across the app (sidebar/header avatars) without requiring a reload.
+      unsubscribeProfile = onSnapshot(
+        profileRef,
+        async (profileSnap) => {
+          try {
+            if (profileSnap.exists()) {
+              const profileData = profileSnap.data() as UserProfile;
+              // One-time role upgrade: if this is a bootstrap super_admin email but
+              // the Firestore doc still has the old 'admin' role, promote it now.
+              // The resulting write re-triggers this listener with the corrected role.
+              if (
+                SUPER_ADMIN_EMAILS.includes(currentUser.email ?? '') &&
+                profileData.role !== 'super_admin'
+              ) {
+                await updateDoc(profileRef, { role: 'super_admin' });
+                return;
+              }
+              setProfile(profileData);
+            } else if (!bootstrapping) {
+              // Bootstrap first-time profile. The resulting write re-triggers
+              // this listener with exists() === true, which sets profile above.
+              bootstrapping = true;
+              const isSuperAdminEmail = SUPER_ADMIN_EMAILS.includes(currentUser.email ?? '');
+              const newProfile: UserProfile = {
+                uid: currentUser.uid,
+                email: currentUser.email || '',
+                role: isSuperAdminEmail ? 'super_admin' : 'applicant',
+                displayName: currentUser.displayName || 'New User',
+                // super_admin has no schoolId — they manage all schools
+                ...(isSuperAdminEmail ? {} : { schoolId: undefined }),
+              };
+              await setDoc(profileRef, newProfile);
+            }
+          } catch (error) {
+            console.error('Failed to load user profile:', error);
+            try {
+              handleFirestoreError(error, OperationType.GET, `users/${currentUser.uid}`);
+            } catch {
+              /* handleFirestoreError rethrows after logging */
+            }
+            setProfile(null);
+          } finally {
+            setLoading(false);
           }
-          setProfile(profileData);
-        } else {
-          // Bootstrap first-time profile
-          const isSuperAdminEmail = SUPER_ADMIN_EMAILS.includes(currentUser.email ?? '');
-          const newProfile: UserProfile = {
-            uid: currentUser.uid,
-            email: currentUser.email || '',
-            role: isSuperAdminEmail ? 'super_admin' : 'applicant',
-            displayName: currentUser.displayName || 'New User',
-            // super_admin has no schoolId — they manage all schools
-            ...(isSuperAdminEmail ? {} : { schoolId: undefined }),
-          };
-          await setDoc(profileRef, newProfile);
-          setProfile(newProfile);
+        },
+        (error) => {
+          console.error('Profile listener error:', error);
+          setProfile(null);
+          setLoading(false);
         }
-      } catch (error) {
-        console.error('Failed to load user profile:', error);
-        try {
-          handleFirestoreError(error, OperationType.GET, `users/${currentUser.uid}`);
-        } catch {
-          /* handleFirestoreError rethrows after logging */
-        }
-        setProfile(null);
-      } finally {
-        setLoading(false);
-      }
+      );
     });
 
-    return () => unsubscribe();
+    return () => {
+      unsubscribeAuth();
+      if (unsubscribeProfile) unsubscribeProfile();
+    };
   }, []);
 
   const login = async () => {

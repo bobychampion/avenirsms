@@ -45,6 +45,8 @@ export interface UserProfile {
     | 'librarian'
     | 'staff';
   displayName: string;
+  /** Profile picture URL (Cloudinary), set via the self-service My Profile page. */
+  photoUrl?: string;
   disabled?: boolean;
   /** School this user belongs to. Undefined only for super_admin accounts. */
   schoolId?: string;

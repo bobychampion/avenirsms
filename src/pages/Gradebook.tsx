@@ -239,8 +239,12 @@ export default function Gradebook() {
                     <tr key={student.id} className={`hover:bg-slate-50 transition-colors ${isSaved ? 'bg-emerald-50/50' : ''}`}>
                       <td className="px-5 py-3">
                         <div className="flex items-center gap-2.5">
-                          <div className="w-7 h-7 rounded-lg bg-indigo-100 flex items-center justify-center text-indigo-700 font-bold text-xs flex-shrink-0">
-                            {student.studentName.charAt(0)}
+                          <div className="w-7 h-7 rounded-lg overflow-hidden bg-indigo-100 flex items-center justify-center text-indigo-700 font-bold text-xs flex-shrink-0">
+                            {student.photoUrl ? (
+                              <img src={student.photoUrl} alt={student.studentName} className="w-full h-full object-cover" />
+                            ) : (
+                              student.studentName.charAt(0)
+                            )}
                           </div>
                           <div>
                             <p className="font-semibold text-slate-800">{student.studentName}</p>

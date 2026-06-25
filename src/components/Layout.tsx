@@ -18,6 +18,7 @@ import { doc, onSnapshot } from 'firebase/firestore';
 import { GeoFence } from '../types';
 import { isWithinFence } from '../services/geofenceService';
 import { useSchoolId } from '../hooks/useSchoolId';
+import Avatar from './Avatar';
 
 // ── Live clock widget ─────────────────────────────────────────────────────────
 function LiveClock() {
@@ -344,7 +345,7 @@ function AdminSidebar({ open, onClose, schoolName, logoUrl, primaryColor, sideba
   );
 }
 
-function TeacherSidebar({ open, onClose, displayName, schoolName, logoUrl }: { open: boolean; onClose: () => void; displayName?: string; schoolName: string; logoUrl: string }) {
+function TeacherSidebar({ open, onClose, displayName, photoUrl, schoolName, logoUrl }: { open: boolean; onClose: () => void; displayName?: string; photoUrl?: string; schoolName: string; logoUrl: string }) {
   const location = useLocation();
   const activeTab = new URLSearchParams(location.search).get('tab') || '';
 
@@ -381,17 +382,15 @@ function TeacherSidebar({ open, onClose, displayName, schoolName, logoUrl }: { o
         </div>
 
         {/* Teacher profile badge */}
-        <div className="px-5 py-4 border-b border-slate-700/50">
+        <Link to="/profile" className="px-5 py-4 border-b border-slate-700/50 block hover:bg-slate-800/50 transition-colors">
           <div className="flex items-center gap-3">
-            <div className="w-9 h-9 bg-gradient-to-br from-emerald-500 to-teal-600 rounded-full flex items-center justify-center flex-shrink-0">
-              <span className="text-white text-sm font-bold">{displayName?.[0]?.toUpperCase() || 'T'}</span>
-            </div>
+            <Avatar photoUrl={photoUrl} name={displayName ?? ''} fallbackChar="T" size="xs" rounded="full" gradientFrom="from-emerald-500" gradientTo="to-teal-600" />
             <div className="min-w-0">
               <p className="text-white text-sm font-semibold truncate">{displayName || 'Teacher'}</p>
               <p className="text-emerald-400 text-xs">Class Teacher</p>
             </div>
           </div>
-        </div>
+        </Link>
 
         {/* Nav */}
         <nav className="flex-1 overflow-y-auto py-4 px-3 space-y-5">
@@ -538,7 +537,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
   if (isTeacher) {
     return (
       <div className="h-screen bg-slate-50 flex overflow-hidden">
-        <TeacherSidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} displayName={profile?.displayName} schoolName={schoolName} logoUrl={logoUrl} />
+        <TeacherSidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} displayName={profile?.displayName} photoUrl={profile?.photoUrl} schoolName={schoolName} logoUrl={logoUrl} />
         <div className="flex-1 flex flex-col min-w-0">
           <header className="bg-white border-b border-slate-200 sticky top-0 z-30 h-16 flex items-center px-4 sm:px-6 gap-4">
             <button
@@ -565,11 +564,9 @@ export function Layout({ children }: { children: React.ReactNode }) {
                 <p className="text-sm font-semibold text-slate-900">{profile?.displayName}</p>
                 <p className="text-xs text-emerald-600 font-medium">Teacher</p>
               </div>
-              <div className="w-9 h-9 bg-gradient-to-br from-emerald-500 to-teal-600 rounded-full flex items-center justify-center">
-                <span className="text-white text-sm font-bold">
-                  {profile?.displayName?.[0]?.toUpperCase() || 'T'}
-                </span>
-              </div>
+              <Link to="/profile" title="My Profile">
+                <Avatar photoUrl={profile?.photoUrl} name={profile?.displayName ?? ''} fallbackChar="T" size="xs" rounded="full" gradientFrom="from-emerald-500" gradientTo="to-teal-600" />
+              </Link>
               <button
                 onClick={handleLogout}
                 className="p-2 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"
@@ -605,9 +602,9 @@ export function Layout({ children }: { children: React.ReactNode }) {
                 <p className="text-sm font-semibold text-slate-900">{profile?.displayName}</p>
                 <p className="text-xs text-teal-600 font-medium">Accountant</p>
               </div>
-              <div className="w-9 h-9 bg-gradient-to-br from-teal-500 to-cyan-600 rounded-full flex items-center justify-center">
-                <span className="text-white text-sm font-bold">{profile?.displayName?.[0]?.toUpperCase() || 'A'}</span>
-              </div>
+              <Link to="/profile" title="My Profile">
+                <Avatar photoUrl={profile?.photoUrl} name={profile?.displayName ?? ''} fallbackChar="A" size="xs" rounded="full" gradientFrom="from-teal-500" gradientTo="to-cyan-600" />
+              </Link>
               <button onClick={handleLogout} className="p-2 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors" title="Logout">
                 <LogOut className="w-4 h-4" />
               </button>
@@ -655,11 +652,9 @@ export function Layout({ children }: { children: React.ReactNode }) {
                 <p className="text-sm font-semibold text-slate-900">{profile?.displayName}</p>
                 <p className="text-xs text-slate-500 capitalize">{profile?.role?.replace('_', ' ')}</p>
               </div>
-              <div className="w-9 h-9 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-full flex items-center justify-center">
-                <span className="text-white text-sm font-bold">
-                  {profile?.displayName?.[0]?.toUpperCase() || 'A'}
-                </span>
-              </div>
+              <Link to="/profile" title="My Profile">
+                <Avatar photoUrl={profile?.photoUrl} name={profile?.displayName ?? ''} fallbackChar="A" size="xs" rounded="full" gradientFrom="from-indigo-500" gradientTo="to-purple-600" />
+              </Link>
               <button
                 onClick={handleLogout}
                 className="p-2 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"

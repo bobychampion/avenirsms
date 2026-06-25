@@ -7,6 +7,7 @@ import { useSchoolId } from '../hooks/useSchoolId';
 import { motion } from 'motion/react';
 import { Search, Filter, User, Phone, Mail, Calendar, ArrowRight, ArrowLeft, ChevronLeft, ChevronRight, Download } from 'lucide-react';
 import { exportStudentsCsv } from '../services/dataExport/csvModules';
+import Avatar from '../components/Avatar';
 
 const PAGE_SIZE = 20;
 
@@ -135,9 +136,7 @@ export default function StudentList() {
             >
               <div className="flex items-start justify-between mb-6">
                 <div className="flex items-center">
-                  <div className="w-12 h-12 rounded-xl bg-indigo-600 flex items-center justify-center text-white font-bold text-xl mr-4 shadow-indigo-100 shadow-lg">
-                    {student.studentName.charAt(0)}
-                  </div>
+                  <Avatar photoUrl={student.photoUrl} name={student.studentName} size="sm" gradientFrom="from-indigo-600" gradientTo="to-indigo-600" className="mr-4 shadow-indigo-100 shadow-lg" />
                   <div>
                     <h3 className="font-bold text-slate-900 group-hover:text-indigo-600 transition-colors">{student.studentName}</h3>
                     <p className="text-xs font-bold text-indigo-600 uppercase tracking-wider">{student.studentId}</p>

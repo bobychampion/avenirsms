@@ -10,6 +10,7 @@ import {
   doc, onSnapshot, collection, query, where, orderBy,
   addDoc, setDoc, serverTimestamp, getDocs,
 } from 'firebase/firestore';
+import Avatar from '../components/Avatar';
 import {
   Student, Grade, LifecycleEvent, BehavioralRecord, AlumniProfile,
   TERMS,
@@ -172,15 +173,7 @@ export default function StudentLifecycle() {
       {/* ── Student identity bar ── */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-8">
         <div className="flex items-center gap-4">
-          <div className="w-14 h-14 rounded-2xl overflow-hidden flex-shrink-0 shadow-md">
-            {student.photoUrl ? (
-              <img src={student.photoUrl} alt={student.studentName} className="w-full h-full object-cover" />
-            ) : (
-              <div className="w-full h-full bg-indigo-600 flex items-center justify-center text-white font-bold text-xl">
-                {student.studentName.charAt(0)}
-              </div>
-            )}
-          </div>
+          <Avatar photoUrl={student.photoUrl} name={student.studentName} size="md" rounded="2xl" gradientFrom="from-indigo-600" gradientTo="to-indigo-600" className="shadow-md" />
           <div>
             <h1 className="text-2xl font-bold text-slate-900">{student.studentName}</h1>
             <div className="flex items-center gap-2 mt-1 flex-wrap">

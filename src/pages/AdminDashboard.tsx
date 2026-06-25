@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { db, handleFirestoreError, OperationType } from '../firebase';
-import { collection, query, onSnapshot, orderBy, getDocs, limit, where } from 'firebase/firestore';
+import { collection, query, onSnapshot, orderBy, getDocs, limit, where, doc } from 'firebase/firestore';
 import {
   initFCMForUser, onForegroundMessage,
   notifyCheckIn, notifyCheckOut, notifyIdleClass,
@@ -300,8 +300,8 @@ export default function AdminDashboard() {
     const today = new Date().toISOString().split('T')[0];
 
     const unsubFence = onSnapshot(
-      collection(db, 'geofences'),
-      snap => setGeofenceEnabled(!snap.empty),
+      doc(db, 'geofences', schoolId),
+      snap => setGeofenceEnabled(snap.exists()),
     );
 
     const unsubCheckins = onSnapshot(

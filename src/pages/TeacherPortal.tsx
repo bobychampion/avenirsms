@@ -15,6 +15,7 @@ import ReactMarkdown from 'react-markdown';
 import toast from 'react-hot-toast';
 import { useSchool } from '../components/SchoolContext';
 import { useSchoolId } from '../hooks/useSchoolId';
+import Avatar from '../components/Avatar';
 import {
   BookOpen, Users, MessageSquare, Plus, Send, Loader2,
   Calendar, CheckCircle2, Clock, Filter, Search,
@@ -30,6 +31,7 @@ interface AttendanceRow {
   studentId: string;
   studentName: string;
   studentIdCode: string;
+  photoUrl?: string;
   status: 'present' | 'absent' | 'late';
 }
 
@@ -422,6 +424,7 @@ export default function TeacherPortal() {
         studentId: s.id!,
         studentName: s.studentName,
         studentIdCode: s.studentId,
+        photoUrl: s.photoUrl,
         status: existingMap[s.id!] || 'present'
       })));
     };
@@ -1013,9 +1016,7 @@ export default function TeacherPortal() {
                 {students.map(student => (
                   <div key={student.id} className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm hover:shadow-md transition-all">
                     <div className="flex items-center mb-4">
-                      <div className="w-11 h-11 rounded-xl bg-gradient-to-br from-indigo-500 to-violet-600 flex items-center justify-center text-white font-bold text-lg mr-3">
-                        {student.studentName.charAt(0)}
-                      </div>
+                      <Avatar photoUrl={student.photoUrl} name={student.studentName} size="sm" gradientFrom="from-indigo-500" gradientTo="to-violet-600" className="mr-3" />
                       <div>
                         <h4 className="font-bold text-slate-900">{student.studentName}</h4>
                         <p className="text-xs text-slate-400 font-mono">{student.studentId}</p>
@@ -1129,8 +1130,12 @@ export default function TeacherPortal() {
                           <td className="px-5 py-3 text-sm text-slate-400 font-medium">{i + 1}</td>
                           <td className="px-5 py-3">
                             <div className="flex items-center gap-3">
-                              <div className="w-8 h-8 rounded-lg bg-indigo-50 flex items-center justify-center text-indigo-700 font-bold text-sm">
-                                {row.studentName.charAt(0)}
+                              <div className="w-8 h-8 rounded-lg overflow-hidden flex items-center justify-center text-indigo-700 font-bold text-sm bg-indigo-50 flex-shrink-0">
+                                {row.photoUrl ? (
+                                  <img src={row.photoUrl} alt={row.studentName} className="w-full h-full object-cover" />
+                                ) : (
+                                  row.studentName.charAt(0)
+                                )}
                               </div>
                               <span className="text-sm font-medium text-slate-900">{row.studentName}</span>
                             </div>

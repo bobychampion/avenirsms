@@ -83,13 +83,6 @@ export interface SchoolSettings {
   studentIdPrefix: string;
   studentIdFormat: 'PREFIX-YEAR-SEQ' | 'PREFIXYEARSEQ' | 'PREFIX-SEQ';
   studentIdPadding: number;
-  /**
-   * Minimum class at which a synthetic school-email login is auto-provisioned
-   * for a newly admitted student. Classes below this tier skip account
-   * creation (parents use the parent portal on their behalf).
-   * Empty string / undefined disables auto-provisioning for all classes.
-   */
-  studentAccountMinClass?: string;
   // Dynamic lists
   schoolLevels: string[];
   customSubjects: string[];
@@ -239,7 +232,6 @@ export const defaultSettings: SchoolSettings = {
   studentIdPrefix: 'STU',
   studentIdFormat: 'PREFIX-YEAR-SEQ',
   studentIdPadding: 3,
-  studentAccountMinClass: 'Primary 1',
   schoolLevels: [...SCHOOL_CLASSES],
   customSubjects: [],
   periodTimes: periodTimesFromSlots(DEFAULT_TIMETABLE_PERIODS),
@@ -1409,25 +1401,6 @@ export default function SchoolSettingsPage() {
               <span className="font-mono font-bold text-indigo-700 text-sm">
                 {previewStudentId(form.studentIdPrefix || 'STU', form.studentIdFormat, form.studentIdPadding)}
               </span>
-            </div>
-            <div className="mt-5 pt-5 border-t border-slate-200">
-              <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">
-                Auto-provision student login from class
-              </label>
-              <p className="text-xs text-slate-500 mb-2">
-                On admission approval, students at or above this class get a school email and temp password auto-generated.
-                Younger students rely on their parent's portal account.
-              </p>
-              <select
-                value={form.studentAccountMinClass ?? ''}
-                onChange={e => field('studentAccountMinClass', e.target.value || undefined)}
-                className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm"
-              >
-                <option value="">Disabled — never auto-create student accounts</option>
-                {(form.schoolLevels?.length ? form.schoolLevels : []).map(c => (
-                  <option key={c} value={c}>{c} and above</option>
-                ))}
-              </select>
             </div>
           </section>
 

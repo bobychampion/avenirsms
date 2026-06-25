@@ -17,6 +17,7 @@ import StudentLifecycle from './pages/StudentLifecycle';
 import TeacherPortal from './pages/TeacherPortal';
 import ParentPortal from './pages/ParentPortal';
 import SchoolCalendar from './pages/SchoolCalendar';
+import MyProfile from './pages/MyProfile';
 import FinancialManagement from './pages/FinancialManagement';
 import Gradebook from './pages/Gradebook';
 import ReportCards from './pages/ReportCards';
@@ -309,6 +310,9 @@ function AppContent() {
 
           {/* Calendar (all roles) */}
           <Route path="/calendar" element={<Layout><ProtectedRoute><SchoolCalendar /></ProtectedRoute></Layout>} />
+
+          {/* My Profile (all roles) */}
+          <Route path="/profile" element={<Layout><ProtectedRoute><MyProfile /></ProtectedRoute></Layout>} />
 
           {/* CBT Exam Engine — standalone full-screen (no Layout) */}
           <Route path="/cbt/:sessionId" element={<ProtectedRoute><CBTExamEngine /></ProtectedRoute>} />

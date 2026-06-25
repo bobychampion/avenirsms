@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { db } from '../firebase';
+import { db, handleFirestoreError, OperationType } from '../firebase';
 import { initializeApp, getApps } from 'firebase/app';
 import { getAuth, createUserWithEmailAndPassword, signOut as firebaseSignOut } from 'firebase/auth';
 import firebaseConfig from '../../firebase-applet-config.json';
@@ -285,11 +285,14 @@ function DirectAdmitModal({
     setForm(prev => ({ ...prev, [field]: val }));
 
   useEffect(() => {
-    // load parent/guardian-role users for linking
-    getDocs(query(collection(db, 'users'), where('role', 'in', ['parent', 'guardian']))).then(snap => {
+    // load parent/guardian-role users for linking — must be scoped by schoolId,
+    // since the users/{userId} read rule requires resource.data.schoolId to match
+    // the caller's own schoolId; an unscoped query here is denied outright.
+    if (!schoolId) return;
+    getDocs(query(collection(db, 'users'), where('schoolId', '==', schoolId), where('role', 'in', ['parent', 'guardian']))).then(snap => {
       setParentUsers(snap.docs.map(d => ({ uid: d.id, ...(d.data() as any) })));
-    });
-  }, []);
+    }).catch(e => handleFirestoreError(e, OperationType.LIST, 'users'));
+  }, [schoolId]);
 
   const filteredSiblings = useMemo(() => {
     if (!form.siblingSearch.trim()) return [];
@@ -359,9 +362,12 @@ function DirectAdmitModal({
 
       if (form.linkExistingParent && form.g1UserId) {
         resolvedParentUserId = form.g1UserId;
-      } else if (normalizedParentEmail) {
+      } else if (normalizedParentEmail && schoolId) {
+        // Scoped by schoolId: the users/{userId} read rule requires resource.data.schoolId
+        // to match the caller's own schoolId, so an email-only filter here would always be
+        // denied. This also correctly limits "existing parent" matches to this school only.
         const existingByEmail = await getDocs(
-          query(collection(db, 'users'), where('email', '==', normalizedParentEmail))
+          query(collection(db, 'users'), where('schoolId', '==', schoolId), where('email', '==', normalizedParentEmail))
         );
         if (!existingByEmail.empty) {
           resolvedParentUserId = existingByEmail.docs[0].id;

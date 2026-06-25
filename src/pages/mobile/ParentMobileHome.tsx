@@ -4,6 +4,7 @@ import {
 } from 'firebase/firestore';
 import { db } from '../../firebase';
 import { MobileShell } from '../../components/MobileShell';
+import Avatar from '../../components/Avatar';
 import { useAuth } from '../../components/FirebaseProvider';
 import { Student, Attendance, Invoice, Notification } from '../../types';
 import { CheckCircle2, XCircle, Clock, DollarSign, Bell, ChevronRight, BookOpen } from 'lucide-react';
@@ -165,9 +166,7 @@ export default function ParentMobileHome() {
           <>
             {/* ── CHILD INFO CARD ── */}
             <div className="bg-white rounded-2xl p-4 shadow-sm border border-slate-100 flex items-center gap-3">
-              <div className="w-12 h-12 rounded-full bg-gradient-to-br from-sky-500 to-blue-600 flex items-center justify-center text-white text-lg font-bold flex-shrink-0">
-                {selectedChild.studentName?.[0]?.toUpperCase()}
-              </div>
+              <Avatar photoUrl={selectedChild.photoUrl} name={selectedChild.studentName} size="sm" rounded="full" gradientFrom="from-sky-500" gradientTo="to-blue-600" />
               <div>
                 <p className="font-bold text-slate-900">{selectedChild.studentName}</p>
                 <p className="text-xs text-slate-500">{selectedChild.currentClass}</p>

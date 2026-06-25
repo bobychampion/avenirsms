@@ -369,8 +369,12 @@ export default function UserManagement() {
                     className={`hover:bg-slate-50 transition-colors cursor-pointer group ${selectedUser?.uid === u.uid ? 'bg-indigo-50/50' : ''} ${u.disabled ? 'opacity-50' : ''}`}>
                     <td className="px-5 py-4">
                       <div className="flex items-center gap-3">
-                        <div className={`w-9 h-9 rounded-xl flex items-center justify-center font-bold text-sm ${u.disabled ? 'bg-slate-100 text-slate-400' : 'bg-indigo-50 text-indigo-700'}`}>
-                          {u.displayName?.charAt(0) || <UserIcon className="w-4 h-4" />}
+                        <div className={`w-9 h-9 rounded-xl overflow-hidden flex items-center justify-center font-bold text-sm flex-shrink-0 ${u.disabled ? 'bg-slate-100 text-slate-400' : 'bg-indigo-50 text-indigo-700'}`}>
+                          {u.photoUrl ? (
+                            <img src={u.photoUrl} alt={u.displayName} className="w-full h-full object-cover" />
+                          ) : (
+                            u.displayName?.charAt(0) || <UserIcon className="w-4 h-4" />
+                          )}
                         </div>
                         <div className="min-w-0">
                           <p className="font-bold text-slate-900 text-sm truncate max-w-[120px]">{u.displayName || 'Unnamed'}</p>
@@ -428,8 +432,12 @@ export default function UserManagement() {
                 </div>
 
                 <div className="text-center mb-6">
-                  <div className={`w-16 h-16 rounded-2xl flex items-center justify-center text-2xl font-bold mx-auto mb-3 ${selectedUser.disabled ? 'bg-slate-100 text-slate-400' : 'bg-gradient-to-br from-indigo-500 to-violet-600 text-white'}`}>
-                    {selectedUser.displayName?.charAt(0) || '?'}
+                  <div className={`w-16 h-16 rounded-2xl overflow-hidden flex items-center justify-center text-2xl font-bold mx-auto mb-3 ${selectedUser.disabled ? 'bg-slate-100 text-slate-400' : 'bg-gradient-to-br from-indigo-500 to-violet-600 text-white'}`}>
+                    {selectedUser.photoUrl ? (
+                      <img src={selectedUser.photoUrl} alt={selectedUser.displayName} className="w-full h-full object-cover" />
+                    ) : (
+                      selectedUser.displayName?.charAt(0) || '?'
+                    )}
                   </div>
                   <h4 className="font-bold text-slate-900 text-lg">{selectedUser.displayName || 'Unnamed User'}</h4>
                   <p className="text-sm text-slate-500 mt-0.5">{selectedUser.email}</p>

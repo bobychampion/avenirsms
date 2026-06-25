@@ -8,10 +8,13 @@ import { Briefcase, Plus, X, Edit2, Trash2, Mail, Phone, DollarSign, ChevronDown
 import { exportStaffCsv } from '../services/dataExport/csvModules';
 import { useSchool } from '../components/SchoolContext';
 import { useSchoolId } from '../hooks/useSchoolId';
-import { uploadToCloudinary } from '../utils/cloudinaryUpload';
+import { useStorageSettings } from '../hooks/useStorageSettings';
+import { uploadFile } from '../services/storage/uploadFile';
 import { formatCurrency } from '../utils/formatCurrency';
 import toast from 'react-hot-toast';
 import { assertNotSuperAdminEmail } from '../utils/superAdminGuard';
+import StorageSetupBanner from '../components/StorageSetupBanner';
+import Avatar from '../components/Avatar';
 
 const PAGE_SIZE = 20;
 
@@ -24,7 +27,8 @@ const emptyLeave: Partial<LeaveRequest> = { type: 'annual', startDate: '', endDa
 
 export default function StaffManagement() {
   const schoolId = useSchoolId();
-  const { subjects: allSubjects, locale, currency, cloudinaryConfig } = useSchool();
+  const { subjects: allSubjects, locale, currency } = useSchool();
+  const { isConnected } = useStorageSettings();
 
   const [staff, setStaff] = useState<Staff[]>([]);
   const [leaves, setLeaves] = useState<LeaveRequest[]>([]);
@@ -107,15 +111,15 @@ export default function StaffManagement() {
   };
 
   const handlePhotoUpload = async (file: File) => {
-    if (!cloudinaryConfig.cloudName || !cloudinaryConfig.uploadPreset) {
-      toast.error('Configure Cloudinary in School Settings → Media & Uploads first.');
+    if (!isConnected || !schoolId) {
+      toast.error('Ask your admin to connect storage in School Settings → Storage first.');
       return;
     }
     setUploadingPhoto(true);
     const tid = toast.loading('Uploading photo…');
     try {
-      const url = await uploadToCloudinary(file, cloudinaryConfig.cloudName, cloudinaryConfig.uploadPreset);
-      setForm(p => ({ ...p, photoUrl: url }));
+      const result = await uploadFile({ schoolId, file, folder: 'staff' });
+      setForm(p => ({ ...p, photoUrl: result.url }));
       toast.success('Photo uploaded!', { id: tid });
     } catch (e: any) {
       toast.error(e.message || 'Upload failed', { id: tid });
@@ -130,6 +134,9 @@ export default function StaffManagement() {
 
   return (
     <div className="p-6 lg:p-8 max-w-6xl mx-auto">
+      <div className="mb-5">
+        <StorageSetupBanner />
+      </div>
       <div className="mb-8 flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-slate-900 flex items-center gap-2">
@@ -199,15 +206,7 @@ export default function StaffManagement() {
                     className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5 hover:shadow-md transition-all">
                     <div className="flex items-start justify-between mb-4">
                       <div className="flex items-center gap-3">
-                        <div className="w-11 h-11 rounded-xl overflow-hidden flex-shrink-0">
-                          {s.photoUrl ? (
-                            <img src={s.photoUrl} alt={s.staffName} className="w-full h-full object-cover" />
-                          ) : (
-                            <div className="w-full h-full bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center text-white font-bold text-lg">
-                              {s.staffName.charAt(0)}
-                            </div>
-                          )}
-                        </div>
+                        <Avatar photoUrl={s.photoUrl} name={s.staffName} size="sm" />
                         <div>
                           <p className="font-bold text-slate-900 text-sm">{s.staffName}</p>
                           <span className={`inline-block px-2 py-0.5 text-[10px] font-bold rounded-full border ${ROLE_COLORS[s.role]}`}>{ROLE_LABELS[s.role]}</span>
@@ -322,20 +321,13 @@ export default function StaffManagement() {
 
               {/* Photo upload area */}
               <div className="flex items-center gap-4 mb-5">
-                <div className="w-16 h-16 rounded-xl overflow-hidden flex-shrink-0">
-                  {form.photoUrl ? (
-                    <img src={form.photoUrl} alt="Staff" className="w-full h-full object-cover" />
-                  ) : (
-                    <div className="w-full h-full bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center text-white font-bold text-xl">
-                      {form.staffName?.charAt(0) || '?'}
-                    </div>
-                  )}
-                </div>
+                <Avatar photoUrl={form.photoUrl} name={form.staffName ?? ''} size="lg" />
                 <div>
                   <input ref={photoInputRef} type="file" accept="image/*" className="hidden"
                     onChange={e => { const f = e.target.files?.[0]; if (f) handlePhotoUpload(f); }} />
                   <button type="button" onClick={() => photoInputRef.current?.click()}
-                    disabled={uploadingPhoto}
+                    disabled={uploadingPhoto || !isConnected}
+                    title={isConnected ? undefined : 'Connect storage in School Settings to enable photo uploads'}
                     className="flex items-center gap-2 px-3 py-2 text-xs font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-xl border border-slate-200 transition-colors disabled:opacity-50">
                     {uploadingPhoto ? (
                       <div className="w-3.5 h-3.5 border-2 border-slate-400 border-t-slate-700 rounded-full animate-spin" />

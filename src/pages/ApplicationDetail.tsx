@@ -391,21 +391,44 @@ export default function ApplicationDetail() {
         }));
       }
       setLoading(false);
-    }, error => handleFirestoreError(error, OperationType.GET, `applications/${id}`));
+    }, error => {
+      // Firestore denies (rather than 404s) a single-doc read whose security rule
+      // depends on resource.data once that document no longer exists — e.g. this
+      // application was since deleted. Treat that as "not found", not a real
+      // permission problem, so the page resolves instead of spinning forever.
+      if (error.code === 'permission-denied') {
+        setApplication(null);
+        setLoading(false);
+        return;
+      }
+      setLoading(false);
+      handleFirestoreError(error, OperationType.GET, `applications/${id}`);
+    });
 
-    // Load students for sibling search — scoped to this school
-    const studentsQuery = schoolId
-      ? query(collection(db, 'students'), where('schoolId', '==', schoolId))
-      : collection(db, 'students');
-    getDocs(studentsQuery).then(snap => {
-      setExistingStudents(snap.docs.map(d => ({ id: d.id, ...(d.data() as Student) })));
-    });
-    // Load parent accounts (include both 'parent' and 'guardian' roles)
-    getDocs(query(collection(db, 'users'), where('role', 'in', ['parent', 'guardian']))).then(snap => {
-      setParentUsers(snap.docs.map(d => ({ uid: d.id, ...(d.data() as any) })));
-    });
-    // Pre-populate guardian form from existing enrolled student (if already approved)
-    getDocs(query(collection(db, 'students'), where('applicationId', '==', id))).then(snap => {
+    // The three queries below all require schoolId to be resolved — the rules they're
+    // checked against (users/{userId}, students/{studentId}) are schoolId-scoped, and
+    // an unscoped query against them is denied outright for any non-super-admin caller
+    // (Firestore can't prove the rule holds for every possible matching document across
+    // every school). Skip them entirely until schoolId is available, rather than falling
+    // back to an unscoped query that would just fail.
+    if (schoolId) {
+      // Load students for sibling search — scoped to this school
+      getDocs(query(collection(db, 'students'), where('schoolId', '==', schoolId))).then(snap => {
+        setExistingStudents(snap.docs.map(d => ({ id: d.id, ...(d.data() as Student) })));
+      }).catch(error => handleFirestoreError(error, OperationType.LIST, 'students'));
+
+      // Load parent accounts (include both 'parent' and 'guardian' roles)
+      getDocs(query(collection(db, 'users'), where('schoolId', '==', schoolId), where('role', 'in', ['parent', 'guardian']))).then(snap => {
+        setParentUsers(snap.docs.map(d => ({ uid: d.id, ...(d.data() as any) })));
+      }).catch(error => handleFirestoreError(error, OperationType.LIST, 'users'));
+    }
+
+    // Pre-populate guardian form from existing enrolled student (if already approved).
+    const enrolledStudentQuery = schoolId
+      ? query(collection(db, 'students'), where('schoolId', '==', schoolId), where('applicationId', '==', id))
+      : null;
+    if (!enrolledStudentQuery) return () => unsubscribe();
+    getDocs(enrolledStudentQuery).then(snap => {
       if (!snap.empty) {
         const s = snap.docs[0].data() as Student;
         setGuardianForm(prev => ({
@@ -425,10 +448,10 @@ export default function ApplicationDetail() {
           setLinkedUserId(s.guardianUserId);
         }
       }
-    });
+    }).catch(error => handleFirestoreError(error, OperationType.LIST, 'students'));
 
     return () => unsubscribe();
-  }, [id]);
+  }, [id, schoolId]);
 
   const handleStatusUpdate = async (newStatus: ApplicationStatus) => {
     if (!id || !application) return;
@@ -444,8 +467,13 @@ export default function ApplicationDetail() {
       });
 
       if (newStatus === 'approved') {
-        // Check if student already exists
-        const studentQuery = query(collection(db, 'students'), where('applicationId', '==', id));
+        // Check if student already exists. Must also filter by schoolId — the
+        // students/{studentId} read rule requires resource.data.schoolId to match
+        // the caller's own schoolId, so an applicationId-only filter is denied outright.
+        const effectiveSchoolId = application.schoolId ?? schoolId;
+        const studentQuery = effectiveSchoolId
+          ? query(collection(db, 'students'), where('schoolId', '==', effectiveSchoolId), where('applicationId', '==', id))
+          : query(collection(db, 'students'), where('applicationId', '==', id));
         const studentSnap = await getDocs(studentQuery);
 
         if (studentSnap.empty) {
@@ -474,10 +502,12 @@ export default function ApplicationDetail() {
 
           if (linkExistingParent && linkedUserId) {
             resolvedParentUserId = linkedUserId;
-          } else if (normalizedEmail) {
-            // Look up existing user by email (auto-identify by email)
+          } else if (normalizedEmail && effectiveSchoolId) {
+            // Look up existing user by email (auto-identify by email). Must be scoped
+            // by schoolId — same reason as the student-existence check above — and this
+            // also correctly limits matches to parents within this school.
             const existingByEmail = await getDocs(
-              query(collection(db, 'users'), where('email', '==', normalizedEmail))
+              query(collection(db, 'users'), where('schoolId', '==', effectiveSchoolId), where('email', '==', normalizedEmail))
             );
             if (!existingByEmail.empty) {
               resolvedParentUserId = existingByEmail.docs[0].id;
@@ -716,7 +746,17 @@ export default function ApplicationDetail() {
       <Loader2 className="w-8 h-8 text-indigo-500 animate-spin" />
     </div>
   );
-  if (!application) return <div className="min-h-screen flex items-center justify-center">Application not found.</div>;
+  if (!application) return (
+    <div className="min-h-screen flex flex-col items-center justify-center gap-4">
+      <p className="text-slate-500">This application no longer exists — it may have been deleted.</p>
+      <button
+        onClick={() => navigate('/admin/admissions')}
+        className="flex items-center gap-1.5 px-4 py-2 bg-indigo-600 text-white text-sm font-semibold rounded-xl hover:bg-indigo-700 transition-colors"
+      >
+        <ArrowLeft className="w-4 h-4" /> Back to Admissions
+      </button>
+    </div>
+  );
 
   const age = differenceInYears(new Date(), parseISO(application.dob));
   const isAgeEligible = application.classApplyingFor.startsWith('Primary')

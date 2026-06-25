@@ -8,7 +8,10 @@ import toast from 'react-hot-toast';
 import { generateStudentInsights } from '../services/geminiService';
 import { useSchool } from '../components/SchoolContext';
 import { useSchoolId } from '../hooks/useSchoolId';
-import { uploadToCloudinary } from '../utils/cloudinaryUpload';
+import { useStorageSettings } from '../hooks/useStorageSettings';
+import { uploadFile } from '../services/storage/uploadFile';
+import StorageSetupBanner from '../components/StorageSetupBanner';
+import Avatar from '../components/Avatar';
 import { 
   ArrowLeft, User, Phone, Mail, GraduationCap, Calendar, Hash, 
   ShieldCheck, Database, Save, Loader2, Heart, Users, BookOpen,
@@ -31,7 +34,8 @@ interface AIInsight {
 export default function StudentProfile() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { cloudinaryConfig, currentSession } = useSchool();
+  const { currentSession } = useSchool();
+  const { isConnected } = useStorageSettings();
   const schoolId = useSchoolId();
   const [student, setStudent] = useState<Student | null>(null);
   const [classes, setClasses] = useState<SchoolClass[]>([]);
@@ -100,15 +104,15 @@ export default function StudentProfile() {
   };
 
   const handlePhotoUpload = async (file: File) => {
-    if (!cloudinaryConfig.cloudName || !cloudinaryConfig.uploadPreset) {
-      toast.error('Configure Cloudinary in School Settings → Media & Uploads first.');
+    if (!isConnected || !schoolId) {
+      toast.error('Ask your admin to connect storage in School Settings → Storage first.');
       return;
     }
     setUploadingPhoto(true);
     const tid = toast.loading('Uploading photo…');
     try {
-      const url = await uploadToCloudinary(file, cloudinaryConfig.cloudName, cloudinaryConfig.uploadPreset);
-      setFormData(prev => ({ ...prev, photoUrl: url }));
+      const result = await uploadFile({ schoolId, file, folder: 'students' });
+      setFormData(prev => ({ ...prev, photoUrl: result.url }));
       toast.success('Photo uploaded!', { id: tid });
     } catch (e: any) {
       toast.error(e.message || 'Upload failed', { id: tid });
@@ -145,6 +149,7 @@ export default function StudentProfile() {
       // Fetch skills
       const skillsSnap = await getDocs(query(
         collection(db, 'student_skills'),
+        where('schoolId', '==', schoolId!),
         where('studentId', '==', student.id),
         where('term', '==', insightTerm)
       ));
@@ -200,23 +205,21 @@ export default function StudentProfile() {
         </Link>
       </div>
 
+      <div className="mb-6">
+        <StorageSetupBanner />
+      </div>
+
       <div className="flex flex-col md:flex-row md:items-center justify-between mb-10 gap-4">
         <div className="flex items-center">
-          <div className="relative w-20 h-20 rounded-3xl overflow-hidden mr-6 shadow-xl shadow-indigo-100 flex-shrink-0">
-            {formData.photoUrl ? (
-              <img src={formData.photoUrl} alt={student.studentName} className="w-full h-full object-cover" />
-            ) : (
-              <div className="w-full h-full bg-indigo-600 flex items-center justify-center text-white font-bold text-3xl">
-                {student.studentName.charAt(0)}
-              </div>
-            )}
+          <div className="relative mr-6 shadow-xl shadow-indigo-100 flex-shrink-0 w-fit">
+            <Avatar photoUrl={formData.photoUrl} name={student.studentName} size="xl" rounded="3xl" gradientFrom="from-indigo-600" gradientTo="to-indigo-600" />
             {/* Photo upload overlay */}
             <button
               type="button"
               onClick={() => photoInputRef.current?.click()}
-              disabled={uploadingPhoto}
-              className="absolute inset-0 bg-black/40 opacity-0 hover:opacity-100 transition-opacity flex items-center justify-center"
-              title="Change photo"
+              disabled={uploadingPhoto || !isConnected}
+              className="absolute inset-0 rounded-3xl bg-black/40 opacity-0 hover:opacity-100 disabled:hover:opacity-0 transition-opacity flex items-center justify-center"
+              title={isConnected ? 'Change photo' : 'Connect storage in School Settings to enable photo uploads'}
             >
               {uploadingPhoto
                 ? <div className="w-5 h-5 border-2 border-white/40 border-t-white rounded-full animate-spin" />

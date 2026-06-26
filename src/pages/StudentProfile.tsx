@@ -34,7 +34,7 @@ interface AIInsight {
 export default function StudentProfile() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { currentSession } = useSchool();
+  const { currentSession, identityDocumentLabel } = useSchool();
   const { isConnected } = useStorageSettings();
   const schoolId = useSchoolId();
   const [student, setStudent] = useState<Student | null>(null);
@@ -365,7 +365,7 @@ export default function StudentProfile() {
                 </select>
               </div>
               <div className="space-y-2">
-                <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">NIN</label>
+                <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">{identityDocumentLabel}</label>
                 <input
                   type="text"
                   name="nin"

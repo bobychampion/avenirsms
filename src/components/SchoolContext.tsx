@@ -60,6 +60,8 @@ interface SchoolContextValue {
   country: string;
   timezone: string;
   phoneCountryCode: string;
+  identityDocumentLabel: string;
+  identityDocumentHint: string;
   gradingSystem: GradingSystem;
   customGradingScale: CustomGradeScale[];
   levelGradingOverrides: Record<string, LevelGradingOverride>;
@@ -72,6 +74,9 @@ interface SchoolContextValue {
   schoolName: string;
   logoUrl: string;
   faviconUrl: string;
+  // Report card
+  reportShowLogo: boolean;
+  reportFooterText: string;
   primaryColor: string;
   secondaryColor: string;
   sidebarStyle: 'dark' | 'light' | 'brand' | 'minimal';
@@ -105,6 +110,8 @@ const SchoolContext = createContext<SchoolContextValue>({
   country: '',
   timezone: '',
   phoneCountryCode: '',
+  identityDocumentLabel: 'NIN',
+  identityDocumentHint: '11-digit NIN',
   gradingSystem: 'percentage',
   customGradingScale: [],
   levelGradingOverrides: {},
@@ -115,6 +122,8 @@ const SchoolContext = createContext<SchoolContextValue>({
   schoolName: 'Avenir SIS',
   logoUrl: '',
   faviconUrl: '',
+  reportShowLogo: true,
+  reportFooterText: '',
   primaryColor: '#4f46e5',
   secondaryColor: '',
   sidebarStyle: 'dark',
@@ -153,6 +162,8 @@ export function SchoolProvider({ children }: { children: React.ReactNode }) {
   const [country, setCountry] = useState('');
   const [timezone, setTimezone] = useState('');
   const [phoneCountryCode, setPhoneCountryCode] = useState('');
+  const [identityDocumentLabel, setIdentityDocumentLabel] = useState('NIN');
+  const [identityDocumentHint, setIdentityDocumentHint] = useState('11-digit NIN');
   const [gradingSystem, setGradingSystem] = useState<GradingSystem>('percentage');
   const [customGradingScale, setCustomGradingScale] = useState<CustomGradeScale[]>([]);
   const [levelGradingOverrides, setLevelGradingOverrides] = useState<Record<string, LevelGradingOverride>>({});
@@ -167,6 +178,8 @@ export function SchoolProvider({ children }: { children: React.ReactNode }) {
   const [schoolName, setSchoolName] = useState('Avenir SIS');
   const [logoUrl, setLogoUrl] = useState('');
   const [faviconUrl, setFaviconUrl] = useState('');
+  const [reportShowLogo, setReportShowLogo] = useState(true);
+  const [reportFooterText, setReportFooterText] = useState('');
   const [primaryColor, setPrimaryColor] = useState('#4f46e5');
   const [secondaryColor, setSecondaryColor] = useState('');
   const [sidebarStyle, setSidebarStyle] = useState<'dark' | 'light' | 'brand' | 'minimal'>('dark');
@@ -232,6 +245,8 @@ export function SchoolProvider({ children }: { children: React.ReactNode }) {
       setCountry('');
       setTimezone('');
       setPhoneCountryCode('');
+      setIdentityDocumentLabel('NIN');
+      setIdentityDocumentHint('11-digit NIN');
       setGradingSystem('percentage');
       setCustomGradingScale([]);
       setLevelGradingOverrides({});
@@ -241,6 +256,8 @@ export function SchoolProvider({ children }: { children: React.ReactNode }) {
       setSchoolName('Avenir SIS');
       setLogoUrl('');
       setFaviconUrl('');
+      setReportShowLogo(true);
+      setReportFooterText('');
       setPrimaryColor('#4f46e5');
       setSecondaryColor('');
       setSidebarStyle('dark');
@@ -280,6 +297,8 @@ export function SchoolProvider({ children }: { children: React.ReactNode }) {
           setCountry(data.country || '');
           setTimezone(data.timezone || '');
           setPhoneCountryCode(data.phoneCountryCode || '');
+          setIdentityDocumentLabel(data.identityDocumentLabel || 'NIN');
+          setIdentityDocumentHint(data.identityDocumentHint || '11-digit NIN');
           setGradingSystem(data.gradingSystem || 'percentage');
           setCustomGradingScale(data.customGradingScale || []);
           setLevelGradingOverrides(data.levelGradingOverrides || {});
@@ -293,6 +312,8 @@ export function SchoolProvider({ children }: { children: React.ReactNode }) {
           setSchoolName(data.schoolName || 'Avenir SIS');
           setLogoUrl(data.logoUrl || '');
           setFaviconUrl(data.faviconUrl || '');
+          setReportShowLogo(data.reportShowLogo !== false);
+          setReportFooterText(data.reportFooterText || '');
           setPrimaryColor(data.primaryColor || '#4f46e5');
           setSecondaryColor(data.secondaryColor || '');
           setSidebarStyle(data.sidebarStyle || 'dark');
@@ -400,6 +421,8 @@ export function SchoolProvider({ children }: { children: React.ReactNode }) {
       country,
       timezone,
       phoneCountryCode,
+      identityDocumentLabel,
+      identityDocumentHint,
       gradingSystem,
       customGradingScale,
       levelGradingOverrides,
@@ -410,6 +433,8 @@ export function SchoolProvider({ children }: { children: React.ReactNode }) {
       schoolName,
       logoUrl,
       faviconUrl,
+      reportShowLogo,
+      reportFooterText,
       primaryColor,
       secondaryColor,
       sidebarStyle,

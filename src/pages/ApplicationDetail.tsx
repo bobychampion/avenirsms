@@ -347,7 +347,7 @@ function GuardianPanel({
 export default function ApplicationDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { schoolId, classNames } = useSchool();
+  const { schoolId, classNames, identityDocumentLabel } = useSchool();
   const { settings: schoolSettings } = useSchoolSettings();
   const [application, setApplication] = useState<Application | null>(null);
   const [loading, setLoading] = useState(true);
@@ -804,7 +804,7 @@ export default function ApplicationDetail() {
               <DetailSection icon={<User className="w-5 h-5" />} title="Personal Details">
                 <DetailItem label="Date of Birth" value={`${formatDate(application.dob)} (${age} years old)`} />
                 <DetailItem label="Gender" value={application.gender} className="capitalize" />
-                <DetailItem label="NIN" value={application.nin} />
+                <DetailItem label={identityDocumentLabel} value={application.nin} />
               </DetailSection>
 
               <DetailSection icon={<BookOpen className="w-5 h-5" />} title="Academic History">
@@ -919,7 +919,7 @@ export default function ApplicationDetail() {
                     }`}>
                     <div className="flex items-center">
                       <ShieldCheck className={`w-4 h-4 mr-3 ${ninVerified ? 'text-emerald-600' : 'text-slate-400'}`} />
-                      <span className={`text-sm font-bold ${ninVerified ? 'text-emerald-700' : 'text-slate-700'}`}>NIN Verification</span>
+                      <span className={`text-sm font-bold ${ninVerified ? 'text-emerald-700' : 'text-slate-700'}`}>{identityDocumentLabel} Verification</span>
                     </div>
                     {verifyingNIN ? <Loader2 className="w-4 h-4 animate-spin text-indigo-600" /> :
                      ninVerified ? <CheckCircle className="w-4 h-4 text-emerald-600" /> : null}

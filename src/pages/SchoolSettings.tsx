@@ -96,6 +96,10 @@ export interface SchoolSettings {
   locale: string;            // BCP 47, e.g. 'en-NG', 'sl-SI', 'en-US'
   currency: string;          // ISO 4217, e.g. 'NGN', 'EUR', 'USD'
   phoneCountryCode: string;  // e.g. '+234', '+386', '+1'
+  /** Label for the national identity field on admission forms, e.g. 'NIN', 'EMŠO Number', 'SSN'. */
+  identityDocumentLabel: string;
+  /** Placeholder/format hint shown under the identity document input, e.g. '11-digit NIN'. */
+  identityDocumentHint: string;
   // Academic configuration
   gradingSystem: GradingSystem;
   customGradingScale: CustomGradeScale[];
@@ -242,6 +246,8 @@ export const defaultSettings: SchoolSettings = {
   locale: 'en',
   currency: 'USD',
   phoneCountryCode: '',
+  identityDocumentLabel: 'NIN',
+  identityDocumentHint: '11-digit NIN',
   // Academic
   gradingSystem: 'percentage',
   customGradingScale: [],
@@ -1213,6 +1219,16 @@ export default function SchoolSettingsPage() {
                 <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">Phone Country Code</label>
                 <input value={form.phoneCountryCode} onChange={e => field('phoneCountryCode', e.target.value)} placeholder="e.g. +234"
                   className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm font-mono" />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">Identity Document Label</label>
+                <input value={form.identityDocumentLabel} onChange={e => field('identityDocumentLabel', e.target.value)} placeholder="e.g. NIN, EMŠO Number, SSN"
+                  className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm" />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">Identity Document Hint</label>
+                <input value={form.identityDocumentHint} onChange={e => field('identityDocumentHint', e.target.value)} placeholder="e.g. 11-digit NIN"
+                  className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm" />
               </div>
             </div>
             {form.locale && (

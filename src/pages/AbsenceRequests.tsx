@@ -15,7 +15,7 @@
  */
 import React, { useEffect, useState } from 'react';
 import {
-  collection, query, where, onSnapshot, updateDoc,
+  collection, query, where, onSnapshot, updateDoc, addDoc,
   doc, serverTimestamp, orderBy,
 } from 'firebase/firestore';
 import { db } from '../firebase';
@@ -114,6 +114,20 @@ export default function AbsenceRequests() {
         reviewNote,
         reviewedAt: serverTimestamp(),
       });
+
+      const req = requests.find(r => r.id === id);
+      if (req) {
+        await addDoc(collection(db, 'notifications'), {
+          recipientId: req.parentId,
+          title: `Absence request ${decision}`,
+          body: `Your request for ${req.studentName} (${req.startDate} → ${req.endDate}) was ${decision}.${reviewNote ? ` Note: ${reviewNote}` : ''}`,
+          type: 'attendance',
+          read: false,
+          schoolId: req.schoolId,
+          createdAt: serverTimestamp(),
+        });
+      }
+
       toast.success(`Request ${decision}.`);
       setReviewingId(null);
       setReviewNote('');

@@ -21,6 +21,8 @@ export default function Apply() {
   const [loading, setLoading] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const [schoolName, setSchoolName] = useState<string>('');
+  const [identityDocumentLabel, setIdentityDocumentLabel] = useState<string>('NIN');
+  const [identityDocumentHint, setIdentityDocumentHint] = useState<string>('Optional');
   const [schoolClasses, setSchoolClasses] = useState<string[]>([]);
   const [existingApplication, setExistingApplication] = useState<Application | null>(null);
   const [formData, setFormData] = useState<Partial<Application>>({
@@ -59,7 +61,12 @@ export default function Apply() {
     if (!urlSchoolId) return;
     // School name
     getDoc(doc(db, 'school_settings', urlSchoolId)).then(snap => {
-      if (snap.exists()) setSchoolName((snap.data() as any).schoolName || '');
+      if (snap.exists()) {
+        const data = snap.data() as any;
+        setSchoolName(data.schoolName || '');
+        setIdentityDocumentLabel(data.identityDocumentLabel || 'NIN');
+        setIdentityDocumentHint(data.identityDocumentHint || 'Optional');
+      }
     });
     // School's actual classes (created by the school admin)
     getDocs(query(collection(db, 'classes'), where('schoolId', '==', urlSchoolId)))
@@ -92,8 +99,6 @@ export default function Apply() {
     if (step === 1) {
       if (!formData.applicantName) newErrors.applicantName = 'Name is required';
       if (!formData.dob) newErrors.dob = 'Date of birth is required';
-      // NIN is optional — only validate length if provided
-      if (formData.nin && formData.nin.length !== 11) newErrors.nin = 'NIN must be 11 digits if provided';
     }
     if (step === 2) {
       if (!formData.classApplyingFor) newErrors.classApplyingFor = 'Target class is required';
@@ -165,7 +170,7 @@ export default function Apply() {
             <div className="grid grid-cols-2 gap-4 text-sm">
               <p className="text-slate-500">Applicant Name</p>
               <p className="text-slate-900 font-medium">{existingApplication.applicantName}</p>
-              <p className="text-slate-500">NIN</p>
+              <p className="text-slate-500">{identityDocumentLabel}</p>
               <p className="text-slate-900 font-medium">{existingApplication.nin || '—'}</p>
               <p className="text-slate-500">Submitted On</p>
               <p className="text-slate-900 font-medium">
@@ -265,12 +270,11 @@ export default function Apply() {
                     </select>
                   </div>
                   <FormField
-                    label="National ID (NIN) — Optional"
+                    label={`${identityDocumentLabel} — Optional`}
                     error={errors.nin}
                     value={formData.nin}
                     onChange={v => updateForm({ nin: v })}
-                    placeholder="11-digit number (if available)"
-                    maxLength={11}
+                    placeholder={identityDocumentHint}
                   />
                 </div>
               </motion.div>
@@ -456,7 +460,7 @@ export default function Apply() {
                 <div className="bg-slate-50 rounded-2xl p-6 space-y-4 border border-slate-100">
                   <ReviewItem label="Applicant Name" value={formData.applicantName} />
                   <ReviewItem label="Date of Birth" value={formData.dob} />
-                  {formData.nin && <ReviewItem label="NIN" value={formData.nin} />}
+                  {formData.nin && <ReviewItem label={identityDocumentLabel} value={formData.nin} />}
                   <ReviewItem label="Class Applying For" value={formData.classApplyingFor} />
                   <ReviewItem label="Previous School" value={formData.previousSchool} />
                   {formData.waecNecoNumber && <ReviewItem label="WAEC/NECO Number" value={formData.waecNecoNumber} />}

@@ -19,6 +19,7 @@ import { DOCUMENT_TITLE_DEFAULT } from '../constants/appMeta';
 import { useSchoolId } from '../hooks/useSchoolId';
 import { useSchool } from '../components/SchoolContext';
 import { formatCurrency } from '../utils/formatCurrency';
+import Avatar from '../components/Avatar';
 import toast from 'react-hot-toast';
 
 const GRADE_COLORS: Record<string, string> = {
@@ -35,7 +36,7 @@ export default function ParentPortal() {
   const { user, profile } = useAuth();
   const navigate = useNavigate();
   const schoolId = useSchoolId();
-  const { getGradingForClass, locale, currency } = useSchool();
+  const { getGradingForClass, locale, currency, schoolName, logoUrl, reportShowLogo, reportFooterText } = useSchool();
   const [children, setChildren] = useState<Student[]>([]);
   const [selectedChild, setSelectedChild] = useState<Student | null>(null);
   const [grades, setGrades] = useState<Grade[]>([]);
@@ -274,6 +275,28 @@ export default function ParentPortal() {
         schoolId,
         createdAt: serverTimestamp(),
       });
+
+      // Notify the class's form tutor so the request doesn't go unnoticed.
+      try {
+        const classSnap = await getDocs(query(
+          collection(db, 'classes'),
+          where('schoolId', '==', schoolId),
+          where('name', '==', selectedChild.currentClass),
+        ));
+        const formTutorId = classSnap.docs[0]?.data()?.formTutorId as string | undefined;
+        if (formTutorId) {
+          await addDoc(collection(db, 'notifications'), {
+            recipientId: formTutorId,
+            title: `Absence request — ${selectedChild.studentName}`,
+            body: `${profile?.displayName || 'A parent'} requested leave for ${selectedChild.studentName} from ${absenceForm.startDate} to ${end} (${absenceForm.type}).`,
+            type: 'attendance',
+            read: false,
+            schoolId,
+            createdAt: serverTimestamp(),
+          });
+        }
+      } catch (e) { console.error('[ParentPortal] failed to notify form tutor:', e); }
+
       toast.success('Absence request submitted.');
       setAbsenceForm({ startDate: '', endDate: '', reason: '', type: 'other' });
     } catch { toast.error('Failed to submit absence request.'); }
@@ -1075,6 +1098,22 @@ export default function ParentPortal() {
               </select>
             </div>
             <span className="text-xs text-slate-400">{CURRENT_SESSION}</span>
+            <label className="flex items-center gap-2 text-sm font-medium text-slate-600 print:hidden">
+              <input
+                type="checkbox"
+                checked={profile?.reportCardShowPhoto !== false}
+                onChange={async e => {
+                  if (!user) return;
+                  try {
+                    await updateDoc(doc(db, 'users', user.uid), { reportCardShowPhoto: e.target.checked });
+                  } catch (err: any) {
+                    toast.error(err.message || 'Could not update preference.');
+                  }
+                }}
+                className="w-4 h-4 accent-indigo-600 rounded"
+              />
+              Show photo on report card
+            </label>
             <button
               onClick={() => {
                 document.title = `Report-Card-${selectedChild.studentName}-${reportCardTerm}`;
@@ -1090,26 +1129,37 @@ export default function ParentPortal() {
           <div id="report-card-parent" className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden print:shadow-none print:border-0">
             {/* School header */}
             <div className="bg-gradient-to-r from-indigo-700 to-violet-700 p-6 text-white text-center print:bg-indigo-700">
-              <div className="w-14 h-14 bg-white/20 rounded-2xl flex items-center justify-center mx-auto mb-3">
-                <Award className="w-8 h-8 text-white" />
+              <div className="w-14 h-14 bg-white/20 rounded-2xl flex items-center justify-center mx-auto mb-3 overflow-hidden">
+                {reportShowLogo && logoUrl ? (
+                  <img src={logoUrl} alt={schoolName} className="w-full h-full object-contain" />
+                ) : (
+                  <Award className="w-8 h-8 text-white" />
+                )}
               </div>
-              <h2 className="text-xl font-black tracking-wide uppercase">Avenir School</h2>
+              <h2 className="text-xl font-black tracking-wide uppercase">{schoolName}</h2>
               <p className="text-indigo-200 text-xs font-medium mt-0.5">Student Report Card</p>
             </div>
 
             {/* Student info band */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-0 border-b border-slate-200 divide-x divide-slate-100">
-              {[
-                { label: 'Student', value: selectedChild.studentName },
-                { label: 'Class', value: selectedChild.currentClass },
-                { label: 'Term', value: reportCardTerm },
-                { label: 'Session', value: CURRENT_SESSION },
-              ].map(item => (
-                <div key={item.label} className="px-4 py-3">
-                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-0.5">{item.label}</p>
-                  <p className="text-sm font-bold text-slate-900 truncate">{item.value}</p>
+            <div className="flex items-stretch border-b border-slate-200">
+              {profile?.reportCardShowPhoto !== false && (
+                <div className="flex items-center justify-center px-4 py-3 border-r border-slate-100">
+                  <Avatar photoUrl={selectedChild.photoUrl} name={selectedChild.studentName} size="sm" />
                 </div>
-              ))}
+              )}
+              <div className="flex-1 grid grid-cols-2 sm:grid-cols-4 gap-0 divide-x divide-slate-100">
+                {[
+                  { label: 'Student', value: selectedChild.studentName },
+                  { label: 'Class', value: selectedChild.currentClass },
+                  { label: 'Term', value: reportCardTerm },
+                  { label: 'Session', value: CURRENT_SESSION },
+                ].map(item => (
+                  <div key={item.label} className="px-4 py-3">
+                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-0.5">{item.label}</p>
+                    <p className="text-sm font-bold text-slate-900 truncate">{item.value}</p>
+                  </div>
+                ))}
+              </div>
             </div>
 
             {/* Grades table */}
@@ -1225,7 +1275,7 @@ export default function ParentPortal() {
             <div className="px-5 pb-5">
               <div className="p-3 bg-indigo-50 rounded-xl border border-indigo-100">
                 <p className="text-[10px] text-indigo-600 font-medium text-center">
-                  This is a computer-generated report. For questions, contact the school administration.
+                  {reportFooterText || 'This is a computer-generated report. For questions, contact the school administration.'}
                 </p>
               </div>
             </div>

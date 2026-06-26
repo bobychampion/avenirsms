@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useSearchParams } from 'react-router-dom';
 import { db, handleFirestoreError, OperationType } from '../firebase';
 import { useAuth } from '../components/FirebaseProvider';
 import {
@@ -22,10 +22,14 @@ import {
   Edit2, Trash2, X, AlertCircle, ClipboardList, CheckSquare,
   Sparkles, FileText, Copy, ChevronDown, Star, Award,
   MapPin, Navigation, LogIn, LogOut, ShieldAlert, Lock,
-  ChevronRight, Inbox, GraduationCap,
+  ChevronRight, Inbox, GraduationCap, Home, BookMarked,
 } from 'lucide-react';
+import ProfileHeader from './TeacherPortal/ProfileHeader';
+import ClockInHero from './TeacherPortal/ClockInHero';
+import TeacherOverview from './TeacherPortal/TeacherOverview';
+import CurriculumPage from './TeacherPortal/CurriculumPage';
 
-type TabType = 'students' | 'attendance' | 'assignments' | 'grades' | 'skills' | 'messages' | 'ai_tools' | 'timetable';
+type TabType = 'home' | 'students' | 'attendance' | 'assignments' | 'grades' | 'skills' | 'messages' | 'ai_tools' | 'timetable' | 'absences' | 'curriculum';
 
 interface AttendanceRow {
   studentId: string;
@@ -37,9 +41,8 @@ interface AttendanceRow {
 
 export default function TeacherPortal() {
   const { user, profile } = useAuth();
-  const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
-  const { classNames, subjects, currentSession, getGradingForClass, terms } = useSchool();
+  const { classNames, subjects, currentSession, currentTerm, getGradingForClass, terms, schoolName } = useSchool();
   const schoolId = useSchoolId();
 
   // Derived helpers (safe fallbacks)
@@ -60,18 +63,18 @@ export default function TeacherPortal() {
   const [loading, setLoading] = useState(true);
 
   // Derive activeTab from URL query param
-  const tabFromUrl = (searchParams.get('tab') as TabType) || 'students';
+  const tabFromUrl = (searchParams.get('tab') as TabType) || 'home';
   const [activeTab, setActiveTab] = useState<TabType>(tabFromUrl);
 
   // Keep activeTab in sync with URL changes (e.g. sidebar navigation)
   useEffect(() => {
-    const t = (searchParams.get('tab') as TabType) || 'students';
+    const t = (searchParams.get('tab') as TabType) || 'home';
     setActiveTab(t);
   }, [searchParams]);
 
   const navigateTab = (tab: TabType) => {
     setActiveTab(tab);
-    setSearchParams({ tab });
+    setSearchParams(tab === 'home' ? {} : { tab });
   };
 
   const [selectedClass, setSelectedClass] = useState('');
@@ -91,6 +94,12 @@ export default function TeacherPortal() {
   const [attendanceRows, setAttendanceRows] = useState<AttendanceRow[]>([]);
   const [savingAttendance, setSavingAttendance] = useState(false);
   const [attendanceSaved, setAttendanceSaved] = useState(false);
+
+  // Absence requests for this teacher's classes
+  const [absenceRequests, setAbsenceRequests] = useState<any[]>([]);
+  const [absenceReviewingId, setAbsenceReviewingId] = useState<string | null>(null);
+  const [absenceReviewNote, setAbsenceReviewNote] = useState('');
+  const [absenceSubmitting, setAbsenceSubmitting] = useState(false);
 
   // New Assignment Form
   const [newAssignment, setNewAssignment] = useState({
@@ -197,6 +206,59 @@ export default function TeacherPortal() {
     loadAssignments();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.uid, schoolId]);
+
+  // ── Absence requests for this teacher's classes ───────────────────────────
+  useEffect(() => {
+    if (!schoolId) return;
+    const q = query(collection(db, 'absence_requests'), where('schoolId', '==', schoolId), orderBy('createdAt', 'desc'));
+    const unsub = onSnapshot(q, snap => {
+      setAbsenceRequests(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+    }, e => console.error('[TeacherPortal] absence_requests query failed:', e));
+    return () => unsub();
+  }, [schoolId]);
+
+  const myAbsenceRequests = absenceRequests.filter(r => myAssignedClasses.includes(r.class));
+  const myPendingAbsences = myAbsenceRequests.filter(r => r.status === 'pending');
+
+  // Quick lookup: studentId -> covering absence request for the date currently being marked
+  const absenceForStudentOnDate = (studentId: string) => myAbsenceRequests.find(r =>
+    r.studentId === studentId && r.status !== 'rejected' &&
+    r.startDate <= attendanceDate && r.endDate >= attendanceDate
+  );
+
+  // Approved (not just requested) leave covering a given date — used to default attendance to "absent".
+  const isOnApprovedLeave = (studentId: string, date: string) => myAbsenceRequests.some(r =>
+    r.studentId === studentId && r.status === 'approved' &&
+    r.startDate <= date && r.endDate >= date
+  );
+
+  const handleReviewAbsence = async (id: string, decision: 'approved' | 'rejected') => {
+    setAbsenceSubmitting(true);
+    try {
+      await updateDoc(doc(db, 'absence_requests', id), {
+        status: decision,
+        reviewedBy: profile?.displayName || user?.email,
+        reviewNote: absenceReviewNote,
+        reviewedAt: serverTimestamp(),
+      });
+      const req = absenceRequests.find(r => r.id === id);
+      if (req) {
+        await addDoc(collection(db, 'notifications'), {
+          recipientId: req.parentId,
+          title: `Absence request ${decision}`,
+          body: `Your request for ${req.studentName} (${req.startDate} → ${req.endDate}) was ${decision}.${absenceReviewNote ? ` Note: ${absenceReviewNote}` : ''}`,
+          type: 'attendance',
+          read: false,
+          schoolId: req.schoolId,
+          createdAt: serverTimestamp(),
+        });
+      }
+      toast.success(`Request ${decision}.`);
+      setAbsenceReviewingId(null);
+      setAbsenceReviewNote('');
+    } catch { toast.error('Failed to update.'); }
+    finally { setAbsenceSubmitting(false); }
+  };
 
   useEffect(() => {
     if (!user) return;
@@ -425,12 +487,13 @@ export default function TeacherPortal() {
         studentName: s.studentName,
         studentIdCode: s.studentId,
         photoUrl: s.photoUrl,
-        status: existingMap[s.id!] || 'present'
+        status: existingMap[s.id!] || (isOnApprovedLeave(s.id!, attendanceDate) ? 'absent' : 'present')
       })));
     };
 
     fetchExisting();
-  }, [activeTab, students, selectedClass, attendanceDate]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, students, selectedClass, attendanceDate, myAbsenceRequests]);
 
   const cycleStatus = (studentId: string) => {
     setAttendanceRows(prev => prev.map(r => {
@@ -804,12 +867,15 @@ export default function TeacherPortal() {
     setNewMessage({ ...newMessage, content: '' });
   };
 
-  const tabs: { id: TabType; label: string; Icon: React.ElementType }[] = [
+  const tabs: { id: TabType; label: string; Icon: React.ElementType; badge?: number }[] = [
+    { id: 'home', label: 'Home', Icon: Home },
     { id: 'students', label: 'My Students', Icon: Users },
     { id: 'timetable', label: 'My Timetable', Icon: Clock },
     { id: 'attendance', label: 'Attendance', Icon: ClipboardList },
+    { id: 'absences', label: 'Absence Requests', Icon: AlertCircle, badge: myPendingAbsences.length || undefined },
     { id: 'grades', label: 'Gradebook', Icon: Award },
-    { id: 'skills', label: 'Skills', Icon: Star },
+    { id: 'skills', label: 'Behaviour', Icon: Star },
+    { id: 'curriculum', label: 'Curriculum', Icon: BookMarked },
     { id: 'assignments', label: 'Assignments', Icon: BookOpen },
     { id: 'messages', label: 'Messages', Icon: MessageSquare },
     { id: 'ai_tools', label: 'AI Tools', Icon: Sparkles },
@@ -840,155 +906,75 @@ export default function TeacherPortal() {
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10">
       {/* Header */}
-      <div className="mb-8">
-        <h1 className="text-3xl font-bold text-slate-900 tracking-tight">Teacher Portal</h1>
-        <p className="text-slate-500 mt-1">Welcome back, {profile?.displayName}. Manage your classes and communicate with parents.</p>
-      </div>
+      <ProfileHeader
+        displayName={profile?.displayName}
+        photoUrl={profile?.photoUrl}
+        assignedClasses={myAssignedClasses}
+        schoolName={schoolName}
+        currentTerm={currentTerm}
+        currentSession={currentSession}
+        onAskAI={() => navigateTab('home')}
+      />
 
-      {/* Quick Action Cards */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
-        {[
-          { label: 'My Students', value: students.length, color: 'indigo', Icon: Users, tab: 'students' as TabType },
-          { label: 'Assignments', value: assignments.length, color: 'emerald', Icon: BookOpen, tab: 'assignments' as TabType },
-          { label: 'Unread Messages', value: messages.filter(m => m.senderId !== user?.uid && !m.read).length, color: 'violet', Icon: MessageSquare, tab: 'messages' as TabType },
-          { label: "Today's Roll", value: attendanceRows.filter(r => r.status === 'present').length + '/' + attendanceRows.length, color: 'amber', Icon: CheckSquare, tab: 'attendance' as TabType },
-        ].map(card => (
-          <button
-            key={card.tab}
-            onClick={() => navigateTab(card.tab)}
-            className={`bg-white p-5 rounded-2xl border border-slate-200 shadow-sm hover:shadow-md hover:-translate-y-0.5 transition-all text-left group`}
-          >
-            <div className={`w-10 h-10 rounded-xl bg-${card.color}-50 flex items-center justify-center mb-3`}>
-              <card.Icon className={`w-5 h-5 text-${card.color}-600`} />
-            </div>
-            <p className="text-2xl font-bold text-slate-900">{card.value}</p>
-            <p className="text-xs text-slate-500 font-medium mt-0.5">{card.label}</p>
-          </button>
-        ))}
-      </div>
-
-      {/* GPS Attendance widget */}
-      {geofence && (
-        <div className={`border rounded-2xl shadow-sm p-5 mb-6 ${
-          todayCheckIn?.spoofDetected ? 'bg-amber-50 border-amber-200' : 'bg-white border-slate-200'
-        }`}>
-          {/* Top row: status + actions */}
-          <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4">
-            <div className="flex items-center gap-3 flex-1 min-w-0">
-              {/* Fence presence indicator */}
-              <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 relative ${
-                currentlyInFence === true  ? 'bg-emerald-50' :
-                currentlyInFence === false ? 'bg-rose-50' :
-                todayCheckIn ? 'bg-emerald-50' : 'bg-slate-100'
-              }`}>
-                <MapPin className={`w-5 h-5 ${
-                  currentlyInFence === true  ? 'text-emerald-600' :
-                  currentlyInFence === false ? 'text-rose-500' :
-                  todayCheckIn ? 'text-emerald-600' : 'text-slate-400'
-                }`} />
-                {autoTracking && (
-                  <span className="absolute -top-1 -right-1 w-3 h-3 bg-blue-500 rounded-full border-2 border-white animate-pulse" />
-                )}
-              </div>
-              <div className="min-w-0">
-                <p className="font-semibold text-slate-800 text-sm">
-                  {todayCheckIn && todayCheckOut
-                    ? 'Checked out — have a great evening'
-                    : todayCheckIn
-                      ? 'On campus — checked in'
-                      : currentlyInFence === true
-                        ? 'You are inside school premises'
-                        : currentlyInFence === false
-                          ? 'You are outside school premises'
-                          : 'Waiting for GPS signal…'}
-                </p>
-                <p className="text-xs text-slate-500 truncate mt-0.5">
-                  {todayCheckIn
-                    ? `In: ${new Date(todayCheckIn.timestamp?.toDate?.() ?? Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}${
-                        todayCheckOut
-                          ? `  ·  Out: ${new Date(todayCheckOut.timestamp?.toDate?.() ?? Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
-                          : '  ·  Still on campus'
-                      }${todayCheckIn.spoofDetected ? '  ·  ⚠️ Flagged for admin review' : ''}${
-                        (todayCheckIn as any).autoDetected ? '  ·  Auto-detected' : ''
-                      }`
-                    : autoTracking
-                      ? 'GPS is active — check-in fires automatically when you enter the school gate'
-                      : 'Open this page to activate GPS monitoring'}
-                </p>
-              </div>
-            </div>
-
-            {/* Manual fallback buttons */}
-            <div className="flex gap-2 shrink-0">
-              {!todayCheckIn && (
-                <button
-                  onClick={() => handleGpsEvent('check_in')}
-                  disabled={checkInLoading}
-                  className="flex items-center gap-2 px-4 py-2.5 bg-emerald-600 text-white font-bold rounded-xl hover:bg-emerald-700 transition-colors text-sm disabled:opacity-60">
-                  {checkInLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <LogIn className="w-4 h-4" />}
-                  {checkInLoading ? 'Verifying…' : 'Check In'}
-                </button>
-              )}
-              {todayCheckIn && !todayCheckOut && (
-                <button
-                  onClick={() => handleGpsEvent('check_out')}
-                  disabled={checkInLoading}
-                  className="flex items-center gap-2 px-4 py-2.5 bg-rose-600 text-white font-bold rounded-xl hover:bg-rose-700 transition-colors text-sm disabled:opacity-60">
-                  {checkInLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <LogOut className="w-4 h-4" />}
-                  Check Out
-                </button>
-              )}
-              {todayCheckIn && todayCheckOut && (
-                <span className="flex items-center gap-2 px-4 py-2.5 bg-slate-100 text-slate-500 font-semibold rounded-xl text-sm">
-                  <CheckCircle2 className="w-4 h-4 text-emerald-500" /> Done for today
-                </span>
-              )}
-            </div>
-          </div>
-
-          {/* Bottom: live fence status bar */}
-          {autoTracking && (
-            <div className={`mt-3 pt-3 border-t flex items-center gap-2 text-xs font-medium ${
-              currentlyInFence === true  ? 'border-emerald-100 text-emerald-700' :
-              currentlyInFence === false ? 'border-rose-100 text-rose-600' :
-              'border-slate-100 text-slate-400'
-            }`}>
-              <span className={`w-2 h-2 rounded-full ${
-                currentlyInFence === true  ? 'bg-emerald-500 animate-pulse' :
-                currentlyInFence === false ? 'bg-rose-400' :
-                'bg-slate-300'
-              }`} />
-              {currentlyInFence === true  ? 'Currently INSIDE school boundary — GPS tracking active' :
-               currentlyInFence === false ? 'Currently OUTSIDE school boundary' :
-               'Acquiring GPS position…'}
-              <span className="ml-auto text-slate-400 font-normal">Auto-monitoring on</span>
-            </div>
-          )}
-        </div>
-      )}
+      {/* Clock-In Hero (restyle of GPS widget — logic untouched, see handleGpsEvent/watchPosition above) */}
+      <ClockInHero
+        geofence={geofence}
+        todayCheckIn={todayCheckIn}
+        todayCheckOut={todayCheckOut}
+        currentlyInFence={currentlyInFence}
+        autoTracking={autoTracking}
+        checkInLoading={checkInLoading}
+        onGpsEvent={handleGpsEvent}
+      />
 
       {/* Tab Bar */}
-      <div className="flex space-x-1 bg-slate-100 p-1 rounded-xl mb-8 w-fit">
-        {tabs.map(({ id, label, Icon }) => (
+      <div className="flex space-x-1 bg-slate-100 p-1 rounded-xl mb-8 w-full overflow-x-auto">
+        {tabs.map(({ id, label, Icon, badge }) => (
           <button
             key={id}
             onClick={() => navigateTab(id)}
-            className={`px-4 py-2 rounded-lg text-sm font-bold transition-all flex items-center gap-2 ${
+            className={`px-4 py-2 rounded-lg text-sm font-bold transition-all flex items-center gap-2 shrink-0 ${
               activeTab === id ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'
             }`}
           >
             <Icon className="w-4 h-4" />
             {label}
+            {!!badge && (
+              <span className="px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-rose-100 text-rose-700">{badge}</span>
+            )}
           </button>
         ))}
-        <button
-          onClick={() => navigate('/calendar')}
-          className="px-4 py-2 rounded-lg text-sm font-bold text-slate-500 hover:text-indigo-600 transition-all flex items-center gap-2"
-        >
-          <Calendar className="w-4 h-4" />
-          Calendar
-        </button>
       </div>
+
+      {/* ── HOME / OVERVIEW TAB ── */}
+      {activeTab === 'home' && (
+        <TeacherOverview
+          schoolId={schoolId}
+          selectedClass={selectedClass}
+          subjectsForClass={mySubjectsForSelectedClass}
+          students={students}
+          assignments={assignments}
+          messages={messages}
+          currentUserId={user?.uid}
+          currentTerm={currentTerm}
+          currentSession={currentSession}
+          navigateTab={navigateTab}
+        />
+      )}
+
+      {/* ── CURRICULUM TAB ── */}
+      {activeTab === 'curriculum' && (
+        <CurriculumPage
+          schoolId={schoolId}
+          selectedClass={selectedClass}
+          myAssignedClasses={myAssignedClasses}
+          onSelectClass={setSelectedClass}
+          subjectsForClass={mySubjectsForSelectedClass}
+          students={students}
+          currentTerm={currentTerm}
+          currentSession={currentSession}
+        />
+      )}
 
       {/* ── STUDENTS TAB ── */}
       {activeTab === 'students' && (
@@ -1138,6 +1124,22 @@ export default function TeacherPortal() {
                                 )}
                               </div>
                               <span className="text-sm font-medium text-slate-900">{row.studentName}</span>
+                              {(() => {
+                                const ab = absenceForStudentOnDate(row.studentId);
+                                if (!ab) return null;
+                                return (
+                                  <span
+                                    title={`${ab.reason} (${ab.startDate} → ${ab.endDate})`}
+                                    className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase border ${
+                                      ab.status === 'approved'
+                                        ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                        : 'bg-amber-50 text-amber-700 border-amber-200'
+                                    }`}
+                                  >
+                                    {ab.status === 'approved' ? 'On approved leave' : 'Leave requested'}
+                                  </span>
+                                );
+                              })()}
                             </div>
                           </td>
                           <td className="px-5 py-3 text-xs text-slate-400 font-mono">{row.studentIdCode}</td>
@@ -1168,6 +1170,83 @@ export default function TeacherPortal() {
               </div>
             )}
           </div>
+          )}
+        </div>
+      )}
+
+      {/* ── ABSENCE REQUESTS TAB ── */}
+      {activeTab === 'absences' && (
+        <div className="space-y-3">
+          {myAssignedClasses.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-20 bg-amber-50 rounded-2xl border border-amber-200">
+              <Lock className="w-12 h-12 text-amber-400 mx-auto mb-3" />
+              <h3 className="font-bold text-slate-900 mb-1">No Classes Assigned</h3>
+              <p className="text-slate-500 text-sm text-center max-w-sm">You'll see absence requests once you're assigned to a class.</p>
+            </div>
+          ) : myAbsenceRequests.length === 0 ? (
+            <div className="text-center py-16 bg-slate-50 rounded-2xl border-2 border-dashed border-slate-200">
+              <AlertCircle className="w-12 h-12 text-slate-300 mx-auto mb-3" />
+              <p className="text-slate-500 font-medium">No absence requests for your classes.</p>
+            </div>
+          ) : (
+            <AnimatePresence mode="popLayout">
+              {myAbsenceRequests.map(req => (
+                <motion.div key={req.id} layout
+                  initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, scale: 0.97 }}
+                  className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+                  <div className="p-5 flex flex-col sm:flex-row gap-4 items-start sm:items-center">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <p className="font-bold text-slate-900">{req.studentName}</p>
+                        <span className="text-xs text-slate-500">{req.class}</span>
+                        <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full border ${
+                          req.status === 'pending' ? 'bg-amber-50 text-amber-700 border-amber-200' :
+                          req.status === 'approved' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' :
+                          'bg-rose-50 text-rose-700 border-rose-200'
+                        }`}>{req.status}</span>
+                      </div>
+                      <div className="flex items-center gap-3 mt-1 text-xs text-slate-500 flex-wrap">
+                        <span className="flex items-center gap-1"><Calendar className="w-3 h-3" />{req.startDate} → {req.endDate}</span>
+                        <span>by {req.parentName}</span>
+                      </div>
+                      <p className="text-sm text-slate-600 mt-1">{req.reason}</p>
+                      {req.reviewedBy && <p className="text-xs text-slate-400 mt-0.5">Reviewed by {req.reviewedBy}{req.reviewNote ? ` — "${req.reviewNote}"` : ''}</p>}
+                    </div>
+                    {req.status === 'pending' && (
+                      <button onClick={() => setAbsenceReviewingId(absenceReviewingId === req.id ? null : req.id)}
+                        className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-slate-600 bg-slate-100 rounded-xl hover:bg-slate-200 transition-colors shrink-0">
+                        <ChevronDown className={`w-3 h-3 transition-transform ${absenceReviewingId === req.id ? 'rotate-180' : ''}`} />
+                        Review
+                      </button>
+                    )}
+                  </div>
+                  <AnimatePresence>
+                    {absenceReviewingId === req.id && (
+                      <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
+                        <div className="px-5 pb-5 border-t border-slate-100">
+                          <textarea placeholder="Optional note to parent…" value={absenceReviewNote}
+                            onChange={e => setAbsenceReviewNote(e.target.value)}
+                            className="w-full mt-4 px-3 py-2 rounded-xl border border-slate-200 text-sm outline-none focus:ring-2 focus:ring-indigo-500 resize-none" rows={2} />
+                          <div className="flex gap-2 mt-3 justify-end">
+                            <button onClick={() => { setAbsenceReviewingId(null); setAbsenceReviewNote(''); }}
+                              className="px-4 py-2 text-sm font-bold text-slate-600 bg-slate-100 rounded-xl hover:bg-slate-200 transition-colors">Cancel</button>
+                            <button disabled={absenceSubmitting} onClick={() => handleReviewAbsence(req.id, 'rejected')}
+                              className="flex items-center gap-1.5 px-4 py-2 text-sm font-bold text-white bg-rose-600 rounded-xl hover:bg-rose-700 disabled:opacity-50 transition-colors">
+                              <X className="w-4 h-4" /> Reject
+                            </button>
+                            <button disabled={absenceSubmitting} onClick={() => handleReviewAbsence(req.id, 'approved')}
+                              className="flex items-center gap-1.5 px-4 py-2 text-sm font-bold text-white bg-emerald-600 rounded-xl hover:bg-emerald-700 disabled:opacity-50 transition-colors">
+                              {absenceSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
+                              Approve
+                            </button>
+                          </div>
+                        </div>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                </motion.div>
+              ))}
+            </AnimatePresence>
           )}
         </div>
       )}

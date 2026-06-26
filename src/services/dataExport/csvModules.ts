@@ -55,16 +55,16 @@ export async function parseSpreadsheetFile<T extends Record<string, string>>(fil
 
 export const STUDENT_CSV_HEADERS = [
   'studentName', 'email', 'phone', 'dob', 'gender', 'currentClass',
-  'guardianName', 'guardianPhone', 'guardianEmail', 'homeAddress', 'stateOfOrigin',
-  'bloodGroup', 'religion',
+  'guardianName', 'guardianPhone', 'guardianEmail', 'homeAddress', 'otherNationality',
+  'bloodGroup',
 ] as const;
 
 export type StudentCsvRow = Record<(typeof STUDENT_CSV_HEADERS)[number], string>;
 
 export const STUDENT_TEMPLATE_SAMPLE: string[] = [
   'Adaeze Okonkwo', 'adaeze@email.com', '08012345678', '2010-05-15', 'female', 'JSS 1',
-  'Mrs Okonkwo', '08012345679', 'parent@email.com', '5 Main Street Lagos', 'Anambra',
-  'O+', 'Christianity',
+  'Mrs Okonkwo', '08012345679', 'parent@email.com', '5 Main Street Lagos', '',
+  'O+',
 ];
 
 export function validateStudentRow(row: StudentCsvRow, idx: number): string | null {
@@ -81,7 +81,7 @@ export function studentToCsvRow(s: Student): string[] {
   return [
     s.studentName ?? '', s.email ?? '', s.phone ?? '', s.dob ?? '', s.gender ?? '',
     s.currentClass ?? '', s.guardianName ?? '', s.guardianPhone ?? '', s.guardianEmail ?? '',
-    s.homeAddress ?? '', s.stateOfOrigin ?? '', s.bloodGroup ?? '', s.religion ?? '',
+    s.homeAddress ?? '', s.otherNationality ?? '', s.bloodGroup ?? '',
   ];
 }
 
@@ -182,9 +182,8 @@ export async function importStudentsFromRows(
         guardianPhone: row.guardianPhone?.trim() || '',
         guardianEmail: row.guardianEmail?.trim() || '',
         homeAddress: row.homeAddress?.trim() || '',
-        stateOfOrigin: row.stateOfOrigin?.trim() || '',
+        otherNationality: row.otherNationality?.trim() || '',
         bloodGroup: row.bloodGroup?.trim() || '',
-        religion: row.religion?.trim() || '',
         schoolId,
       };
       await addDoc(collection(db, 'students'), student);

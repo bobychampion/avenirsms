@@ -78,6 +78,16 @@ export interface UserProfile {
    * to the explicit reset flow instead.
    */
   syntheticLogin?: boolean;
+  /**
+   * Parent preference: show their child's photo on the report card they view/print.
+   * Undefined/missing means "show" (opt-out, not opt-in).
+   */
+  reportCardShowPhoto?: boolean;
+  /**
+   * Per-user notification category opt-outs. Undefined/missing for any key
+   * means "on" (opt-out, not opt-in) — matches reportCardShowPhoto's convention.
+   */
+  notificationPrefs?: { attendance?: boolean; fees?: boolean; general?: boolean };
 }
 
 /** Platform-level school record (schools collection) */
@@ -154,9 +164,8 @@ export interface Student {
   bloodGroup?: string;
   allergies?: string;
   // Extra
-  religion?: string;
   homeAddress?: string;
-  stateOfOrigin?: string;
+  otherNationality?: string;
   lga?: string;
   nationality?: string;
   admissionStatus?: 'active' | 'graduated' | 'withdrawn' | 'suspended';

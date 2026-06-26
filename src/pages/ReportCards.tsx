@@ -7,6 +7,7 @@ import toast from 'react-hot-toast';
 import { useClassSelectOptions, useSchool } from '../components/SchoolContext';
 import { useSchoolId } from '../hooks/useSchoolId';
 import { FileText, Printer, Sparkles, ChevronDown, Users } from 'lucide-react';
+import Avatar from '../components/Avatar';
 
 const DEFAULT_SKILLS: StudentSkills = {
   punctuality: 'G', neatness: 'G', cooperation: 'G', honesty: 'G', sports: 'G', creativity: 'G',
@@ -37,7 +38,7 @@ const GRADE_MAP: Record<string, { label: string; color: string }> = {
 
 export default function ReportCards() {
   const classSelectOptions = useClassSelectOptions();
-  const { getGradingForClass } = useSchool();
+  const { getGradingForClass, schoolName, logoUrl, reportShowLogo, reportFooterText } = useSchool();
   const schoolId = useSchoolId();
   const [selectedClass, setSelectedClass] = useState('');
   const [selectedTerm, setSelectedTerm] = useState<'1st Term' | '2nd Term' | '3rd Term'>('1st Term');
@@ -46,7 +47,6 @@ export default function ReportCards() {
   const [loading, setLoading] = useState(false);
   const [selectedReport, setSelectedReport] = useState<StudentReport | null>(null);
   const [generatingComment, setGeneratingComment] = useState<string | null>(null);
-  const [schoolName] = useState('Avenir Secondary School');
 
   const loadReports = async () => {
     if (!schoolId) return;
@@ -197,6 +197,9 @@ export default function ReportCards() {
               <div className="bg-white rounded-2xl border-2 border-slate-200 shadow-sm print:shadow-none print:border-slate-300 overflow-hidden" id="report-card">
                 {/* Header */}
                 <div className="bg-indigo-900 text-white p-6 text-center">
+                  {reportShowLogo && logoUrl && (
+                    <img src={logoUrl} alt={schoolName} className="w-12 h-12 object-contain mx-auto mb-2 rounded-lg bg-white/10 p-1" />
+                  )}
                   <h2 className="text-xl font-bold">{schoolName}</h2>
                   <p className="text-indigo-300 text-sm mt-0.5">Student Progress Report</p>
                   <div className="mt-3 flex justify-center gap-6 text-sm">
@@ -207,7 +210,8 @@ export default function ReportCards() {
                 </div>
 
                 {/* Student Info */}
-                <div className="p-5 bg-slate-50 border-b border-slate-200 flex flex-wrap gap-6">
+                <div className="p-5 bg-slate-50 border-b border-slate-200 flex flex-wrap items-center gap-6">
+                  <Avatar photoUrl={selectedReport.student.photoUrl} name={selectedReport.student.studentName} size="sm" />
                   {[
                     { label: 'Name', value: selectedReport.student.studentName },
                     { label: 'Student ID', value: selectedReport.student.studentId },
@@ -339,6 +343,13 @@ export default function ReportCards() {
                     <strong className="text-slate-700">Next Term Begins:</strong> _________________ &nbsp;|&nbsp;
                     <strong className="text-slate-700">School Fees Due:</strong> _________________
                   </div>
+                </div>
+
+                {/* Footer */}
+                <div className="px-5 pb-5 text-center">
+                  <p className="text-[10px] text-slate-400">
+                    {reportFooterText || 'This report is computer generated.'}
+                  </p>
                 </div>
               </div>
             </div>

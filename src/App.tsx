@@ -42,7 +42,6 @@ import BulkStaffImport from './pages/BulkStaffImport';
 import IntegrationSettings from './pages/IntegrationSettings';
 import GoogleOAuthCallback from './pages/GoogleOAuthCallback';
 import WhatsAppNotifications from './pages/WhatsAppNotifications';
-import SeedData from './pages/SeedData';
 import OnboardingTutorial from './pages/OnboardingTutorial';
 import CBTExamEngine from './pages/CBTExamEngine';
 import AdminMobileDashboard from './pages/mobile/AdminMobileDashboard';
@@ -276,7 +275,6 @@ function AppContent() {
           <Route path="/admin/bulk-import" element={<Layout><ProtectedRoute role="admin"><BulkStudentImport /></ProtectedRoute></Layout>} />
           <Route path="/admin/bulk-staff-import" element={<Layout><ProtectedRoute role="admin"><BulkStaffImport /></ProtectedRoute></Layout>} />
           <Route path="/admin/whatsapp" element={<Layout><ProtectedRoute role="admin"><WhatsAppNotifications /></ProtectedRoute></Layout>} />
-          <Route path="/admin/seed" element={<Layout><ProtectedRoute superAdminOnly><SeedData /></ProtectedRoute></Layout>} />
           <Route path="/admin/migrate" element={<Layout><ProtectedRoute superAdminOnly><DataMigration /></ProtectedRoute></Layout>} />
           <Route path="/admin/cover" element={<Layout><ProtectedRoute role="admin"><CoverManager /></ProtectedRoute></Layout>} />
           <Route path="/admin/trips" element={<Layout><ProtectedRoute role="admin"><TripRegister /></ProtectedRoute></Layout>} />

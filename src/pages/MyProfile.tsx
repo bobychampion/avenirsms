@@ -4,7 +4,9 @@
  * edit their display name. Reachable by every role via /profile.
  */
 import React, { useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { doc, updateDoc } from 'firebase/firestore';
+import { updatePassword, EmailAuthProvider, reauthenticateWithCredential } from 'firebase/auth';
 import { db } from '../firebase';
 import { useAuth } from '../components/FirebaseProvider';
 import { useSchoolId } from '../hooks/useSchoolId';
@@ -12,16 +14,29 @@ import { useStorageSettings } from '../hooks/useStorageSettings';
 import { uploadFile } from '../services/storage/uploadFile';
 import Avatar from '../components/Avatar';
 import toast from 'react-hot-toast';
-import { Camera, Loader2, CloudOff, Save, User as UserIcon } from 'lucide-react';
+import { Camera, Loader2, CloudOff, Save, User as UserIcon, ArrowLeft, KeyRound, Bell, CheckCircle } from 'lucide-react';
 
 export default function MyProfile() {
   const { user, profile } = useAuth();
+  const navigate = useNavigate();
   const schoolId = useSchoolId();
   const { isConnected, loading: storageLoading } = useStorageSettings();
   const [uploading, setUploading] = useState(false);
   const [displayName, setDisplayName] = useState(profile?.displayName ?? '');
   const [savingName, setSavingName] = useState(false);
   const photoInputRef = useRef<HTMLInputElement>(null);
+
+  const [currentPass, setCurrentPass] = useState('');
+  const [newPass, setNewPass] = useState('');
+  const [confirmPass, setConfirmPass] = useState('');
+  const [savingPassword, setSavingPassword] = useState(false);
+
+  const [savingPrefs, setSavingPrefs] = useState(false);
+  const [prefs, setPrefs] = useState({
+    attendance: profile?.notificationPrefs?.attendance !== false,
+    fees: profile?.notificationPrefs?.fees !== false,
+    general: profile?.notificationPrefs?.general !== false,
+  });
 
   if (!user || !profile) return null;
 
@@ -59,8 +74,54 @@ export default function MyProfile() {
     }
   };
 
+  const handleChangePassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (newPass.length < 8) { toast.error('Password must be at least 8 characters.'); return; }
+    if (newPass !== confirmPass) { toast.error('Passwords do not match.'); return; }
+    setSavingPassword(true);
+    try {
+      if (user.email && currentPass) {
+        const cred = EmailAuthProvider.credential(user.email, currentPass);
+        await reauthenticateWithCredential(user, cred);
+      }
+      await updatePassword(user, newPass);
+      toast.success('Password updated.');
+      setCurrentPass(''); setNewPass(''); setConfirmPass('');
+    } catch (err: any) {
+      const msg = err.code === 'auth/wrong-password' || err.code === 'auth/invalid-credential'
+        ? 'Current password is incorrect.'
+        : err.code === 'auth/weak-password'
+        ? 'Password is too weak. Try a longer one with numbers and letters.'
+        : err.message || 'Could not update password.';
+      toast.error(msg);
+    } finally {
+      setSavingPassword(false);
+    }
+  };
+
+  const handleTogglePref = async (key: keyof typeof prefs) => {
+    const next = { ...prefs, [key]: !prefs[key] };
+    setPrefs(next);
+    setSavingPrefs(true);
+    try {
+      await updateDoc(doc(db, 'users', user.uid), { notificationPrefs: next });
+    } catch (e: any) {
+      setPrefs(prefs);
+      toast.error(e.message || 'Could not save preference.');
+    } finally {
+      setSavingPrefs(false);
+    }
+  };
+
   return (
     <div className="max-w-2xl mx-auto px-4 sm:px-6 lg:px-8 py-10">
+      <button
+        onClick={() => navigate(-1)}
+        className="flex items-center gap-1.5 text-sm font-semibold text-slate-500 hover:text-indigo-600 transition-colors mb-4"
+      >
+        <ArrowLeft className="w-4 h-4" /> Back
+      </button>
+
       <div className="mb-8">
         <h1 className="text-2xl font-bold text-slate-900 flex items-center gap-2">
           <UserIcon className="w-6 h-6 text-indigo-600" /> My Profile
@@ -121,6 +182,82 @@ export default function MyProfile() {
               Save
             </button>
           </div>
+        </div>
+      </div>
+
+      {/* Change Password */}
+      <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 sm:p-8 mt-6">
+        <h2 className="text-sm font-bold text-slate-900 flex items-center gap-2 mb-4">
+          <KeyRound className="w-4 h-4 text-indigo-600" /> Change Password
+        </h2>
+        <form onSubmit={handleChangePassword} className="space-y-3 max-w-sm">
+          <div>
+            <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">Current password</label>
+            <input
+              type="password" value={currentPass} onChange={e => setCurrentPass(e.target.value)}
+              autoComplete="current-password"
+              className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">New password</label>
+            <input
+              type="password" value={newPass} onChange={e => setNewPass(e.target.value)}
+              minLength={8} autoComplete="new-password"
+              className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">Confirm new password</label>
+            <input
+              type="password" value={confirmPass} onChange={e => setConfirmPass(e.target.value)}
+              autoComplete="new-password"
+              className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm"
+            />
+          </div>
+          <button
+            type="submit"
+            disabled={savingPassword || !newPass || !confirmPass}
+            className="flex items-center gap-1.5 px-4 py-2.5 bg-indigo-600 text-white text-sm font-semibold rounded-xl hover:bg-indigo-700 disabled:opacity-40 transition-colors"
+          >
+            {savingPassword ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle className="w-4 h-4" />}
+            Update Password
+          </button>
+        </form>
+      </div>
+
+      {/* Notification Preferences */}
+      <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 sm:p-8 mt-6">
+        <h2 className="text-sm font-bold text-slate-900 flex items-center gap-2 mb-4">
+          <Bell className="w-4 h-4 text-indigo-600" /> Notification Preferences
+        </h2>
+        <div className="space-y-3">
+          {([
+            { key: 'attendance' as const, label: 'Attendance alerts', desc: 'Low attendance and absence-request updates.' },
+            { key: 'fees' as const, label: 'Fee reminders', desc: 'Invoice due dates and payment confirmations.' },
+            { key: 'general' as const, label: 'General announcements', desc: 'School-wide notices and broadcasts.' },
+          ]).map(item => (
+            <div key={item.key} className="flex items-center justify-between gap-4 py-2">
+              <div>
+                <p className="text-sm font-semibold text-slate-800">{item.label}</p>
+                <p className="text-xs text-slate-400">{item.desc}</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => handleTogglePref(item.key)}
+                disabled={savingPrefs}
+                role="switch"
+                aria-checked={prefs[item.key]}
+                className={`relative w-11 h-6 rounded-full transition-colors shrink-0 disabled:opacity-50 ${
+                  prefs[item.key] ? 'bg-indigo-600' : 'bg-slate-200'
+                }`}
+              >
+                <span className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${
+                  prefs[item.key] ? 'translate-x-5' : 'translate-x-0'
+                }`} />
+              </button>
+            </div>
+          ))}
         </div>
       </div>
     </div>

@@ -51,8 +51,8 @@ interface DirectAdmitForm {
   // Student
   studentName: string; email: string; phone: string; dob: string;
   gender: string; nin: string; classApplyingFor: string;
-  previousSchool: string; religion: string; homeAddress: string;
-  stateOfOrigin: string; bloodGroup: string; medicalConditions: string; allergies: string;
+  previousSchool: string; homeAddress: string;
+  otherNationality: string; bloodGroup: string; medicalConditions: string; allergies: string;
   nationality: string;
   // Primary Guardian
   g1Name: string; g1Email: string; g1Phone: string; g1Relationship: string;
@@ -68,8 +68,8 @@ const RELATIONSHIPS = ['father', 'mother', 'uncle', 'aunt', 'sibling', 'guardian
 
 const EMPTY_FORM: DirectAdmitForm = {
   studentName: '', email: '', phone: '', dob: '', gender: 'male', nin: '',
-  classApplyingFor: '', previousSchool: '', religion: '', homeAddress: '',
-  stateOfOrigin: '', bloodGroup: 'O+', medicalConditions: '', allergies: '', nationality: 'Nigerian',
+  classApplyingFor: '', previousSchool: '', homeAddress: '',
+  otherNationality: '', bloodGroup: 'O+', medicalConditions: '', allergies: '', nationality: 'Nigerian',
   g1Name: '', g1Email: '', g1Phone: '', g1Relationship: 'father', g1Occupation: '', g1Address: '',
   linkExistingParent: false, g1UserId: '',
   g2Name: '', g2Email: '', g2Phone: '', g2Relationship: 'mother',
@@ -274,7 +274,7 @@ function DirectAdmitModal({
 }) {
   const { user, profile } = useAuth();
   const schoolId = useSchoolId();
-  const { classNames } = useSchool();
+  const { classNames, identityDocumentLabel, identityDocumentHint } = useSchool();
   const [form, setForm] = useState<DirectAdmitForm>(EMPTY_FORM);
   const [step, setStep] = useState(1); // 1-Student Info, 2-Guardian, 3-Siblings & Class, 4-Review
   const [saving, setSaving] = useState(false);
@@ -453,9 +453,8 @@ function DirectAdmitModal({
         bloodGroup: form.bloodGroup,
         medicalConditions: form.medicalConditions,
         allergies: form.allergies,
-        religion: form.religion,
         homeAddress: form.homeAddress,
-        stateOfOrigin: form.stateOfOrigin,
+        otherNationality: form.otherNationality,
         nationality: form.nationality,
         admissionStatus: 'active',
         schoolId: schoolId ?? undefined,
@@ -607,9 +606,9 @@ function DirectAdmitModal({
                     className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm" placeholder="+234..." />
                 </div>
                 <div>
-                  <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">NIN</label>
+                  <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">{identityDocumentLabel}</label>
                   <input value={form.nin} onChange={e => f('nin', e.target.value)}
-                    className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm" placeholder="11-digit NIN" />
+                    className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm" placeholder={identityDocumentHint} />
                 </div>
                 <div>
                   <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Blood Group</label>
@@ -619,20 +618,9 @@ function DirectAdmitModal({
                   </select>
                 </div>
                 <div>
-                  <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Religion</label>
-                  <select value={form.religion} onChange={e => f('religion', e.target.value)}
-                    className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm">
-                    <option value="">Select...</option>
-                    <option>Christianity</option>
-                    <option>Islam</option>
-                    <option>Traditional</option>
-                    <option>Other</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">State of Origin</label>
-                  <input value={form.stateOfOrigin} onChange={e => f('stateOfOrigin', e.target.value)}
-                    className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm" placeholder="e.g. Lagos" />
+                  <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Other Nationality</label>
+                  <input value={form.otherNationality} onChange={e => f('otherNationality', e.target.value)}
+                    className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm" placeholder="e.g. dual citizenship, if any" />
                 </div>
                 <div>
                   <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Nationality</label>

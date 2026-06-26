@@ -9,7 +9,7 @@ import {
   GraduationCap, LogOut, LayoutDashboard, Users, UserCheck, BookOpen,
   ClipboardList, Calendar, DollarSign, FileText, Settings, BarChart3,
   Clock, Award, Briefcase, CreditCard, Map, Menu, X, Bell,
-  ArrowUpRight, Key, Sparkles, MessageSquare, Star, CheckSquare, FileSpreadsheet, Database,
+  ArrowUpRight, Key, MessageSquare, FileSpreadsheet, Database,
   HelpCircle, Building2, ShieldCheck, LogIn, MapPin, WifiOff, Chrome, Package,
 } from 'lucide-react';
 import { cn } from '../lib/utils';
@@ -106,37 +106,6 @@ function isLightColor(hex: string): boolean {
   return luminance > 160;
 }
 
-const teacherNavGroups = [
-  {
-    label: 'My Portal',
-    items: [
-      { to: '/teacher', label: 'Dashboard', icon: LayoutDashboard, exact: true },
-    ],
-  },
-  {
-    label: 'Classroom',
-    items: [
-      { to: '/teacher?tab=students', label: 'My Students', icon: Users, exact: false },
-      { to: '/teacher?tab=attendance', label: 'Attendance', icon: CheckSquare, exact: false },
-      { to: '/teacher?tab=grades', label: 'Gradebook', icon: Award, exact: false },
-      { to: '/teacher?tab=skills', label: 'Skills', icon: Star, exact: false },
-      { to: '/teacher?tab=assignments', label: 'Assignments', icon: BookOpen, exact: false },
-    ],
-  },
-  {
-    label: 'Communication',
-    items: [
-      { to: '/teacher?tab=messages', label: 'Messages', icon: MessageSquare, exact: false },
-    ],
-  },
-  {
-    label: 'AI Tools',
-    items: [
-      { to: '/teacher?tab=ai_tools', label: 'AI Teaching Tools', icon: Sparkles, exact: false },
-    ],
-  },
-];
-
 const superAdminNavGroups = [
   {
     label: 'Platform',
@@ -208,7 +177,6 @@ const adminNavGroups = [
       { to: '/admin/data-portability', label: 'Import / Export', icon: Package },
       { to: '/admin/bulk-import', label: 'Bulk Import', icon: FileSpreadsheet },
       { to: '/admin/whatsapp', label: 'WhatsApp', icon: MessageSquare },
-      { to: '/admin/seed', label: 'Seed Demo Data', icon: Database },
     ],
   },
 ];
@@ -345,112 +313,6 @@ function AdminSidebar({ open, onClose, schoolName, logoUrl, primaryColor, sideba
   );
 }
 
-function TeacherSidebar({ open, onClose, displayName, photoUrl, schoolName, logoUrl }: { open: boolean; onClose: () => void; displayName?: string; photoUrl?: string; schoolName: string; logoUrl: string }) {
-  const location = useLocation();
-  const activeTab = new URLSearchParams(location.search).get('tab') || '';
-
-  return (
-    <>
-      {open && (
-        <div className="fixed inset-0 bg-black/50 z-40 lg:hidden" onClick={onClose} />
-      )}
-      <aside
-        className={cn(
-          'fixed top-0 left-0 h-full w-64 bg-slate-900 z-50 flex flex-col transition-transform duration-300',
-          'lg:translate-x-0 lg:sticky lg:top-0 lg:h-screen lg:z-auto',
-          open ? 'translate-x-0' : '-translate-x-full'
-        )}
-      >
-        {/* Logo */}
-        <div className="flex items-center justify-between px-5 py-5 border-b border-slate-700">
-          <Link to="/teacher" className="flex items-center gap-3" onClick={onClose}>
-            {logoUrl ? (
-              <img src={logoUrl} alt={schoolName} className="w-9 h-9 object-contain rounded-xl bg-white p-0.5" />
-            ) : (
-              <div className="bg-emerald-600 p-2 rounded-xl">
-                <GraduationCap className="w-5 h-5 text-white" />
-              </div>
-            )}
-            <div>
-              <p className="text-white font-bold text-sm leading-tight">{schoolName}</p>
-              <p className="text-emerald-400 text-xs font-medium">Teacher Portal</p>
-            </div>
-          </Link>
-          <button onClick={onClose} className="lg:hidden text-slate-400 hover:text-white">
-            <X className="w-5 h-5" />
-          </button>
-        </div>
-
-        {/* Teacher profile badge */}
-        <Link to="/profile" className="px-5 py-4 border-b border-slate-700/50 block hover:bg-slate-800/50 transition-colors">
-          <div className="flex items-center gap-3">
-            <Avatar photoUrl={photoUrl} name={displayName ?? ''} fallbackChar="T" size="xs" rounded="full" gradientFrom="from-emerald-500" gradientTo="to-teal-600" />
-            <div className="min-w-0">
-              <p className="text-white text-sm font-semibold truncate">{displayName || 'Teacher'}</p>
-              <p className="text-emerald-400 text-xs">Class Teacher</p>
-            </div>
-          </div>
-        </Link>
-
-        {/* Nav */}
-        <nav className="flex-1 overflow-y-auto py-4 px-3 space-y-5">
-          {teacherNavGroups.map(group => (
-            <div key={group.label}>
-              <p className="text-slate-500 text-xs font-semibold uppercase tracking-widest px-3 mb-2">
-                {group.label}
-              </p>
-              <ul className="space-y-1">
-                {group.items.map(item => {
-                  const tabParam = new URLSearchParams(item.to.split('?')[1] || '').get('tab');
-                  const isActive = item.exact
-                    ? location.pathname === '/teacher' && !activeTab
-                    : tabParam ? activeTab === tabParam : location.pathname === item.to.split('?')[0];
-                  return (
-                    <li key={item.to}>
-                      <Link
-                        to={item.to}
-                        onClick={onClose}
-                        className={cn(
-                          'flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-150',
-                          isActive
-                            ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-600/30'
-                            : 'text-slate-300 hover:bg-slate-800 hover:text-white'
-                        )}
-                      >
-                        <item.icon className="w-4 h-4 flex-shrink-0" />
-                        {item.label}
-                      </Link>
-                    </li>
-                  );
-                })}
-              </ul>
-            </div>
-          ))}
-        </nav>
-
-        {/* Calendar quick link + Getting Started */}
-        <div className="p-3 border-t border-slate-700 space-y-1">
-          <Link
-            to="/calendar"
-            onClick={onClose}
-            className="flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium text-slate-300 hover:bg-slate-800 hover:text-white transition-all"
-          >
-            <Calendar className="w-4 h-4" />
-            School Calendar
-          </Link>
-          <Link
-            to="/onboarding"
-            onClick={onClose}
-            className="flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium text-slate-300 hover:bg-emerald-700 hover:text-white transition-all"
-          >
-            <HelpCircle className="w-4 h-4 text-emerald-400" />
-            Getting Started Guide
-          </Link>
-        </div>
-      </aside>
-    </>
-  );
-}
 
 export function Layout({ children }: { children: React.ReactNode }) {
   const { user, profile, logout, login, isAdmin, isSuperAdmin } = useAuth();
@@ -533,53 +395,61 @@ export function Layout({ children }: { children: React.ReactNode }) {
     );
   }
 
-  // ── TEACHER LAYOUT ──
+  // ── TEACHER LAYOUT (no sidebar — TeacherPortal's own tab bar covers navigation) ──
   if (isTeacher) {
     return (
-      <div className="h-screen bg-slate-50 flex overflow-hidden">
-        <TeacherSidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} displayName={profile?.displayName} photoUrl={profile?.photoUrl} schoolName={schoolName} logoUrl={logoUrl} />
-        <div className="flex-1 flex flex-col min-w-0">
-          <header className="bg-white border-b border-slate-200 sticky top-0 z-30 h-16 flex items-center px-4 sm:px-6 gap-4">
-            <button
-              onClick={() => setSidebarOpen(true)}
-              className="lg:hidden p-2 text-slate-500 hover:text-slate-900 hover:bg-slate-100 rounded-lg"
-            >
-              <Menu className="w-5 h-5" />
-            </button>
-            <div className="flex-1" />
-            {/* GPS presence */}
-            {schoolId && <TeacherPresenceBadge schoolId={schoolId} />}
-            {/* Live clock */}
-            <LiveClock />
-            <div className="hidden sm:block w-px h-6 bg-slate-200" />
-            <Link
-              to="/calendar"
-              className="hidden sm:flex items-center gap-2 text-sm text-slate-600 hover:text-emerald-600 px-3 py-2 rounded-lg hover:bg-emerald-50 transition-colors"
-            >
-              <Calendar className="w-4 h-4" />
-              Calendar
-            </Link>
-            <div className="flex items-center gap-3">
-              <div className="text-right hidden sm:block">
-                <p className="text-sm font-semibold text-slate-900">{profile?.displayName}</p>
-                <p className="text-xs text-emerald-600 font-medium">Teacher</p>
+      <div className="h-screen bg-slate-50 flex flex-col overflow-hidden">
+        <header className="bg-white border-b border-slate-200 sticky top-0 z-30 h-16 flex items-center px-4 sm:px-6 gap-4">
+          <Link to="/teacher" className="flex items-center gap-2.5 shrink-0">
+            {logoUrl ? (
+              <img src={logoUrl} alt={schoolName} className="w-8 h-8 object-contain rounded-lg" />
+            ) : (
+              <div className="bg-emerald-600 p-1.5 rounded-lg">
+                <GraduationCap className="w-4 h-4 text-white" />
               </div>
-              <Link to="/profile" title="My Profile">
-                <Avatar photoUrl={profile?.photoUrl} name={profile?.displayName ?? ''} fallbackChar="T" size="xs" rounded="full" gradientFrom="from-emerald-500" gradientTo="to-teal-600" />
-              </Link>
-              <button
-                onClick={handleLogout}
-                className="p-2 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"
-                title="Logout"
-              >
-                <LogOut className="w-4 h-4" />
-              </button>
+            )}
+            <span className="text-sm font-bold text-slate-900 hidden sm:block">{schoolName}</span>
+          </Link>
+          <div className="flex-1" />
+          {/* GPS presence */}
+          {schoolId && <TeacherPresenceBadge schoolId={schoolId} />}
+          {/* Live clock */}
+          <LiveClock />
+          <div className="hidden sm:block w-px h-6 bg-slate-200" />
+          <Link
+            to="/calendar"
+            className="hidden sm:flex items-center gap-2 text-sm text-slate-600 hover:text-emerald-600 px-3 py-2 rounded-lg hover:bg-emerald-50 transition-colors"
+          >
+            <Calendar className="w-4 h-4" />
+            Calendar
+          </Link>
+          <Link
+            to="/onboarding"
+            title="Getting Started Guide"
+            className="hidden sm:flex items-center justify-center w-9 h-9 text-slate-500 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors"
+          >
+            <HelpCircle className="w-4 h-4" />
+          </Link>
+          <div className="flex items-center gap-3">
+            <div className="text-right hidden sm:block">
+              <p className="text-sm font-semibold text-slate-900">{profile?.displayName}</p>
+              <p className="text-xs text-emerald-600 font-medium">Teacher</p>
             </div>
-          </header>
-          <main className="flex-1 overflow-auto">
-            {children}
-          </main>
-        </div>
+            <Link to="/profile" title="My Profile">
+              <Avatar photoUrl={profile?.photoUrl} name={profile?.displayName ?? ''} fallbackChar="T" size="xs" rounded="full" gradientFrom="from-emerald-500" gradientTo="to-teal-600" />
+            </Link>
+            <button
+              onClick={handleLogout}
+              className="p-2 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"
+              title="Logout"
+            >
+              <LogOut className="w-4 h-4" />
+            </button>
+          </div>
+        </header>
+        <main className="flex-1 overflow-auto">
+          {children}
+        </main>
       </div>
     );
   }

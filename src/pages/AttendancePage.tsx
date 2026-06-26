@@ -48,6 +48,29 @@ export default function AttendancePage() {
   }[]>([]);
   const [loadingMonthly, setLoadingMonthly] = useState(false);
 
+  // Approved absence requests for this class — used to default attendance to "absent"
+  // and flag students who are on authorised leave for the selected date.
+  const [approvedAbsences, setApprovedAbsences] = useState<{ studentId: string; startDate: string; endDate: string }[]>([]);
+  useEffect(() => {
+    if (!schoolId || !selectedClass) { setApprovedAbsences([]); return; }
+    const q = query(
+      collection(db, 'absence_requests'),
+      where('schoolId', '==', schoolId),
+      where('class', '==', selectedClass),
+      where('status', '==', 'approved'),
+    );
+    const unsub = onSnapshot(q, snap => {
+      setApprovedAbsences(snap.docs.map(d => {
+        const data = d.data() as { studentId: string; startDate: string; endDate: string };
+        return { studentId: data.studentId, startDate: data.startDate, endDate: data.endDate };
+      }));
+    }, () => setApprovedAbsences([]));
+    return unsub;
+  }, [schoolId, selectedClass]);
+
+  const isOnApprovedLeave = (studentId: string, date: string) =>
+    approvedAbsences.some(a => a.studentId === studentId && a.startDate <= date && a.endDate >= date);
+
   // Load classes from Firestore so the dropdown matches actual data
   useEffect(() => {
     if (!schoolId) return;
@@ -91,11 +114,12 @@ export default function AttendancePage() {
       setAttendanceRows(students.map(s => ({
         studentId: s.id!,
         studentName: s.studentName,
-        status: existing[s.id!] || 'present',
+        status: existing[s.id!] || (isOnApprovedLeave(s.id!, selectedDate) ? 'absent' : 'present'),
       })));
     };
     loadExisting().catch(console.error);
-  }, [students, selectedDate, selectedClass, schoolId]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [students, selectedDate, selectedClass, schoolId, approvedAbsences]);
 
   const setAllStatus = (status: AttendanceStatus) => {
     setAttendanceRows(prev => prev.map(r => ({ ...r, status })));
@@ -392,6 +416,11 @@ export default function AttendancePage() {
                         {i + 1}
                       </div>
                       <p className="font-medium text-slate-800 text-sm">{row.studentName}</p>
+                      {isOnApprovedLeave(row.studentId, selectedDate) && (
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase border bg-emerald-50 text-emerald-700 border-emerald-200">
+                          On approved leave
+                        </span>
+                      )}
                     </div>
                     <div className={`flex items-center gap-2 px-3 py-1.5 rounded-xl border text-sm font-semibold capitalize ${statusBg(row.status)}`}>
                       {statusIcon(row.status)}

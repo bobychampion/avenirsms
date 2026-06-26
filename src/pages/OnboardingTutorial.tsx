@@ -134,20 +134,6 @@ const ADMIN_SECTIONS: Section[] = [
           'Link each subject to the teacher who will teach it — this gives that teacher access to record grades for the class.',
         ],
       },
-      {
-        id: 'seed-data',
-        title: 'Load Demo Data (Optional)',
-        description: 'New to the system? Use Seed Data to instantly populate the school with realistic Nigerian sample data so you can explore all features without entering data manually.',
-        path: '/admin/seed',
-        pathLabel: 'Admin → Seed Demo Data',
-        details: [
-          'Go to Seed Demo Data from the sidebar (at the bottom of HR & System).',
-          'Click "Seed All Demo Data" to create sample classes, students, staff, grades, invoices, and more.',
-          'Use this ONLY on a fresh/test environment — it cannot be easily undone.',
-          'After seeding, explore any module to see how real data flows through the system.',
-        ],
-        warning: 'Never seed demo data on a live production school — it will mix with real student records.',
-      },
     ],
   },
   {

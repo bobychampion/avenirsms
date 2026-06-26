@@ -22,7 +22,7 @@ import {
   Clock, AlertCircle, ChevronRight, BarChart3, BookOpen, ClipboardList,
   GraduationCap, Award, Briefcase, CreditCard, Map, Settings, Eye,
   UserCheck, Calendar, Bell, ArrowUpRight, Key, FileSpreadsheet, MessageSquare,
-  Database, TrendingDown, Activity, Star, Layers, Target, RefreshCw,
+  TrendingDown, Activity, Star, Layers, Target, RefreshCw,
   Shield, Wallet, ReceiptText, UserCog, CalendarDays, BookMarked,
   MapPin, Radio, Minus, Trash2,
 } from 'lucide-react';
@@ -33,6 +33,7 @@ import {
 import { AnimatePresence } from 'motion/react';
 import { useOnboarding } from '../hooks/useOnboarding';
 import OnboardingWizard from '../components/OnboardingWizard';
+import { CHART_COLORS, CustomTooltip } from '../components/charts/ChartPrimitives';
 
 export function StatusBadge({ status }: { status: ApplicationStatus }) {
   const styles: Record<ApplicationStatus, string> = {
@@ -98,7 +99,6 @@ const moduleGroups = [
       { to: '/admin/users', label: 'User Mgmt', icon: Settings, color: 'bg-pink-500' },
       { to: '/admin/settings', label: 'School Settings', icon: Shield, color: 'bg-slate-600' },
       { to: '/admin/data-reset', label: 'Data Reset', icon: Trash2, color: 'bg-red-600' },
-      { to: '/admin/seed', label: 'Seed Data', icon: Database, color: 'bg-violet-600' },
     ],
   },
   {
@@ -112,23 +112,6 @@ const moduleGroups = [
     ],
   },
 ];
-
-const CHART_COLORS = ['#6366f1', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#06b6d4', '#f97316', '#84cc16'];
-
-// ─── Custom Tooltip ───────────────────────────────────────────────────────────
-const CustomTooltip = ({ active, payload, label }: any) => {
-  if (active && payload && payload.length) {
-    return (
-      <div className="bg-white border border-slate-200 rounded-lg px-3 py-2 shadow-lg text-xs">
-        <p className="font-semibold text-slate-700 mb-1">{label}</p>
-        {payload.map((p: any, i: number) => (
-          <p key={i} style={{ color: p.color }} className="font-medium">{p.name}: {p.value}</p>
-        ))}
-      </div>
-    );
-  }
-  return null;
-};
 
 // ─── Live Class Status Helpers ────────────────────────────────────────────────
 type ClassStatus = 'active' | 'scheduled' | 'idle' | 'no_timetable';
@@ -239,6 +222,7 @@ export default function AdminDashboard() {
   const [totalExpenses, setTotalExpenses] = useState(0);
   const [attendanceRate, setAttendanceRate] = useState(0);
   const [pendingLeaves, setPendingLeaves] = useState(0);
+  const [pendingAbsences, setPendingAbsences] = useState(0);
   const [gradeDistribution, setGradeDistribution] = useState<{ grade: string; count: number }[]>([]);
   const [classEnrollment, setClassEnrollment] = useState<{ name: string; students: number }[]>([]);
   const [revenueByMonth, setRevenueByMonth] = useState<{ month: string; revenue: number; expenses: number }[]>([]);
@@ -385,7 +369,7 @@ export default function AdminDashboard() {
     if (!schoolId) return;
     setStatsLoading(true);
     try {
-      const [studentsSnap, staffSnap, paymentsSnap, expensesSnap, attendanceSnap, gradesSnap, leavesSnap] =
+      const [studentsSnap, staffSnap, paymentsSnap, expensesSnap, attendanceSnap, gradesSnap, leavesSnap, pendingAbsencesSnap] =
         await Promise.all([
           getDocs(query(collection(db, 'students'), where('schoolId', '==', schoolId!))),
           getDocs(query(collection(db, 'staff'), where('schoolId', '==', schoolId!))),
@@ -394,6 +378,7 @@ export default function AdminDashboard() {
           getDocs(query(collection(db, 'attendance'), where('schoolId', '==', schoolId!), limit(2000))),
           getDocs(query(collection(db, 'grades'), where('schoolId', '==', schoolId!), limit(2000))),
           getDocs(query(collection(db, 'leave_requests'), where('schoolId', '==', schoolId!))),
+          getDocs(query(collection(db, 'absence_requests'), where('schoolId', '==', schoolId!), where('status', '==', 'pending'))),
         ]);
 
       setStudentCount(studentsSnap.size);
@@ -412,6 +397,7 @@ export default function AdminDashboard() {
 
       // Pending leaves
       setPendingLeaves(leavesSnap.docs.filter(d => d.data().status === 'pending').length);
+      setPendingAbsences(pendingAbsencesSnap.size);
 
       // Grade distribution
       const gc: Record<string, number> = {};
@@ -734,6 +720,7 @@ export default function AdminDashboard() {
                   { to: '/admin/attendance', label: 'Take Attendance', icon: ClipboardList, badge: null, badgeColor: '' },
                   { to: '/admin/gradebook', label: 'Enter Grades', icon: Award, badge: null, badgeColor: '' },
                   { to: '/admin/staff', label: 'Staff Leaves', icon: Briefcase, badge: pendingLeaves || null, badgeColor: 'bg-rose-100 text-rose-700' },
+                  { to: '/admin/absences', label: 'Absence Requests', icon: CalendarDays, badge: pendingAbsences || null, badgeColor: 'bg-rose-100 text-rose-700' },
                   { to: '/admin/notifications', label: 'Send Notifications', icon: Bell, badge: null, badgeColor: '' },
                 ].map(item => (
                   <Link key={item.to} to={item.to}

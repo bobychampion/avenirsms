@@ -16,6 +16,7 @@ import {
   DocumentData,
 } from 'firebase/firestore';
 import { db } from '../firebase';
+import { assertNotImpersonating } from '../utils/impersonationGuard';
 
 // ─── Generic CRUD Helpers ─────────────────────────────────────────────────────
 
@@ -29,6 +30,7 @@ export async function addDocument<T extends DocumentData>(
   data: T,
   schoolId?: string | null
 ): Promise<string> {
+  assertNotImpersonating();
   const payload: DocumentData = { ...data, createdAt: serverTimestamp() };
   if (schoolId) payload.schoolId = schoolId;
   const ref = await addDoc(collection(db, collectionName), payload);
@@ -40,6 +42,7 @@ export async function updateDocument(
   docId: string,
   data: Partial<DocumentData>
 ): Promise<void> {
+  assertNotImpersonating();
   const ref = doc(db, collectionName, docId);
   await updateDoc(ref, { ...data, updatedAt: serverTimestamp() });
 }
@@ -48,6 +51,7 @@ export async function deleteDocument(
   collectionName: string,
   docId: string
 ): Promise<void> {
+  assertNotImpersonating();
   const ref = doc(db, collectionName, docId);
   await deleteDoc(ref);
 }
@@ -125,6 +129,7 @@ export async function batchUpsertAttendance(
   records: { studentId: string; date: string; status: 'present' | 'absent' | 'late'; class: string; recordedBy: string }[],
   schoolId?: string | null
 ): Promise<void> {
+  assertNotImpersonating();
   const batch = writeBatch(db);
   for (const record of records) {
     const constraints: QueryConstraint[] = [

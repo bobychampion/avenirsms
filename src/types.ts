@@ -88,6 +88,13 @@ export interface UserProfile {
    * means "on" (opt-out, not opt-in) — matches reportCardShowPhoto's convention.
    */
   notificationPrefs?: { attendance?: boolean; fees?: boolean; general?: boolean };
+  /**
+   * Set when an admin "deletes" this user. We can't delete the underlying
+   * Firebase Auth credential client-side (needs the Admin SDK), so deletion
+   * instead overwrites this doc with a disabled tombstone — this flag marks
+   * that state so the UI can hide/label it distinctly from a normal disable.
+   */
+  deletedAt?: any;
 }
 
 /** Platform-level school record (schools collection) */
@@ -169,6 +176,8 @@ export interface Student {
   lga?: string;
   nationality?: string;
   admissionStatus?: 'active' | 'graduated' | 'withdrawn' | 'suspended';
+  /** Set when admissionStatus is changed to 'withdrawn'; cleared on reinstatement. */
+  withdrawnAt?: any;
   /** Synthetic school-issued login email, if auto-provisioned at admission. */
   loginEmail?: string;
 }
@@ -376,21 +385,43 @@ export interface Invoice {
   amount: number;
   description: string;
   dueDate: string;
-  status: 'pending' | 'paid' | 'overdue' | 'cancelled';
+  /**
+   * 'awaiting_confirmation' = a parent has declared a bank transfer/cash
+   * payment via the portal; an admin must approve or reject it in
+   * FinancialManagement before it becomes 'paid'.
+   */
+  status: 'pending' | 'awaiting_confirmation' | 'paid' | 'overdue' | 'cancelled';
   term: '1st Term' | '2nd Term' | '3rd Term';
   session: string;
   createdAt: any;
+  /** Set when a parent declares payment via the portal (bank transfer/cash). */
+  paymentClaimedAt?: any;
+  paidAt?: any;
+  /** Paystack transaction reference, set when paid via card. */
+  paystackReference?: string;
 }
 
 export interface FeePayment {
   id?: string;
   invoiceId: string;
   studentId: string;
+  schoolId?: string;
   amount: number;
   paymentMethod: 'cash' | 'bank_transfer' | 'card' | 'other';
   reference?: string;
   date: string;
   recordedBy: string;
+  /**
+   * 'pending' = parent self-reported via the portal, awaiting admin
+   * confirmation. 'confirmed' = either recorded directly by an admin, or a
+   * parent-reported claim an admin approved (or an auto-confirmed card
+   * payment). 'rejected' = admin determined the claim was invalid.
+   * Missing/undefined is treated as 'confirmed' for older records.
+   */
+  status?: 'pending' | 'confirmed' | 'rejected';
+  confirmedBy?: string;
+  confirmedAt?: any;
+  rejectedReason?: string;
 }
 
 export interface Expense {
@@ -453,12 +484,16 @@ export interface Payroll {
 
 export interface Notification {
   id?: string;
+  /** Firebase UID of the recipient, or 'all' for a school-wide broadcast. */
   recipientId: string;
   title: string;
   body: string;
-  type: 'fee_due' | 'exam' | 'attendance' | 'general';
+  type: 'fee_due' | 'exam' | 'attendance' | 'general' | 'message' | 'grade' | 'assignment';
   read: boolean;
   createdAt: any;
+  schoolId?: string;
+  /** Optional deep-link target, e.g. a specific message thread or assignment. */
+  link?: string;
 }
 
 export interface CurriculumItem {

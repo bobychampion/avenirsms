@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../components/FirebaseProvider';
+import { useImpersonation } from '../components/ImpersonationContext';
 import { getPostAuthHomePath } from '../utils/postAuthRedirect';
 import { db } from '../firebase';
 import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
@@ -548,6 +549,7 @@ function FAQItem({ q, a }: { q: string; a: string }) {
 export default function LandingPage() {
   const navigate = useNavigate();
   const { user, profile, loading: authLoading, isAdmin } = useAuth();
+  const { impersonatedProfile } = useImpersonation();
   const [demoOpen, setDemoOpen] = useState(false);
   const [yearlyBilling, setYearlyBilling] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -555,8 +557,17 @@ export default function LandingPage() {
 
   useEffect(() => {
     if (!user || authLoading) return;
+    // While a super_admin "View As" session is active, send them to the
+    // IMPERSONATED user's home, not their own — using the real isAdmin/
+    // profile here would always resolve to /super-admin, which is
+    // superAdminOnly and immediately redirects back to "/", looping forever.
+    if (impersonatedProfile) {
+      const impersonatedIsAdmin = ['admin', 'School_admin', 'accountant'].includes(impersonatedProfile.role);
+      navigate(getPostAuthHomePath(impersonatedIsAdmin, impersonatedProfile as any), { replace: true });
+      return;
+    }
     navigate(getPostAuthHomePath(isAdmin, profile), { replace: true });
-  }, [user, profile, authLoading, isAdmin, navigate]);
+  }, [user, profile, authLoading, isAdmin, impersonatedProfile, navigate]);
 
   useEffect(() => {
     const onScroll = () => setScrolled(window.scrollY > 20);

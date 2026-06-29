@@ -10,6 +10,7 @@ import { Save, Loader2, BookOpen, ArrowLeft, Sparkles, CheckCircle, Download } f
 import { exportGradesCsv } from '../services/dataExport/csvModules';
 import { useClassSelectOptions, useSchool } from '../components/SchoolContext';
 import { useSchoolId } from '../hooks/useSchoolId';
+import { useAuth } from '../components/FirebaseProvider';
 
 const GRADE_COLORS: Record<string, string> = {
   A1: 'bg-emerald-50 text-emerald-700 border-emerald-200',
@@ -27,6 +28,7 @@ export default function Gradebook() {
   const classSelectOptions = useClassSelectOptions();
   const { getGradingForClass } = useSchool();
   const schoolId = useSchoolId();
+  const { profile } = useAuth();
   const [students, setStudents] = useState<Student[]>([]);
   const [grades, setGrades] = useState<Record<string, Grade>>({});
   const [loading, setLoading] = useState(true);
@@ -43,7 +45,9 @@ export default function Gradebook() {
     setLoading(true);
     const q = query(collection(db, 'students'), where('schoolId', '==', schoolId!), where('currentClass', '==', selectedClass));
     const unsubscribe = onSnapshot(q, (snapshot) => {
-      const data = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as Student));
+      const data = snapshot.docs
+        .map(d => ({ id: d.id, ...d.data() } as Student))
+        .filter(s => s.admissionStatus !== 'withdrawn');
       setStudents(data);
     }, (error) => handleFirestoreError(error, OperationType.LIST, 'students'));
     return () => unsubscribe();
@@ -125,6 +129,24 @@ export default function Gradebook() {
         }
       }
       await batch.commit();
+
+      // Notify each affected student's parent — one per student per save,
+      // not per field, so re-saving doesn't spam the same parent repeatedly.
+      const notifiedStudentIds = Object.keys(grades);
+      await Promise.all(notifiedStudentIds.map(studentId => {
+        const student = students.find(s => s.id === studentId);
+        if (!student?.guardianUserId) return null;
+        return addDoc(collection(db, 'notifications'), {
+          recipientId: student.guardianUserId,
+          title: `New grade posted — ${selectedSubject}`,
+          body: `${student.studentName}'s ${selectedSubject} grade for ${selectedTerm} has been posted by ${profile?.displayName ?? 'a teacher'}.`,
+          type: 'grade',
+          read: false,
+          schoolId,
+          createdAt: serverTimestamp(),
+        }).catch(() => {/* non-fatal — grade itself already saved */});
+      }));
+
       toast.success(`Grades saved for ${Object.keys(grades).length} students!`, { id: tid });
       setSavedIds(new Set(Object.keys(grades)));
       setTimeout(() => setSavedIds(new Set()), 3000);

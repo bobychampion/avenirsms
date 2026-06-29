@@ -17,46 +17,51 @@ service cloud.firestore {
       return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
     }
 
+    /** True unless an admin has flipped this account's disabled flag off. */
+    function isActiveAccount() {
+      return isAuthenticated() && !userProfile().get('disabled', false);
+    }
+
     /** Super admin: manages all schools, no schoolId of their own. */
     function isSuperAdmin() {
-      return isAuthenticated() && userProfile().role == 'super_admin';
+      return isActiveAccount() && userProfile().role == 'super_admin';
     }
 
     /** School-scoped admin (admin or School_admin) whose schoolId matches. */
     function isAdmin() {
-      return isAuthenticated() &&
+      return isActiveAccount() &&
         userProfile().role in ['admin', 'School_admin'] &&
         userProfile().schoolId != null;
     }
 
     /** School-scoped teacher. */
     function isTeacher() {
-      return isAuthenticated() && userProfile().role == 'teacher';
+      return isActiveAccount() && userProfile().role == 'teacher';
     }
 
     /** School-scoped parent/guardian. */
     function isParent() {
-      return isAuthenticated() && userProfile().role == 'parent';
+      return isActiveAccount() && userProfile().role == 'parent';
     }
 
     /** School-scoped accountant. */
     function isAccountant() {
-      return isAuthenticated() && userProfile().role == 'accountant';
+      return isActiveAccount() && userProfile().role == 'accountant';
     }
 
     /** School-scoped HR officer. */
     function isHr() {
-      return isAuthenticated() && userProfile().role == 'hr';
+      return isActiveAccount() && userProfile().role == 'hr';
     }
 
     /** School-scoped librarian. */
     function isLibrarian() {
-      return isAuthenticated() && userProfile().role == 'librarian';
+      return isActiveAccount() && userProfile().role == 'librarian';
     }
 
     /** School-scoped HR staff. */
     function isHR() {
-      return isAuthenticated() && userProfile().role == 'hr';
+      return isActiveAccount() && userProfile().role == 'hr';
     }
 
     /** Caller belongs to the given schoolId. */
@@ -74,6 +79,20 @@ service cloud.firestore {
     function newDocBelongsToCallerSchool() {
       return isAuthenticated() &&
         request.resource.data.get('schoolId', null) == userProfile().schoolId;
+    }
+
+    /**
+     * True if the caller is the linked guardian of the student identified by
+     * studentId — matched by email OR by linked uid (mirrors the students/{studentId}
+     * read rule's own OR, so a parent linked via guardianUserId rather than an exact
+     * guardianEmail match isn't silently denied on every other student-scoped
+     * collection: grades, attendance, invoices, fee_payments, exam_seating).
+     */
+    function isGuardianOfStudent(studentId) {
+      let student = get(/databases/$(database)/documents/students/$(studentId)).data;
+      return isActiveAccount() &&
+        (student.get('guardianEmail', '') == request.auth.token.email ||
+         student.get('guardianUserId', '') == request.auth.uid);
     }
 
     function isValidEmail(email) {
@@ -192,6 +211,9 @@ service cloud.firestore {
 
     match /fcm_tokens/{userId} {
       allow read, write: if isAuthenticated() && isOwner(userId);
+      // Admins clean up a deleted user's stale push token; no schoolId is
+      // stored on this doc to scope further, so this is school-admin-wide.
+      allow delete: if isSuperAdmin() || isAdmin();
     }
 
     // ─── Applications ─────────────────────────────────────────────────────────
@@ -239,7 +261,7 @@ service cloud.firestore {
     match /students/{studentId} {
       allow read: if isSuperAdmin() ||
                     ((isAdmin() || isTeacher()) && docBelongsToCallerSchool()) ||
-                    (isAuthenticated() && (
+                    (isActiveAccount() && (
                       resource.data.get('guardianEmail', '') == request.auth.token.email ||
                       resource.data.get('guardianUserId', '') == request.auth.uid
                     ));
@@ -258,7 +280,7 @@ service cloud.firestore {
     match /guardians/{guardianId} {
       allow read: if isSuperAdmin() ||
                     ((isAdmin() || isTeacher()) && docBelongsToCallerSchool()) ||
-                    (isAuthenticated() && resource.data.get('userId', '') == request.auth.uid);
+                    (isActiveAccount() && resource.data.get('userId', '') == request.auth.uid);
       allow write: if isSuperAdmin() || (isAdmin() && newDocBelongsToCallerSchool());
     }
 
@@ -286,9 +308,7 @@ service cloud.firestore {
     match /grades/{gradeId} {
       allow read: if isSuperAdmin() ||
                     ((isAdmin() || isTeacher()) && docBelongsToCallerSchool()) ||
-                    (isAuthenticated() && (
-                      get(/databases/$(database)/documents/students/$(resource.data.studentId)).data.get('guardianEmail', '') == request.auth.token.email
-                    ));
+                    isGuardianOfStudent(resource.data.studentId);
       allow write: if isSuperAdmin() ||
                     ((isAdmin() || isTeacher()) && newDocBelongsToCallerSchool());
     }
@@ -304,9 +324,7 @@ service cloud.firestore {
     match /attendance/{attendanceId} {
       allow read: if isSuperAdmin() ||
                     ((isAdmin() || isTeacher()) && docBelongsToCallerSchool()) ||
-                    (isAuthenticated() && (
-                      get(/databases/$(database)/documents/students/$(resource.data.studentId)).data.get('guardianEmail', '') == request.auth.token.email
-                    ));
+                    isGuardianOfStudent(resource.data.studentId);
       allow write: if isSuperAdmin() ||
                     ((isAdmin() || isTeacher()) && newDocBelongsToCallerSchool());
     }
@@ -362,19 +380,37 @@ service cloud.firestore {
     match /invoices/{invoiceId} {
       allow read: if isSuperAdmin() ||
                     (isAdmin() && docBelongsToCallerSchool()) ||
-                    (isAuthenticated() && (
-                      get(/databases/$(database)/documents/students/$(resource.data.studentId)).data.get('guardianEmail', '') == request.auth.token.email
-                    ));
-      allow write: if isSuperAdmin() || (isAdmin() && newDocBelongsToCallerSchool());
+                    isGuardianOfStudent(resource.data.studentId);
+      allow create: if isSuperAdmin() || (isAdmin() && newDocBelongsToCallerSchool());
+      // A guardian may only push their own student's invoice FORWARD from
+      // pending/overdue to awaiting_confirmation (bank/cash claim) or paid
+      // (Paystack auto-confirm) — and only touch those bookkeeping fields.
+      // They can never set amount, studentId, or jump straight to 'paid'
+      // from a bank/cash claim without going through the admin queue.
+      allow update: if isSuperAdmin() ||
+                    (isAdmin() && docBelongsToCallerSchool()) ||
+                    (isGuardianOfStudent(resource.data.studentId) &&
+                     resource.data.status in ['pending', 'overdue'] &&
+                     request.resource.data.status in ['awaiting_confirmation', 'paid'] &&
+                     request.resource.data.diff(resource.data).affectedKeys()
+                       .hasOnly(['status', 'paymentClaimedAt', 'paidAt', 'paystackReference']));
+      allow delete: if isSuperAdmin() || (isAdmin() && docBelongsToCallerSchool());
     }
 
     match /fee_payments/{paymentId} {
       allow read: if isSuperAdmin() ||
                     (isAdmin() && docBelongsToCallerSchool()) ||
-                    (isAuthenticated() && (
-                      get(/databases/$(database)/documents/students/$(resource.data.studentId)).data.get('guardianEmail', '') == request.auth.token.email
-                    ));
-      allow write: if isSuperAdmin() || (isAdmin() && newDocBelongsToCallerSchool());
+                    isGuardianOfStudent(resource.data.studentId);
+      // A guardian may self-report a bank/cash claim (always 'pending') or a
+      // Paystack card payment (auto-confirmed) for their own student, scoped
+      // to their own school. Admins record/confirm everything else.
+      allow create: if isSuperAdmin() ||
+                    (isAdmin() && newDocBelongsToCallerSchool()) ||
+                    (isGuardianOfStudent(request.resource.data.studentId) &&
+                     newDocBelongsToCallerSchool() &&
+                     (request.resource.data.status == 'pending' ||
+                      (request.resource.data.status == 'confirmed' && request.resource.data.paymentMethod == 'card')));
+      allow update, delete: if isSuperAdmin() || (isAdmin() && docBelongsToCallerSchool());
     }
 
     match /payments/{paymentId} {
@@ -446,11 +482,15 @@ service cloud.firestore {
         (isAdmin() && docBelongsToCallerSchool()) ||
         (docBelongsToCallerSchool() && resource.data.get('recipientId', '') == request.auth.uid)
       );
-      allow create: if isAuthenticated() && newDocBelongsToCallerSchool();
-      allow update: if isAuthenticated() &&
+      // newDocBelongsToCallerSchool() compares against the CALLER's OWN
+      // profile.schoolId, which is null for super_admin even while they're
+      // browsing/impersonating a school — without this bypass, every
+      // super_admin-composed notification was rejected with permission-denied.
+      allow create: if isSuperAdmin() || (isAuthenticated() && newDocBelongsToCallerSchool());
+      allow update: if isSuperAdmin() || (isAuthenticated() &&
                     docBelongsToCallerSchool() &&
                     resource.data.get('recipientId', '') == request.auth.uid &&
-                    request.resource.data.diff(resource.data).affectedKeys().hasOnly(['read']);
+                    request.resource.data.diff(resource.data).affectedKeys().hasOnly(['read']));
       allow delete: if isSuperAdmin() || (isAdmin() && docBelongsToCallerSchool());
     }
 
@@ -471,7 +511,7 @@ service cloud.firestore {
       allow read: if isAuthenticated() && (
         isSuperAdmin() ||
         ((isAdmin() || isTeacher()) && docBelongsToCallerSchool()) ||
-        get(/databases/$(database)/documents/students/$(resource.data.studentId)).data.get('guardianEmail', '') == request.auth.token.email
+        isGuardianOfStudent(resource.data.studentId)
       );
       allow write: if isSuperAdmin() || (isAdmin() && newDocBelongsToCallerSchool());
     }
@@ -662,6 +702,40 @@ service cloud.firestore {
                     (isHR() && docBelongsToCallerSchool()));
       allow write: if isSuperAdmin() ||
                     ((isAdmin() || isHR()) && newDocBelongsToCallerSchool());
+    }
+
+    // ─── Impersonation logs (Super Admin "View As" audit trail) ──────────────
+    // No Cloud Function involved (Spark/free-plan friendly) — the client
+    // writes its own audit entry, and these rules are the sole enforcement:
+    // a super_admin may only start a session naming themselves as the actor,
+    // against a target that is not an admin/super_admin role and not
+    // disabled. Ending a session may only flip endedAt/endReason once, and
+    // only by the same super_admin who started it.
+    //
+    // SPARK-PLAN-TODO: this whole match block is the rules-only stand-in for
+    // a Cloud Function design (see ImpersonationContext.tsx). Revisit if
+    // upgrading to Blaze and the feature grows beyond read-only "view as".
+
+    function targetIsImpersonatable(targetUid) {
+      let target = get(/databases/$(database)/documents/users/$(targetUid)).data;
+      return !(target.role in ['admin', 'School_admin', 'super_admin']) &&
+        !target.get('disabled', false);
+    }
+
+    match /impersonation_logs/{logId} {
+      allow read: if isSuperAdmin();
+
+      allow create: if isSuperAdmin() &&
+        request.resource.data.superAdminUid == request.auth.uid &&
+        request.resource.data.endedAt == null &&
+        targetIsImpersonatable(request.resource.data.targetUid);
+
+      allow update: if isSuperAdmin() &&
+        resource.data.superAdminUid == request.auth.uid &&
+        resource.data.endedAt == null &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['endedAt', 'endReason']);
+
+      allow delete: if false;
     }
 
     // ─── Connection test (app connectivity check) ─────────────────────────────

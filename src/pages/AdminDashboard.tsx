@@ -5,12 +5,9 @@ import { collection, query, onSnapshot, orderBy, getDocs, limit, where, doc } fr
 import {
   initFCMForUser, onForegroundMessage,
   notifyCheckIn, notifyCheckOut, notifyIdleClass,
-  showBrowserNotification,
+  showBrowserNotification, showFcmPushNotification,
 } from '../services/notificationService';
 import StorageSetupBanner from '../components/StorageSetupBanner';
-
-const showBrowserNotificationRaw = (title: string, body: string) =>
-  showBrowserNotification({ category: 'check_in', title, body });
 import { Application, ApplicationStatus, GeoFence, TeacherCheckIn, Timetable, DAYS_OF_WEEK } from '../types';
 import { useSchool } from '../components/SchoolContext';
 import { useSchoolId } from '../hooks/useSchoolId';
@@ -258,7 +255,7 @@ export default function AdminDashboard() {
       // FCM foreground messages (sent via Cloud Functions) are surfaced as
       // browser notifications the same way as the in-app triggers above.
       if (title) {
-        showBrowserNotificationRaw(title, body ?? '');
+        showFcmPushNotification(title, body ?? '');
       }
     }).then(fn => { unsub = fn; });
     return () => unsub?.();
@@ -381,7 +378,8 @@ export default function AdminDashboard() {
           getDocs(query(collection(db, 'absence_requests'), where('schoolId', '==', schoolId!), where('status', '==', 'pending'))),
         ]);
 
-      setStudentCount(studentsSnap.size);
+      // Exclude withdrawn students from the headline enrollment count
+      setStudentCount(studentsSnap.docs.filter(d => d.data().admissionStatus !== 'withdrawn').length);
       setStaffCount(staffSnap.size);
 
       // Revenue & expenses

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { db, auth, handleFirestoreError, OperationType } from '../firebase';
-import { collection, query, onSnapshot, doc, updateDoc, orderBy, serverTimestamp, setDoc, where, addDoc, getDocs } from 'firebase/firestore';
+import { collection, query, onSnapshot, doc, updateDoc, orderBy, serverTimestamp, setDoc, where, addDoc, getDocs, writeBatch, deleteField } from 'firebase/firestore';
 import { useSchoolId } from '../hooks/useSchoolId';
 import { createUserWithEmailAndPassword, updateProfile } from 'firebase/auth';
 import { UserProfile } from '../types';
@@ -8,9 +9,15 @@ import { motion, AnimatePresence } from 'motion/react';
 import toast from 'react-hot-toast';
 import {
   Users, Search, Filter, User as UserIcon, CheckCircle2,
-  X, AlertCircle, Ban, Power, Loader2, Plus, ChevronRight, Key, UserCheck
+  X, AlertCircle, Ban, Power, Loader2, Plus, ChevronRight, Key, UserCheck, Eye, Trash2
 } from 'lucide-react';
 import { assertNotSuperAdminEmail } from '../utils/superAdminGuard';
+import { useAuth } from '../components/FirebaseProvider';
+import { useImpersonation } from '../components/ImpersonationContext';
+import { getPostAuthHomePath } from '../utils/postAuthRedirect';
+
+/** Roles a super_admin is allowed to "View As" — never admin/School_admin/super_admin. */
+const IMPERSONATABLE_ROLES = new Set(['teacher', 'parent', 'accountant', 'hr', 'librarian', 'staff', 'applicant']);
 
 const ROLE_COLORS: Record<string, string> = {
   admin: 'bg-rose-50 text-rose-700 border-rose-100',
@@ -30,6 +37,12 @@ interface RoleChangeConfirm {
 
 export default function UserManagement() {
   const schoolId = useSchoolId();
+  const navigate = useNavigate();
+  const { user: currentUser, isSuperAdmin } = useAuth();
+  const { startImpersonation } = useImpersonation();
+  const [viewingAsId, setViewingAsId] = useState<string | null>(null);
+  const [deleteConfirm, setDeleteConfirm] = useState<UserProfile | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
   const [users, setUsers] = useState<UserProfile[]>([]);
   const [staffWithoutAccount, setStaffWithoutAccount] = useState<{ id: string; staffName: string; email: string; role: string; pendingPassword: string }[]>([]);
   const [loading, setLoading] = useState(true);
@@ -119,6 +132,70 @@ export default function UserManagement() {
     if (selectedUser?.uid === roleConfirm.uid) setSelectedUser(prev => prev ? { ...prev, role: roleConfirm.newRole as any } : null);
     setRoleConfirm(null);
     setSavingId(null);
+  };
+
+  const handleViewAs = async (u: UserProfile) => {
+    if (!IMPERSONATABLE_ROLES.has(u.role) || u.disabled) return;
+    setViewingAsId(u.uid);
+    try {
+      await startImpersonation(u.uid);
+      navigate(getPostAuthHomePath(['admin', 'School_admin', 'accountant'].includes(u.role), u));
+    } catch (e: any) {
+      toast.error(e.message || 'Failed to start View As session');
+    } finally {
+      setViewingAsId(null);
+    }
+  };
+
+  /**
+   * "Delete" a user. We can't delete the underlying Firebase Auth credential
+   * from the client (needs the Admin SDK / a Cloud Function — not available
+   * on the free Spark plan this project runs on), so this instead:
+   *  1. Unlinks (doesn't delete) any staff/guardian/student records that
+   *     reference this login, so academic/financial history stays intact.
+   *  2. Drops their stale push-notification token.
+   *  3. Overwrites users/{uid} with a disabled tombstone rather than
+   *     removing the doc — if the old Auth credential ever signs in again,
+   *     FirebaseProvider's bootstrap logic only creates a fresh profile
+   *     when NO doc exists, so leaving a disabled tombstone in place is what
+   *     prevents that credential from silently getting a brand-new, enabled
+   *     account.
+   */
+  const handleDeleteUser = async (u: UserProfile) => {
+    if (!schoolId) return;
+    setDeletingId(u.uid);
+    const tid = toast.loading(`Deleting ${u.displayName || u.email}…`);
+    try {
+      const [staffSnap, guardianSnap, studentSnap] = await Promise.all([
+        getDocs(query(collection(db, 'staff'), where('schoolId', '==', schoolId), where('userId', '==', u.uid))),
+        getDocs(query(collection(db, 'guardians'), where('schoolId', '==', schoolId), where('userId', '==', u.uid))),
+        getDocs(query(collection(db, 'students'), where('schoolId', '==', schoolId), where('guardianUserId', '==', u.uid))),
+      ]);
+
+      const batch = writeBatch(db);
+      staffSnap.forEach(d => batch.update(d.ref, { userId: deleteField(), updatedAt: serverTimestamp() }));
+      guardianSnap.forEach(d => batch.update(d.ref, { userId: deleteField() }));
+      studentSnap.forEach(d => batch.update(d.ref, { guardianUserId: deleteField() }));
+      batch.delete(doc(db, 'fcm_tokens', u.uid));
+      batch.set(doc(db, 'users', u.uid), {
+        uid: u.uid,
+        email: u.email,
+        role: 'applicant',
+        displayName: 'Deleted User',
+        disabled: true,
+        deletedAt: serverTimestamp(),
+        schoolId,
+      });
+      await batch.commit();
+
+      if (selectedUser?.uid === u.uid) setSelectedUser(null);
+      setDeleteConfirm(null);
+      toast.success('User deleted', { id: tid });
+    } catch (e: any) {
+      toast.error('Delete failed: ' + (e.message || 'unknown error'), { id: tid });
+    } finally {
+      setDeletingId(null);
+    }
   };
 
   const toggleDisabled = async (u: UserProfile) => {
@@ -212,13 +289,14 @@ export default function UserManagement() {
 
   const filteredUsers = users.filter(u =>
     u.role !== 'student' && // Exclude student accounts
+    !u.deletedAt && // Exclude deleted (tombstoned) accounts
     (u.displayName?.toLowerCase().includes(searchTerm.toLowerCase()) ||
      u.email.toLowerCase().includes(searchTerm.toLowerCase())) &&
     (filterRole === 'all' || u.role === filterRole)
   );
 
   const roleCounts = users.reduce((acc, u) => {
-    if (u.role !== 'student') { // Exclude student accounts from counts
+    if (u.role !== 'student' && !u.deletedAt) { // Exclude student + deleted accounts from counts
       acc[u.role] = (acc[u.role] || 0) + 1;
     }
     return acc;
@@ -404,9 +482,21 @@ export default function UserManagement() {
                           <option value="admin">Admin</option>
                           <option value="School_admin">School Admin</option>
                         </select>
+                        {isSuperAdmin && IMPERSONATABLE_ROLES.has(u.role) && (
+                          <button onClick={e => { e.stopPropagation(); handleViewAs(u); }} disabled={u.disabled || viewingAsId === u.uid}
+                            title={u.disabled ? 'Cannot view as a disabled account' : 'View As (read-only)'}
+                            className="p-1.5 rounded-lg text-indigo-500 hover:bg-indigo-50 transition-all disabled:opacity-40">
+                            {viewingAsId === u.uid ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Eye className="w-3.5 h-3.5" />}
+                          </button>
+                        )}
                         <button onClick={e => { e.stopPropagation(); toggleDisabled(u); }} title={u.disabled ? 'Enable' : 'Disable'}
                           className={`p-1.5 rounded-lg transition-all ${u.disabled ? 'text-emerald-500 hover:bg-emerald-50' : 'text-rose-400 hover:bg-rose-50'}`}>
                           {savingId === u.uid ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Power className="w-3.5 h-3.5" />}
+                        </button>
+                        <button onClick={e => { e.stopPropagation(); setDeleteConfirm(u); }} disabled={u.uid === currentUser?.uid}
+                          title={u.uid === currentUser?.uid ? 'Cannot delete your own account' : 'Delete user'}
+                          className="p-1.5 rounded-lg text-rose-500 hover:bg-rose-50 transition-all disabled:opacity-30">
+                          <Trash2 className="w-3.5 h-3.5" />
                         </button>
                         <ChevronRight className="w-3.5 h-3.5 text-slate-300" />
                       </div>
@@ -468,6 +558,13 @@ export default function UserManagement() {
                 </div>
 
                 <div className="space-y-3">
+                  {isSuperAdmin && IMPERSONATABLE_ROLES.has(selectedUser.role) && (
+                    <button onClick={() => handleViewAs(selectedUser)} disabled={selectedUser.disabled || viewingAsId === selectedUser.uid}
+                      className="w-full py-2.5 font-bold rounded-xl transition-all flex items-center justify-center gap-2 text-sm bg-indigo-50 text-indigo-700 hover:bg-indigo-100 border border-indigo-200 disabled:opacity-40">
+                      {viewingAsId === selectedUser.uid ? <Loader2 className="w-4 h-4 animate-spin" /> : <Eye className="w-4 h-4" />}
+                      View As (read-only)
+                    </button>
+                  )}
                   <div>
                     <label className="text-xs font-bold text-slate-400 uppercase block mb-1.5">Change Role</label>
                     <select value={selectedUser.role} onChange={e => handleRoleChange(selectedUser, e.target.value)}
@@ -493,6 +590,11 @@ export default function UserManagement() {
                     ) : (
                       <><Ban className="w-4 h-4" /> Disable Account</>
                     )}
+                  </button>
+                  <button onClick={() => setDeleteConfirm(selectedUser)} disabled={selectedUser.uid === currentUser?.uid}
+                    title={selectedUser.uid === currentUser?.uid ? 'Cannot delete your own account' : undefined}
+                    className="w-full py-2.5 font-bold rounded-xl transition-all flex items-center justify-center gap-2 text-sm bg-white text-rose-600 hover:bg-rose-50 border border-rose-200 disabled:opacity-40">
+                    <Trash2 className="w-4 h-4" /> Delete User
                   </button>
                 </div>
               </motion.div>
@@ -538,6 +640,38 @@ export default function UserManagement() {
                 <button onClick={confirmRoleChange}
                   className="flex-1 py-3 bg-indigo-600 text-white font-bold rounded-xl hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-200">
                   {savingId ? <Loader2 className="w-4 h-4 animate-spin mx-auto" /> : 'Confirm Change'}
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Delete User Confirmation Modal */}
+      <AnimatePresence>
+        {deleteConfirm && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm">
+            <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-white rounded-3xl p-8 max-w-sm w-full shadow-2xl">
+              <div className="w-14 h-14 bg-rose-50 rounded-full flex items-center justify-center mx-auto mb-5">
+                <Trash2 className="w-7 h-7 text-rose-600" />
+              </div>
+              <h3 className="text-xl font-bold text-slate-900 text-center mb-2">Delete User?</h3>
+              <p className="text-slate-500 text-center text-sm mb-4">
+                <span className="font-bold text-slate-800">{deleteConfirm.displayName || deleteConfirm.email}</span> will
+                lose access immediately and be unlinked from any staff/guardian/student records. Their academic and
+                financial history is kept.
+              </p>
+              <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mb-6">
+                Their login credential isn't deleted (this app can't do that without a paid Firebase plan) — it's
+                permanently disabled instead, so it can never be reused to sign back in.
+              </p>
+              <div className="flex gap-3">
+                <button onClick={() => setDeleteConfirm(null)}
+                  className="flex-1 py-3 bg-slate-100 text-slate-700 font-bold rounded-xl hover:bg-slate-200 transition-all">Cancel</button>
+                <button onClick={() => handleDeleteUser(deleteConfirm)} disabled={deletingId === deleteConfirm.uid}
+                  className="flex-1 py-3 bg-rose-600 text-white font-bold rounded-xl hover:bg-rose-700 transition-all shadow-lg shadow-rose-200 disabled:opacity-60">
+                  {deletingId === deleteConfirm.uid ? <Loader2 className="w-4 h-4 animate-spin mx-auto" /> : 'Delete User'}
                 </button>
               </div>
             </motion.div>

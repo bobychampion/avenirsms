@@ -2,29 +2,46 @@ import React, { useState } from 'react';
 import { usePaystackPayment } from 'react-paystack';
 import { db } from '../firebase';
 import { collection, addDoc, serverTimestamp, doc, updateDoc } from 'firebase/firestore';
-import { Invoice, FeePayment, formatNaira } from '../types';
-import { CreditCard, Loader2, CheckCircle2, ShieldCheck } from 'lucide-react';
+import { Invoice, FeePayment } from '../types';
+import { formatCurrency } from '../utils/formatCurrency';
+import { CreditCard, Loader2, CheckCircle2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 interface Props {
   invoice: Invoice;
   payerEmail: string;
   payerName: string;
+  /** This school's own Paystack public key (school_settings/{schoolId}.paystackPublicKey). */
+  publicKey: string;
+  schoolId: string;
+  locale: string;
+  currency: string;
   onSuccess?: () => void;
   onClose?: () => void;
 }
 
-// Paystack public key comes from env
-const PAYSTACK_PUBLIC_KEY = process.env.PAYSTACK_PUBLIC_KEY || '';
-
-function PaystackButton({ invoice, payerEmail, payerName, onSuccess, onClose }: Props) {
+/**
+ * Card payment via Paystack. The calling component (PaymentMethodModal)
+ * only renders this when the school has both enabled Paystack AND set a
+ * public key — so this component can assume publicKey is non-empty.
+ *
+ * Confirmation note: success here is trusted purely on Paystack's client-side
+ * callback. Proper server-side verification (calling Paystack's verify-
+ * transaction endpoint) needs a Cloud Function, which isn't available on
+ * this project's free Spark plan. This is a known, accepted trade-off — see
+ * SPARK-PLAN-TODO below.
+ */
+// SPARK-PLAN-TODO: once on Blaze, add a verifyPaystackTransaction Cloud
+// Function and call it here instead of trusting onPaystackSuccess directly,
+// to close the (low-risk but real) client-side-spoofing gap.
+function PaystackButton({ invoice, payerEmail, payerName, publicKey, schoolId, locale, currency, onSuccess, onClose }: Props) {
   const [processing, setProcessing] = useState(false);
 
   const config = {
     reference: `AVN-${invoice.id}-${Date.now()}`,
     email: payerEmail,
     amount: invoice.amount * 100, // Paystack expects kobo
-    publicKey: PAYSTACK_PUBLIC_KEY,
+    publicKey,
     metadata: {
       custom_fields: [
         { display_name: 'Student', variable_name: 'student', value: invoice.studentName },
@@ -40,19 +57,20 @@ function PaystackButton({ invoice, payerEmail, payerName, onSuccess, onClose }: 
     setProcessing(true);
     const tid = toast.loading('Recording payment…');
     try {
-      // Record payment
       const payment: Omit<FeePayment, 'id'> = {
         invoiceId: invoice.id!,
         studentId: invoice.studentId,
+        schoolId,
         amount: invoice.amount,
         paymentMethod: 'card',
         reference: ref.reference,
         date: new Date().toISOString().split('T')[0],
         recordedBy: payerEmail,
+        status: 'confirmed', // card payments are auto-confirmed (see SPARK-PLAN-TODO above)
+        confirmedAt: serverTimestamp(),
       };
-      await addDoc(collection(db, 'payments'), payment);
+      await addDoc(collection(db, 'fee_payments'), payment);
 
-      // Update invoice status
       await updateDoc(doc(db, 'invoices', invoice.id!), {
         status: 'paid',
         paidAt: serverTimestamp(),
@@ -75,15 +93,6 @@ function PaystackButton({ invoice, payerEmail, payerName, onSuccess, onClose }: 
 
   const initializePayment = usePaystackPayment(config);
 
-  if (!PAYSTACK_PUBLIC_KEY) {
-    return (
-      <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-sm text-amber-700 flex items-center gap-2">
-        <ShieldCheck className="w-4 h-4 flex-shrink-0" />
-        Paystack key not configured. Add VITE_PAYSTACK_PUBLIC_KEY to .env
-      </div>
-    );
-  }
-
   return (
     <button
       onClick={() => initializePayment({ onSuccess: onPaystackSuccess, onClose: onPaystackClose })}
@@ -97,7 +106,7 @@ function PaystackButton({ invoice, payerEmail, payerName, onSuccess, onClose }: 
       ) : (
         <CreditCard className="w-4 h-4" />
       )}
-      {processing ? 'Processing…' : invoice.status === 'paid' ? 'Already Paid' : `Pay ${formatNaira(invoice.amount)} via Card`}
+      {processing ? 'Processing…' : invoice.status === 'paid' ? 'Already Paid' : `Pay ${formatCurrency(invoice.amount, locale, currency)} via Card`}
     </button>
   );
 }

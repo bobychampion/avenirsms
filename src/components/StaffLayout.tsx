@@ -12,6 +12,9 @@ import React, { useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { useAuth } from './FirebaseProvider';
 import { useSchool } from './SchoolContext';
+import { useEffectiveProfile } from '../hooks/useEffectiveProfile';
+import { ImpersonationBanner } from './ImpersonationBanner';
+import NotificationBell from './NotificationBell';
 import {
   DollarSign, Receipt, FileText, BarChart3,
   Users, UserPlus, CalendarOff, ClipboardList,
@@ -59,7 +62,8 @@ const NAV_BY_ROLE: Record<StaffRole, { title: string; items: NavItem[] }> = {
 };
 
 export function StaffLayout({ role, children }: { role: StaffRole; children: React.ReactNode }) {
-  const { profile, logout } = useAuth();
+  const { logout } = useAuth();
+  const profile = useEffectiveProfile();
   const { schoolName, logoUrl } = useSchool();
   const location = useLocation();
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -139,15 +143,24 @@ export function StaffLayout({ role, children }: { role: StaffRole; children: Rea
       )}
 
       <div className="flex-1 flex flex-col min-w-0">
+        <ImpersonationBanner />
         {/* Mobile header */}
         <header className="lg:hidden sticky top-0 z-30 bg-white border-b border-slate-200 px-4 py-3 flex items-center justify-between">
           <button onClick={() => setMobileOpen(true)} className="p-2 -ml-2 rounded-lg hover:bg-slate-100">
             <Menu className="w-5 h-5 text-slate-700" />
           </button>
           <p className="text-sm font-bold text-slate-900 capitalize">{nav.title}</p>
-          <button onClick={logout} className="p-2 -mr-2 rounded-lg hover:bg-slate-100">
-            <LogOut className="w-5 h-5 text-slate-700" />
-          </button>
+          <div className="flex items-center gap-1">
+            <NotificationBell />
+            <button onClick={logout} className="p-2 -mr-2 rounded-lg hover:bg-slate-100">
+              <LogOut className="w-5 h-5 text-slate-700" />
+            </button>
+          </div>
+        </header>
+
+        {/* Desktop top bar — just the bell, sidebar handles everything else */}
+        <header className="hidden lg:flex sticky top-0 z-30 bg-white border-b border-slate-200 px-6 h-14 items-center justify-end">
+          <NotificationBell />
         </header>
 
         <main className="flex-1 overflow-y-auto">{children}</main>

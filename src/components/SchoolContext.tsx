@@ -24,6 +24,7 @@ import {
 import { SchoolSettings, defaultSettings } from '../pages/SchoolSettings';
 import { useAuth } from './FirebaseProvider';
 import { useSuperAdmin } from './SuperAdminContext';
+import { useImpersonation } from './ImpersonationContext';
 
 const DEFAULT_PERIOD_TIMES = periodTimesFromSlots(DEFAULT_TIMETABLE_PERIODS);
 
@@ -138,9 +139,12 @@ const SchoolContext = createContext<SchoolContextValue>({
 export function SchoolProvider({ children }: { children: React.ReactNode }) {
   const { schoolId: profileSchoolId } = useAuth();
   const { activeSchoolId } = useSuperAdmin();
+  const { impersonatedProfile } = useImpersonation();
 
-  // Effective schoolId: super_admin override takes precedence over profile schoolId
-  const schoolId = activeSchoolId ?? profileSchoolId;
+  // Effective schoolId, matching useSchoolId()'s precedence: an active "View
+  // As" session overrides super_admin school-browsing, which overrides the
+  // signed-in profile's own schoolId.
+  const schoolId = impersonatedProfile?.schoolId ?? activeSchoolId ?? profileSchoolId;
 
   const [classes, setClasses] = useState<SchoolClass[]>([]);
   const [classNames, setClassNames] = useState<string[]>(SCHOOL_CLASSES);

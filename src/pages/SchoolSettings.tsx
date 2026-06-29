@@ -11,6 +11,7 @@ import {
   Upload, Eye, EyeOff, Users, Bell, ShieldCheck, FileText, ClipboardCheck,
   MapPin, Navigation, CheckCircle2, XCircle, RefreshCw, Brain,
   Palette, Link as LinkIcon, Monitor, ExternalLink, Brush, Clock,
+  CreditCard, Landmark, Banknote,
 } from 'lucide-react';
 import TimetablePeriodEditor from '../components/TimetablePeriodEditor';
 import {
@@ -109,6 +110,14 @@ export interface SchoolSettings {
   // Finance & Payroll
   taxModel: 'nigeria_paye' | 'flat_rate' | 'none';
   taxFlatRate: number;       // percentage, used when taxModel === 'flat_rate'
+
+  // ── Fee Payment Methods (Parent Portal) ──────────────────────────────────
+  /** Which payment methods parents can choose from when paying an invoice. */
+  paymentMethods: { bankTransfer: boolean; cash: boolean; paystack: boolean };
+  /** Bank account details shown to parents who choose Bank Transfer. */
+  bankDetails: { bankName: string; accountNumber: string; accountName: string };
+  /** This school's own Paystack public key (pk_live_/pk_test_) — each school collects its own fees. */
+  paystackPublicKey?: string;
   // Media / Cloudinary
   cloudinaryCloudName: string;
   cloudinaryUploadPreset: string;
@@ -256,6 +265,9 @@ export const defaultSettings: SchoolSettings = {
   // Finance
   taxModel: 'none',
   taxFlatRate: 0,
+  paymentMethods: { bankTransfer: false, cash: false, paystack: false },
+  bankDetails: { bankName: '', accountNumber: '', accountName: '' },
+  paystackPublicKey: '',
   // Media
   cloudinaryCloudName: '',
   cloudinaryUploadPreset: '',
@@ -1918,6 +1930,77 @@ export default function SchoolSettingsPage() {
                 </div>
               )}
             </div>
+          </section>
+
+          {/* Fee Payment Methods */}
+          <section className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
+            <h2 className="font-bold text-slate-800 text-sm flex items-center gap-2 mb-1">
+              <CreditCard className="w-4 h-4 text-indigo-600" /> Fee Payment Methods
+            </h2>
+            <p className="text-xs text-slate-500 mb-5">
+              Choose how parents can pay invoices in the Parent Portal. Bank transfer and cash payments
+              are marked "Awaiting Confirmation" until your accounts office approves them in Financial Management.
+            </p>
+
+            <div className="space-y-4 mb-6">
+              <ToggleRow label="Bank Transfer"
+                description="Parent sees your bank account details and declares payment manually."
+                checked={form.paymentMethods.bankTransfer}
+                onChange={v => field('paymentMethods', { ...form.paymentMethods, bankTransfer: v })} />
+              <ToggleRow label="Cash"
+                description="Parent declares they'll pay in person; your accounts office confirms receipt."
+                checked={form.paymentMethods.cash}
+                onChange={v => field('paymentMethods', { ...form.paymentMethods, cash: v })} />
+              <ToggleRow label="Card / Paystack"
+                description="Parent pays by card via Paystack. Requires your school's own Paystack public key below."
+                checked={form.paymentMethods.paystack}
+                onChange={v => field('paymentMethods', { ...form.paymentMethods, paystack: v })} />
+            </div>
+
+            {form.paymentMethods.bankTransfer && (
+              <div className="mb-6 p-4 bg-slate-50 rounded-2xl border border-slate-200">
+                <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-3 flex items-center gap-2">
+                  <Landmark className="w-3.5 h-3.5" /> Bank Account Details
+                </p>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                  <div>
+                    <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">Bank Name</label>
+                    <input value={form.bankDetails.bankName}
+                      onChange={e => field('bankDetails', { ...form.bankDetails, bankName: e.target.value })}
+                      placeholder="e.g. GTBank" className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm" />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">Account Number</label>
+                    <input value={form.bankDetails.accountNumber}
+                      onChange={e => field('bankDetails', { ...form.bankDetails, accountNumber: e.target.value })}
+                      placeholder="0123456789" className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm" />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">Account Name</label>
+                    <input value={form.bankDetails.accountName}
+                      onChange={e => field('bankDetails', { ...form.bankDetails, accountName: e.target.value })}
+                      placeholder="e.g. Koper International School" className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm" />
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {form.paymentMethods.paystack && (
+              <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200">
+                <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-3 flex items-center gap-2">
+                  <Banknote className="w-3.5 h-3.5" /> Paystack Configuration
+                </p>
+                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">Paystack Public Key</label>
+                <input value={form.paystackPublicKey ?? ''}
+                  onChange={e => field('paystackPublicKey', e.target.value)}
+                  placeholder="pk_live_... or pk_test_..."
+                  className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm font-mono" />
+                <p className="text-xs text-slate-400 mt-1.5">
+                  From your own Paystack dashboard (Settings → API Keys & Webhooks). This is the
+                  public key only — never paste your secret key anywhere in this app.
+                </p>
+              </div>
+            )}
           </section>
 
           {/* AI & CBT */}

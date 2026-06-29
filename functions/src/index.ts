@@ -110,6 +110,13 @@ export const setStudentPassword = onCall<SetStudentPasswordPayload>(async (reque
   return { ok: true };
 });
 
+// SPARK-PLAN-TODO: Super Admin "View As" impersonation does NOT use a Cloud
+// Function — see firestore.rules (impersonation_logs match) and
+// src/components/ImpersonationContext.tsx. This keeps the feature usable on
+// the free Spark plan, which cannot deploy Cloud Functions at all. Once on
+// Blaze, consider re-adding startImpersonation/endImpersonation here if the
+// feature needs Admin SDK access (e.g. a real "Act As" custom token).
+
 /**
  * Core logic for connecting Google Workspace to a school
  * 
@@ -1054,7 +1061,8 @@ async function sendFcmNotification(
  *  1. Fetch all invoices where status ∈ ['unpaid','partial'] across all schools.
  *  2. Filter to those with dueDate ≤ today.
  *  3. For each invoice, look up the student → parent guardian's Firebase UID →
- *     their FCM token stored in `users/{uid}.fcmToken`.
+ *     their FCM token stored in `fcm_tokens/{uid}.token` (written by
+ *     notificationService.ts's initFCMForUser on the client).
  *  4. Send a push notification via FCM.
  *  5. Write a `notifications` Firestore doc so the in-app bell also reflects it.
  *
@@ -1063,6 +1071,11 @@ async function sendFcmNotification(
  *  2. Compare with the previous 2 school days.
  *  3. If a student is absent all 3 days and has no approved absence_request
  *     covering today, send the parent a welfare check notification.
+ *
+ * SPARK-PLAN-TODO: this is a scheduled Cloud Function — it cannot run at all
+ * on the free Spark plan (no Cloud Functions of any kind can be deployed).
+ * The token lookup bug (reading the wrong field) is fixed below regardless,
+ * so this works correctly the day this project is upgraded to Blaze.
  */
 export const dailyReminders = onSchedule(
   { schedule: '0 6 * * *', timeZone: 'UTC', region: 'us-central1' },
@@ -1098,15 +1111,15 @@ export const dailyReminders = onSchedule(
         if (!student?.guardianUserId) continue;
 
         // Get guardian's FCM token
-        const userDoc = await db.doc(`users/${student.guardianUserId}`).get();
-        const userData = userDoc.data();
-        if (!userData?.fcmToken) continue;
+        const tokenDoc = await db.doc(`fcm_tokens/${student.guardianUserId}`).get();
+        const tokenData = tokenDoc.data();
+        if (!tokenData?.token) continue;
 
         const overdueDays = Math.round((today.getTime() - new Date(dueDate).getTime()) / 86400000);
         const title = overdueDays > 0 ? '⚠️ Fee Overdue' : '💳 Fee Due Today';
         const body = `${studentName ?? 'Your child'}'s school fee of ₦${(amount ?? 0).toLocaleString()} is ${overdueDays > 0 ? `${overdueDays} day${overdueDays > 1 ? 's' : ''} overdue` : 'due today'}.`;
 
-        await sendFcmNotification(userData.fcmToken, title, body, {
+        await sendFcmNotification(tokenData.token, title, body, {
           type: 'fee_due',
           invoiceId: invoiceDoc.id,
           schoolId,
@@ -1188,14 +1201,14 @@ export const dailyReminders = onSchedule(
         const student = studentDoc.data();
         if (!student?.guardianUserId) continue;
 
-        const userDoc = await db.doc(`users/${student.guardianUserId}`).get();
-        const userData = userDoc.data();
-        if (!userData?.fcmToken) continue;
+        const tokenDoc = await db.doc(`fcm_tokens/${student.guardianUserId}`).get();
+        const tokenData = tokenDoc.data();
+        if (!tokenData?.token) continue;
 
         const title = '📋 Absence Alert';
         const body = `${student.studentName ?? 'Your child'} has been absent for 3 consecutive school days. Please contact the school.`;
 
-        await sendFcmNotification(userData.fcmToken, title, body, {
+        await sendFcmNotification(tokenData.token, title, body, {
           type: 'attendance',
           studentId,
           schoolId: student.schoolId ?? '',

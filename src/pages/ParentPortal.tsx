@@ -14,7 +14,8 @@ import {
   User, Award, Activity, X, BarChart2, FileText, Printer, CreditCard,
   Upload, ExternalLink, GraduationCap, CalendarOff,
 } from 'lucide-react';
-import PaystackButton from '../components/PaystackPayment';
+import PaymentMethodModal from '../components/PaymentMethodModal';
+import { initFCMForUser, onForegroundMessage, showFcmPushNotification } from '../services/notificationService';
 import { DOCUMENT_TITLE_DEFAULT } from '../constants/appMeta';
 import { useSchoolId } from '../hooks/useSchoolId';
 import { useSchool } from '../components/SchoolContext';
@@ -62,6 +63,23 @@ export default function ParentPortal() {
   const [myAbsenceRequests, setMyAbsenceRequests] = useState<any[]>([]);
   const [absenceForm, setAbsenceForm] = useState({ startDate: '', endDate: '', reason: '', type: 'other' as const });
   const [absenceSaving, setAbsenceSaving] = useState(false);
+
+  // Fee payment modal
+  const [payingInvoice, setPayingInvoice] = useState<Invoice | null>(null);
+
+  // ─── FCM Initialisation ──────────────────────────────────────────────────────
+  // Parents are the actual target of fee/absence reminder pushes, but this
+  // was previously only wired up in AdminDashboard — so parents never had a
+  // token registered and never received anything.
+  useEffect(() => {
+    if (!user?.uid) return;
+    initFCMForUser(user.uid).catch(() => {/* non-fatal */});
+    let unsub: (() => void) | undefined;
+    onForegroundMessage(({ title, body }) => {
+      if (title) showFcmPushNotification(title, body ?? '');
+    }).then(fn => { unsub = fn; });
+    return () => unsub?.();
+  }, [user?.uid]);
 
   useEffect(() => {
     if (!user) return;
@@ -338,6 +356,15 @@ export default function ParentPortal() {
       await addDoc(collection(db, 'messages'), {
         ...newMessage, senderId: user.uid, senderName: profile.displayName,
         timestamp: serverTimestamp(), read: false, schoolId: schoolId ?? 'main',
+      });
+      await addDoc(collection(db, 'notifications'), {
+        recipientId: newMessage.receiverId,
+        title: `New message from ${profile.displayName}`,
+        body: newMessage.content.slice(0, 120),
+        type: 'message',
+        read: false,
+        schoolId: schoolId ?? 'main',
+        createdAt: serverTimestamp(),
       });
       setNewMessage({ ...newMessage, content: '' });
     } catch (err: any) {
@@ -991,14 +1018,16 @@ export default function ParentPortal() {
                     <p className="text-sm font-bold text-slate-900">{formatCurrency(inv.amount, locale, currency)}</p>
                     <span className={`px-2 py-1 rounded-full text-[10px] font-bold uppercase ${
                       inv.status === 'paid' ? 'bg-emerald-50 text-emerald-700' :
+                      inv.status === 'awaiting_confirmation' ? 'bg-indigo-50 text-indigo-700' :
                       inv.status === 'pending' ? 'bg-amber-50 text-amber-700' : 'bg-rose-50 text-rose-700'
-                    }`}>{inv.status}</span>
-                    {inv.status !== 'paid' && (
-                      <PaystackButton
-                        invoice={inv}
-                        payerEmail={user?.email || ''}
-                        payerName={profile?.displayName || ''}
-                      />
+                    }`}>{inv.status === 'awaiting_confirmation' ? 'awaiting confirmation' : inv.status}</span>
+                    {inv.status !== 'paid' && inv.status !== 'awaiting_confirmation' && (
+                      <button
+                        onClick={() => setPayingInvoice(inv)}
+                        className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 text-white text-xs font-bold rounded-lg hover:bg-indigo-700 transition-colors"
+                      >
+                        <CreditCard className="w-3.5 h-3.5" /> Pay Now
+                      </button>
                     )}
                   </div>
                 </div>
@@ -1006,6 +1035,18 @@ export default function ParentPortal() {
             </div>
           </div>
         </div>
+      )}
+
+      {payingInvoice && schoolId && (
+        <PaymentMethodModal
+          invoice={payingInvoice}
+          schoolId={schoolId}
+          payerEmail={user?.email || ''}
+          payerName={profile?.displayName || ''}
+          locale={locale}
+          currency={currency}
+          onClose={() => setPayingInvoice(null)}
+        />
       )}
 
       {/* ── MESSAGES ── */}

@@ -3,6 +3,9 @@ import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from './FirebaseProvider';
 import { useSchool } from './SchoolContext';
 import { useSuperAdmin } from './SuperAdminContext';
+import { useImpersonation } from './ImpersonationContext';
+import { ImpersonationBanner } from './ImpersonationBanner';
+import NotificationBell from './NotificationBell';
 import { useMobile } from '../hooks/useMobile';
 import { MobileShell } from './MobileShell';
 import {
@@ -318,6 +321,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
   const { user, profile, logout, login, isAdmin, isSuperAdmin } = useAuth();
   const { schoolName, logoUrl, primaryColor, sidebarStyle } = useSchool();
   const { activeSchoolId, activeSchoolName, exitSchool } = useSuperAdmin();
+  const { impersonatedProfile, isImpersonating } = useImpersonation();
   const navigate = useNavigate();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const isMobile = useMobile();
@@ -328,18 +332,29 @@ export function Layout({ children }: { children: React.ReactNode }) {
     navigate('/');
   };
 
-  const isTeacher = profile?.role === 'teacher';
-  const isParent = profile?.role === 'parent';
-  const isAccountant = profile?.role === 'accountant';
+  // While impersonating, render the TARGET user's dashboard (role/name/
+  // email) rather than the real super_admin's — the persistent
+  // ImpersonationBanner keeps the real identity visible at all times.
+  const effectiveProfile = impersonatedProfile
+    ? { ...profile, ...impersonatedProfile }
+    : profile;
+  const effectiveIsAdmin = isImpersonating
+    ? ['admin', 'School_admin', 'accountant'].includes(effectiveProfile?.role ?? '')
+    : isAdmin;
+  const effectiveIsSuperAdmin = isSuperAdmin && !isImpersonating;
+
+  const isTeacher = effectiveProfile?.role === 'teacher';
+  const isParent = effectiveProfile?.role === 'parent';
+  const isAccountant = effectiveProfile?.role === 'accountant';
 
   // ── MOBILE SHELL (admin / teacher / parent on small screens) ──
-  if (isMobile && (isAdmin || isTeacher || isParent)) {
-    const mobileRole = isAdmin ? 'admin' : isTeacher ? 'teacher' : 'parent';
+  if (isMobile && (effectiveIsAdmin || isTeacher || isParent)) {
+    const mobileRole = effectiveIsAdmin ? 'admin' : isTeacher ? 'teacher' : 'parent';
     return <MobileShell role={mobileRole}>{children}</MobileShell>;
   }
 
   // ── SUPER ADMIN LAYOUT ──
-  if (isSuperAdmin) {
+  if (effectiveIsSuperAdmin) {
     // When super_admin has entered a school, show normal admin sidebar + viewing banner
     const navGroups = activeSchoolId ? adminNavGroups : superAdminNavGroups;
     const sidebarSchoolName = activeSchoolId ? activeSchoolName : 'Avenir Platform';
@@ -375,6 +390,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
             </button>
             <div className="flex-1" />
             <LiveClock />
+            <NotificationBell />
             <div className="hidden sm:block w-px h-6 bg-slate-200" />
             <div className="flex items-center gap-3">
               <div className="text-right hidden sm:block">
@@ -399,6 +415,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
   if (isTeacher) {
     return (
       <div className="h-screen bg-slate-50 flex flex-col overflow-hidden">
+        <ImpersonationBanner />
         <header className="bg-white border-b border-slate-200 sticky top-0 z-30 h-16 flex items-center px-4 sm:px-6 gap-4">
           <Link to="/teacher" className="flex items-center gap-2.5 shrink-0">
             {logoUrl ? (
@@ -415,6 +432,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
           {schoolId && <TeacherPresenceBadge schoolId={schoolId} />}
           {/* Live clock */}
           <LiveClock />
+          <NotificationBell />
           <div className="hidden sm:block w-px h-6 bg-slate-200" />
           <Link
             to="/calendar"
@@ -432,11 +450,11 @@ export function Layout({ children }: { children: React.ReactNode }) {
           </Link>
           <div className="flex items-center gap-3">
             <div className="text-right hidden sm:block">
-              <p className="text-sm font-semibold text-slate-900">{profile?.displayName}</p>
+              <p className="text-sm font-semibold text-slate-900">{effectiveProfile?.displayName}</p>
               <p className="text-xs text-emerald-600 font-medium">Teacher</p>
             </div>
             <Link to="/profile" title="My Profile">
-              <Avatar photoUrl={profile?.photoUrl} name={profile?.displayName ?? ''} fallbackChar="T" size="xs" rounded="full" gradientFrom="from-emerald-500" gradientTo="to-teal-600" />
+              <Avatar photoUrl={isImpersonating ? undefined : profile?.photoUrl} name={effectiveProfile?.displayName ?? ''} fallbackChar="T" size="xs" rounded="full" gradientFrom="from-emerald-500" gradientTo="to-teal-600" />
             </Link>
             <button
               onClick={handleLogout}
@@ -460,20 +478,22 @@ export function Layout({ children }: { children: React.ReactNode }) {
       <div className="h-screen bg-slate-50 flex overflow-hidden">
         <AdminSidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} schoolName={schoolName} logoUrl={logoUrl} primaryColor={primaryColor} sidebarStyle={sidebarStyle} navGroups={accountantNavGroups} />
         <div className="flex-1 flex flex-col min-w-0">
+          <ImpersonationBanner />
           <header className="bg-white border-b border-slate-200 sticky top-0 z-30 h-16 flex items-center px-4 sm:px-6 gap-4">
             <button onClick={() => setSidebarOpen(true)} className="lg:hidden p-2 text-slate-500 hover:text-slate-900 hover:bg-slate-100 rounded-lg">
               <Menu className="w-5 h-5" />
             </button>
             <div className="flex-1" />
             <LiveClock />
+            <NotificationBell />
             <div className="hidden sm:block w-px h-6 bg-slate-200" />
             <div className="flex items-center gap-3">
               <div className="text-right hidden sm:block">
-                <p className="text-sm font-semibold text-slate-900">{profile?.displayName}</p>
+                <p className="text-sm font-semibold text-slate-900">{effectiveProfile?.displayName}</p>
                 <p className="text-xs text-teal-600 font-medium">Accountant</p>
               </div>
               <Link to="/profile" title="My Profile">
-                <Avatar photoUrl={profile?.photoUrl} name={profile?.displayName ?? ''} fallbackChar="A" size="xs" rounded="full" gradientFrom="from-teal-500" gradientTo="to-cyan-600" />
+                <Avatar photoUrl={isImpersonating ? undefined : profile?.photoUrl} name={effectiveProfile?.displayName ?? ''} fallbackChar="A" size="xs" rounded="full" gradientFrom="from-teal-500" gradientTo="to-cyan-600" />
               </Link>
               <button onClick={handleLogout} className="p-2 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors" title="Logout">
                 <LogOut className="w-4 h-4" />
@@ -487,13 +507,14 @@ export function Layout({ children }: { children: React.ReactNode }) {
   }
 
   // ── ADMIN LAYOUT ──
-  if (isAdmin) {
+  if (effectiveIsAdmin) {
     return (
       <div className="h-screen bg-slate-50 flex overflow-hidden">
         <AdminSidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} schoolName={schoolName} logoUrl={logoUrl} primaryColor={primaryColor} sidebarStyle={sidebarStyle} />
 
         {/* Main Content */}
         <div className="flex-1 flex flex-col min-w-0">
+          <ImpersonationBanner />
           {/* Top Bar */}
           <header className="bg-white border-b border-slate-200 sticky top-0 z-30 h-16 flex items-center px-4 sm:px-6 gap-4">
             <button
@@ -507,6 +528,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
 
             {/* Live clock */}
             <LiveClock />
+            <NotificationBell />
             <div className="hidden sm:block w-px h-6 bg-slate-200" />
 
             <Link
@@ -519,11 +541,11 @@ export function Layout({ children }: { children: React.ReactNode }) {
 
             <div className="flex items-center gap-3">
               <div className="text-right hidden sm:block">
-                <p className="text-sm font-semibold text-slate-900">{profile?.displayName}</p>
-                <p className="text-xs text-slate-500 capitalize">{profile?.role?.replace('_', ' ')}</p>
+                <p className="text-sm font-semibold text-slate-900">{effectiveProfile?.displayName}</p>
+                <p className="text-xs text-slate-500 capitalize">{effectiveProfile?.role?.replace('_', ' ')}</p>
               </div>
               <Link to="/profile" title="My Profile">
-                <Avatar photoUrl={profile?.photoUrl} name={profile?.displayName ?? ''} fallbackChar="A" size="xs" rounded="full" gradientFrom="from-indigo-500" gradientTo="to-purple-600" />
+                <Avatar photoUrl={isImpersonating ? undefined : profile?.photoUrl} name={effectiveProfile?.displayName ?? ''} fallbackChar="A" size="xs" rounded="full" gradientFrom="from-indigo-500" gradientTo="to-purple-600" />
               </Link>
               <button
                 onClick={handleLogout}
@@ -546,9 +568,10 @@ export function Layout({ children }: { children: React.ReactNode }) {
   // Non-admin layout (top nav)
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col font-sans">
+      <ImpersonationBanner />
       <header className="bg-white border-b border-slate-200 sticky top-0 z-50">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
-          <Link to={!user ? '/' : profile?.role === 'teacher' ? '/teacher' : profile?.role === 'parent' ? '/parent' : '/apply'}
+          <Link to={!user ? '/' : effectiveProfile?.role === 'teacher' ? '/teacher' : effectiveProfile?.role === 'parent' ? '/parent' : '/apply'}
             className="flex items-center space-x-2"
           >
             {logoUrl ? (
@@ -567,11 +590,11 @@ export function Layout({ children }: { children: React.ReactNode }) {
                 <Link to="/calendar" className="text-slate-600 hover:text-indigo-600 font-medium flex items-center px-3 py-2 rounded-md transition-colors text-sm">
                   <Calendar className="w-4 h-4 mr-2" />Calendar
                 </Link>
-                {profile?.role === 'teacher' ? (
+                {effectiveProfile?.role === 'teacher' ? (
                   <Link to="/teacher" className="text-slate-600 hover:text-indigo-600 font-medium flex items-center px-3 py-2 rounded-md transition-colors text-sm">
                     <LayoutDashboard className="w-4 h-4 mr-2" />Teacher Portal
                   </Link>
-                ) : profile?.role === 'parent' ? (
+                ) : effectiveProfile?.role === 'parent' ? (
                   <>
                     <Link to="/parent" className="text-slate-600 hover:text-indigo-600 font-medium flex items-center px-3 py-2 rounded-md transition-colors text-sm">
                       <LayoutDashboard className="w-4 h-4 mr-2" />Parent Portal
@@ -586,10 +609,11 @@ export function Layout({ children }: { children: React.ReactNode }) {
                   </Link>
                 )}
                 <div className="h-6 w-px bg-slate-200" />
+                <NotificationBell />
                 <div className="flex items-center space-x-3">
                   <div className="text-right hidden sm:block">
-                    <p className="text-sm font-semibold text-slate-900">{profile?.displayName}</p>
-                    <p className="text-xs text-slate-500 capitalize">{profile?.role}</p>
+                    <p className="text-sm font-semibold text-slate-900">{effectiveProfile?.displayName}</p>
+                    <p className="text-xs text-slate-500 capitalize">{effectiveProfile?.role}</p>
                   </div>
                   <button onClick={handleLogout} className="p-2 text-slate-400 hover:text-red-500 transition-colors" title="Logout">
                     <LogOut className="w-5 h-5" />

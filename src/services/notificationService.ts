@@ -96,7 +96,8 @@ export type NotificationCategory =
   | 'check_in_out_of_fence'
   | 'check_out'
   | 'idle_class'
-  | 'absence_alert';
+  | 'absence_alert'
+  | 'fcm_push';
 
 interface NotifyOptions {
   category: NotificationCategory;
@@ -130,6 +131,11 @@ export function showBrowserNotification({ category, title, body, url = '/admin',
 }
 
 // ── Pre-built notification payloads ──────────────────────────────────────────
+
+/** Generic relay for an incoming FCM foreground message — used by every portal's onForegroundMessage handler. */
+export function showFcmPushNotification(title: string, body: string) {
+  showBrowserNotification({ category: 'fcm_push', title, body });
+}
 
 export function notifyCheckIn(teacherName: string, time: string, withinFence: boolean) {
   if (withinFence) {

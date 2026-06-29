@@ -8,7 +8,7 @@ import { useParams, useNavigate, Link } from 'react-router-dom';
 import { db } from '../firebase';
 import {
   doc, onSnapshot, collection, query, where, orderBy,
-  addDoc, setDoc, serverTimestamp, getDocs,
+  addDoc, setDoc, updateDoc, serverTimestamp, getDocs, writeBatch, deleteField,
 } from 'firebase/firestore';
 import Avatar from '../components/Avatar';
 import {
@@ -244,6 +244,9 @@ function TimelineTab({ student, schoolId, profile }: TimelineTabProps) {
   const [showNoteForm, setShowNoteForm] = useState(false);
   const [noteText, setNoteText] = useState('');
   const [saving, setSaving] = useState(false);
+  const [statusAction, setStatusAction] = useState<'withdraw' | 'reinstate' | null>(null);
+  const [statusReason, setStatusReason] = useState('');
+  const [statusSaving, setStatusSaving] = useState(false);
 
   // Load lifecycle_events + synthesize from promotions
   useEffect(() => {
@@ -343,10 +346,66 @@ function TimelineTab({ student, schoolId, profile }: TimelineTabProps) {
     }
   };
 
+  /**
+   * Withdraw/reinstate set admissionStatus + log a matching lifecycle event
+   * in one batch. This is the school's "delete a student" — a student isn't
+   * a Firebase Auth user, so there's no login to remove; withdrawing instead
+   * keeps every grade/attendance/fee record intact (legally/financially
+   * required) while marking the student as no longer enrolled, and stays
+   * fully reversible via "Reinstate" (unlike a hard delete would be).
+   */
+  const handleStatusChange = async () => {
+    if (!schoolId || !student.id || !statusAction) return;
+    setStatusSaving(true);
+    try {
+      const batch = writeBatch(db);
+      const studentRef = doc(db, 'students', student.id);
+      if (statusAction === 'withdraw') {
+        batch.update(studentRef, { admissionStatus: 'withdrawn', withdrawnAt: serverTimestamp() });
+      } else {
+        batch.update(studentRef, { admissionStatus: 'active', withdrawnAt: deleteField() });
+      }
+      batch.set(doc(collection(db, 'lifecycle_events')), {
+        studentId: student.id,
+        schoolId,
+        type: statusAction === 'withdraw' ? 'withdrawn' : 'reinstated',
+        title: statusAction === 'withdraw' ? 'Withdrawn' : 'Reinstated',
+        ...(statusReason.trim() ? { description: statusReason.trim() } : {}),
+        recordedBy: profile?.displayName ?? 'Admin',
+        createdAt: serverTimestamp(),
+      });
+      await batch.commit();
+      toast.success(statusAction === 'withdraw' ? 'Student withdrawn' : 'Student reinstated');
+      setStatusAction(null);
+      setStatusReason('');
+    } catch (e: any) {
+      toast.error('Failed to update status: ' + (e.message || 'unknown error'));
+    } finally {
+      setStatusSaving(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
-      {/* Add Note button */}
-      <div className="flex justify-end">
+      {/* Add Note / Withdraw / Reinstate buttons */}
+      <div className="flex justify-end gap-2">
+        {student.admissionStatus === 'withdrawn' ? (
+          <button
+            onClick={() => setStatusAction('reinstate')}
+            className="inline-flex items-center gap-2 px-4 py-2.5 bg-emerald-600 text-white font-bold rounded-xl hover:bg-emerald-700 transition-all text-sm shadow-sm shadow-emerald-200"
+          >
+            <CheckCircle2 className="w-4 h-4" />
+            Reinstate Student
+          </button>
+        ) : (
+          <button
+            onClick={() => setStatusAction('withdraw')}
+            className="inline-flex items-center gap-2 px-4 py-2.5 bg-white border border-rose-200 text-rose-600 font-bold rounded-xl hover:bg-rose-50 transition-all text-sm"
+          >
+            <X className="w-4 h-4" />
+            Withdraw Student
+          </button>
+        )}
         <button
           onClick={() => setShowNoteForm(v => !v)}
           className="inline-flex items-center gap-2 px-4 py-2.5 bg-indigo-600 text-white font-bold rounded-xl hover:bg-indigo-700 transition-all text-sm shadow-sm shadow-indigo-200"
@@ -355,6 +414,54 @@ function TimelineTab({ student, schoolId, profile }: TimelineTabProps) {
           Add Note
         </button>
       </div>
+
+      {/* Withdraw / Reinstate confirmation form */}
+      <AnimatePresence>
+        {statusAction && (
+          <motion.div
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: 'auto' }}
+            exit={{ opacity: 0, height: 0 }}
+            className="overflow-hidden"
+          >
+            <div className={`bg-white rounded-2xl border p-5 space-y-3 ${statusAction === 'withdraw' ? 'border-rose-200' : 'border-emerald-200'}`}>
+              <h3 className="font-bold text-slate-800 text-sm">
+                {statusAction === 'withdraw' ? 'Withdraw this student?' : 'Reinstate this student?'}
+              </h3>
+              <p className="text-xs text-slate-500">
+                {statusAction === 'withdraw'
+                  ? 'Marks the student as no longer enrolled. All grades, attendance, and fee records are kept untouched and this can be undone with "Reinstate".'
+                  : 'Marks the student as active again. The withdrawal stays visible in this timeline.'}
+              </p>
+              <textarea
+                value={statusReason}
+                onChange={e => setStatusReason(e.target.value)}
+                rows={2}
+                placeholder="Reason (optional)…"
+                className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none resize-none text-sm"
+              />
+              <div className="flex gap-2 justify-end">
+                <button
+                  onClick={() => { setStatusAction(null); setStatusReason(''); }}
+                  className="px-4 py-2 text-sm font-bold text-slate-600 hover:text-slate-800 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleStatusChange}
+                  disabled={statusSaving}
+                  className={`inline-flex items-center gap-2 px-4 py-2 text-white font-bold rounded-xl transition-all text-sm disabled:opacity-50 ${
+                    statusAction === 'withdraw' ? 'bg-rose-600 hover:bg-rose-700' : 'bg-emerald-600 hover:bg-emerald-700'
+                  }`}
+                >
+                  {statusSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+                  {statusAction === 'withdraw' ? 'Confirm Withdrawal' : 'Confirm Reinstatement'}
+                </button>
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Note form */}
       <AnimatePresence>

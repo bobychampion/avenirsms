@@ -24,6 +24,7 @@ import {
   MapPin, Navigation, LogIn, LogOut, ShieldAlert, Lock,
   ChevronRight, Inbox, GraduationCap, Home, BookMarked,
 } from 'lucide-react';
+import { initFCMForUser, onForegroundMessage, showFcmPushNotification } from '../services/notificationService';
 import ProfileHeader from './TeacherPortal/ProfileHeader';
 import ClockInHero from './TeacherPortal/ClockInHero';
 import TeacherOverview from './TeacherPortal/TeacherOverview';
@@ -260,13 +261,28 @@ export default function TeacherPortal() {
     finally { setAbsenceSubmitting(false); }
   };
 
+  // ─── FCM Initialisation ──────────────────────────────────────────────────────
+  useEffect(() => {
+    if (!user?.uid) return;
+    initFCMForUser(user.uid).catch(() => {/* non-fatal */});
+    let unsub: (() => void) | undefined;
+    onForegroundMessage(({ title, body }) => {
+      if (title) showFcmPushNotification(title, body ?? '');
+    }).then(fn => { unsub = fn; });
+    return () => unsub?.();
+  }, [user?.uid]);
+
   useEffect(() => {
     if (!user) return;
     if (!schoolId) return;
 
     const qStudents = query(collection(db, 'students'), where('schoolId', '==', schoolId!), where('currentClass', '==', selectedClass));
     const unsubStudents = onSnapshot(qStudents, snap => {
-      const list = snap.docs.map(d => ({ id: d.id, ...d.data() } as Student));
+      // Withdrawn students stay on their last class for record-keeping, but
+      // shouldn't appear in the active roster for attendance/grading/etc.
+      const list = snap.docs
+        .map(d => ({ id: d.id, ...d.data() } as Student))
+        .filter(s => s.admissionStatus !== 'withdrawn');
       setStudents(list);
       setLoading(false);
     });
@@ -693,6 +709,33 @@ export default function TeacherPortal() {
       await addDoc(collection(db, 'assignments'), {
         ...newAssignment, teacherId: user.uid, schoolId: schoolId ?? 'main', createdAt: serverTimestamp()
       });
+
+      // Notify every parent of a student in the target class — one doc per
+      // parent, mirroring NotificationsManagement.tsx's "class" broadcast.
+      try {
+        const rosterSnap = await getDocs(query(
+          collection(db, 'students'),
+          where('schoolId', '==', schoolId ?? 'main'),
+          where('currentClass', '==', newAssignment.class),
+        ));
+        const guardianUids = Array.from(new Set(
+          rosterSnap.docs
+            .filter(d => d.data().admissionStatus !== 'withdrawn')
+            .map(d => d.data().guardianUserId)
+            .filter(Boolean) as string[]
+        ));
+        await Promise.all(guardianUids.map(uid => addDoc(collection(db, 'notifications'), {
+          recipientId: uid,
+          title: `New assignment — ${newAssignment.title}`,
+          body: `${newAssignment.subject} (${newAssignment.class}) — due ${newAssignment.dueDate}`,
+          type: 'assignment',
+          read: false,
+          schoolId: schoolId ?? 'main',
+          createdAt: serverTimestamp(),
+        }).catch(() => {/* non-fatal */})));
+      } catch {
+        /* non-fatal — assignment itself already saved */
+      }
     }
     setNewAssignment({ title: '', description: '', subject: allSubjects[0], class: allClasses[0], dueDate: '' });
   };
@@ -863,6 +906,15 @@ export default function TeacherPortal() {
     await addDoc(collection(db, 'messages'), {
       ...newMessage, senderId: user.uid, senderName: profile.displayName,
       timestamp: serverTimestamp(), read: false, schoolId: schoolId ?? 'main',
+    });
+    await addDoc(collection(db, 'notifications'), {
+      recipientId: newMessage.receiverId,
+      title: `New message from ${profile.displayName}`,
+      body: newMessage.content.slice(0, 120),
+      type: 'message',
+      read: false,
+      schoolId: schoolId ?? 'main',
+      createdAt: serverTimestamp(),
     });
     setNewMessage({ ...newMessage, content: '' });
   };

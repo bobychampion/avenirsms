@@ -91,7 +91,9 @@ export default function AttendancePage() {
       orderBy('studentName', 'asc')
     );
     const unsub = onSnapshot(q, snap => {
-      const data = snap.docs.map(d => ({ id: d.id, ...d.data() } as Student));
+      const data = snap.docs
+        .map(d => ({ id: d.id, ...d.data() } as Student))
+        .filter(s => s.admissionStatus !== 'withdrawn');
       setStudents(data);
     }, err => handleFirestoreError(err, OperationType.LIST, 'students'));
     return () => unsub();

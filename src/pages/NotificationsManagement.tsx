@@ -62,7 +62,7 @@ export default function NotificationsManagement() {
       e => handleFirestoreError(e, OperationType.LIST, 'notifications')
     );
     const unsubStudents = onSnapshot(query(collection(db, 'students'), where('schoolId', '==', schoolId!)), snap => {
-      setStudents(snap.docs.map(d => ({ id: d.id, ...d.data() } as Student)));
+      setStudents(snap.docs.map(d => ({ id: d.id, ...d.data() } as Student)).filter(s => s.admissionStatus !== 'withdrawn'));
     });
     return () => { unsubNotif(); unsubStudents(); };
   }, [schoolId]);
@@ -87,7 +87,10 @@ export default function NotificationsManagement() {
         recipients = ['all'];
       } else if (targetMode === 'class') {
         const snap = await getDocs(query(collection(db, 'students'), where('schoolId', '==', schoolId!), where('currentClass', '==', targetClass)));
-        const uids = snap.docs.map(d => d.data().guardianUserId).filter(Boolean) as string[];
+        const uids = snap.docs
+          .filter(d => d.data().admissionStatus !== 'withdrawn')
+          .map(d => d.data().guardianUserId)
+          .filter(Boolean) as string[];
         recipients = uids.length > 0 ? uids : ['all'];
       } else if (targetMode === 'student') {
         if (!targetStudentId) { toast.error('Please select a student.', { id: tid }); setSending(false); return; }
@@ -196,7 +199,7 @@ export default function NotificationsManagement() {
                 {[
                   { id: 'all', label: 'Everyone', Icon: Users },
                   { id: 'class', label: 'A Class', Icon: BookOpen },
-                  { id: 'student', label: 'Student', Icon: User },
+                  { id: 'student', label: "Student's Parent", Icon: User },
                 ].map(({ id, label, Icon }) => (
                   <button key={id} type="button" onClick={() => setTargetMode(id as any)}
                     className={`flex-1 flex flex-col items-center gap-1 py-2.5 rounded-xl border text-[10px] font-bold transition-all ${
@@ -216,6 +219,9 @@ export default function NotificationsManagement() {
 
               {targetMode === 'student' && (
                 <div className="mt-2 relative">
+                  <p className="text-[10px] text-slate-400 mb-1.5">
+                    Sent to the student's linked parent account — students don't have their own login.
+                  </p>
                   <input
                     type="text"
                     placeholder="Search student by name or ID…"

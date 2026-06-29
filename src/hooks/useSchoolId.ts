@@ -3,6 +3,7 @@
  * all Firestore queries and writes.
  *
  * Returns:
+ *  - impersonatedProfile.schoolId (super_admin is in a "View As" session)
  *  - activeSchoolId  (super_admin has entered a school's context)
  *  - profile.schoolId (regular school users)
  *  - null            (super_admin on their own platform dashboard)
@@ -14,11 +15,14 @@
 
 import { useAuth } from '../components/FirebaseProvider';
 import { useSuperAdmin } from '../components/SuperAdminContext';
+import { useImpersonation } from '../components/ImpersonationContext';
 
 export function useSchoolId(): string | null {
   const { schoolId: profileSchoolId } = useAuth();
   const { activeSchoolId } = useSuperAdmin();
+  const { impersonatedProfile } = useImpersonation();
 
-  // Super admin viewing a specific school overrides their own (null) schoolId
-  return activeSchoolId ?? profileSchoolId;
+  // Impersonating a user overrides both the super admin's school-browsing
+  // context and their own (null) schoolId.
+  return impersonatedProfile?.schoolId ?? activeSchoolId ?? profileSchoolId;
 }

@@ -56,7 +56,8 @@ export default function AnalyticsDashboard() {
     // attendance rate
     const total = attSnap.docs?.length||0;
     const present = attSnap.docs?.filter((d:any)=>d.data().status==='present').length||0;
-    setKpi({ students: stSnap.docs?.length||0, staff: staffSnap.docs?.length||0, revenue: rev, attendance: total>0?Math.round((present/total)*100):0 });
+    const activeStudents = stSnap.docs?.filter((d:any)=>d.data().admissionStatus!=='withdrawn').length||0;
+    setKpi({ students: activeStudents, staff: staffSnap.docs?.length||0, revenue: rev, attendance: total>0?Math.round((present/total)*100):0 });
     setLoading(false);
   };
 

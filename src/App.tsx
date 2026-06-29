@@ -5,6 +5,9 @@ import ErrorBoundary from './components/ErrorBoundary';
 import { AppToaster } from './components/Toast';
 import { SchoolProvider, useSchool } from './components/SchoolContext';
 import { SuperAdminProvider, useSuperAdmin } from './components/SuperAdminContext';
+import { ImpersonationProvider, useImpersonation } from './components/ImpersonationContext';
+import { getPostAuthHomePath } from './utils/postAuthRedirect';
+import type { UserProfile } from './types';
 import LandingPage from './pages/LandingPage';
 import SchoolLandingPage from './pages/SchoolLandingPage';
 import Home from './pages/Home';
@@ -117,6 +120,7 @@ function ProtectedRoute({
 }) {
   const { user, profile, loading, isAdmin, isSuperAdmin } = useAuth();
   const { activeSchoolId } = useSuperAdmin();
+  const { impersonatedProfile } = useImpersonation();
 
   if (loading) return <PageLoader />;
   if (!user) return <Navigate to="/" />;
@@ -124,6 +128,36 @@ function ProtectedRoute({
   // Force password change if flagged (synthetic student login, admin reset, etc.)
   if (profile?.mustChangePassword && window.location.pathname !== '/change-password') {
     return <Navigate to="/change-password" replace />;
+  }
+
+  // Super admin "View As" session active: gate routes by the IMPERSONATED
+  // role (never admin/super_admin — enforced server-side at session start),
+  // so the super_admin actually sees the target user's portal.
+  //
+  // IMPORTANT: redirect to the impersonated user's own home, never to "/".
+  // LandingPage's post-login redirect uses the REAL (super_admin) profile,
+  // so bouncing to "/" while impersonating sends them to /super-admin, which
+  // is itself superAdminOnly and bounces straight back to "/" — an infinite
+  // redirect loop (this caused the "Maximum update depth exceeded" bug).
+  if (isSuperAdmin && impersonatedProfile) {
+    const effectiveRole = impersonatedProfile.role;
+    const impersonatedHome = getPostAuthHomePath(
+      ['admin', 'School_admin', 'accountant'].includes(effectiveRole),
+      impersonatedProfile as unknown as UserProfile
+    );
+    // The Cloud Function/rules layer already rejects admin/super_admin
+    // targets at session start, so effectiveRole here is never admin-like —
+    // superAdminOnly routes are simply off-limits while impersonating.
+    if (superAdminOnly) return <Navigate to={impersonatedHome} replace />;
+    if (allowFinanceRoles) {
+      if (!FINANCE_ROLES.includes(effectiveRole as any)) return <Navigate to={impersonatedHome} replace />;
+      return <>{children}</>;
+    }
+    if (role && effectiveRole !== role) return <Navigate to={impersonatedHome} replace />;
+    if (roles && roles.length > 0 && !roles.includes(effectiveRole as GuardRole)) {
+      return <Navigate to={impersonatedHome} replace />;
+    }
+    return <>{children}</>;
   }
 
   // Super-admin-only routes (migration tool, platform dashboard, school management)
@@ -330,10 +364,12 @@ function AppShell() {
     <ErrorBoundary>
       <FirebaseProvider>
         <SuperAdminProvider>
-          <SchoolProvider>
-            <AppToaster />
-            <AppContent />
-          </SchoolProvider>
+          <ImpersonationProvider>
+            <SchoolProvider>
+              <AppToaster />
+              <AppContent />
+            </SchoolProvider>
+          </ImpersonationProvider>
         </SuperAdminProvider>
       </FirebaseProvider>
     </ErrorBoundary>

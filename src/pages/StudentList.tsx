@@ -5,7 +5,7 @@ import { collection, query, onSnapshot, orderBy, where } from 'firebase/firestor
 import { Student, SCHOOL_CLASSES, SchoolClass } from '../types';
 import { useSchoolId } from '../hooks/useSchoolId';
 import { motion } from 'motion/react';
-import { Search, Filter, User, Phone, Mail, Calendar, ArrowRight, ArrowLeft, ChevronLeft, ChevronRight, Download } from 'lucide-react';
+import { Search, Filter, User, Phone, Mail, Calendar, ArrowRight, ArrowLeft, ChevronLeft, ChevronRight, Download, UserX } from 'lucide-react';
 import { exportStudentsCsv } from '../services/dataExport/csvModules';
 import Avatar from '../components/Avatar';
 
@@ -22,6 +22,7 @@ export default function StudentList() {
   const [searchTerm, setSearchTerm] = useState('');
   const [classFilter, setClassFilter] = useState(initialClass);
   const [currentPage, setCurrentPage] = useState(0);
+  const [showWithdrawn, setShowWithdrawn] = useState(false);
 
   useEffect(() => {
     if (!schoolId) return;
@@ -56,15 +57,20 @@ export default function StudentList() {
   // Also reset on search change
   useEffect(() => { setCurrentPage(0); }, [searchTerm]);
 
+  const withdrawnCount = students.filter(s => s.admissionStatus === 'withdrawn').length;
+
   const filteredStudents = students.filter(student => {
-    const matchesSearch = 
+    const matchesSearch =
       student.studentName.toLowerCase().includes(searchTerm.toLowerCase()) ||
       student.studentId.toLowerCase().includes(searchTerm.toLowerCase()) ||
       student.email.toLowerCase().includes(searchTerm.toLowerCase());
-    
+
     const matchesClass = classFilter === 'all' || student.currentClass === classFilter;
-    
-    return matchesSearch && matchesClass;
+
+    const isWithdrawn = student.admissionStatus === 'withdrawn';
+    const matchesWithdrawn = showWithdrawn ? isWithdrawn : !isWithdrawn;
+
+    return matchesSearch && matchesClass && matchesWithdrawn;
   });
 
   return (
@@ -78,15 +84,30 @@ export default function StudentList() {
       <div className="mb-10 flex flex-wrap items-start justify-between gap-4">
         <div>
           <h1 className="text-3xl font-bold text-slate-900 tracking-tight">Student Directory</h1>
-          <p className="text-slate-500 mt-1">Manage and view all currently enrolled students.</p>
+          <p className="text-slate-500 mt-1">
+            {showWithdrawn ? 'Viewing withdrawn students.' : 'Manage and view all currently enrolled students.'}
+          </p>
         </div>
-        <button
-          type="button"
-          onClick={() => exportStudentsCsv(filteredStudents)}
-          className="flex items-center gap-2 px-4 py-2 rounded-xl border border-slate-200 text-sm font-semibold text-slate-700 hover:bg-slate-50"
-        >
-          <Download className="w-4 h-4" /> Export CSV
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => { setShowWithdrawn(v => !v); setCurrentPage(0); }}
+            className={`flex items-center gap-2 px-4 py-2 rounded-xl border text-sm font-semibold transition-colors ${
+              showWithdrawn
+                ? 'border-rose-200 bg-rose-50 text-rose-700'
+                : 'border-slate-200 text-slate-700 hover:bg-slate-50'
+            }`}
+          >
+            <UserX className="w-4 h-4" /> {showWithdrawn ? 'Showing Withdrawn' : `Withdrawn (${withdrawnCount})`}
+          </button>
+          <button
+            type="button"
+            onClick={() => exportStudentsCsv(filteredStudents)}
+            className="flex items-center gap-2 px-4 py-2 rounded-xl border border-slate-200 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+          >
+            <Download className="w-4 h-4" /> Export CSV
+          </button>
+        </div>
       </div>
 
       <div className="flex flex-col md:flex-row gap-4 mb-8">
@@ -132,7 +153,9 @@ export default function StudentList() {
               key={student.id}
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
-              className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 hover:shadow-md transition-all group"
+              className={`bg-white rounded-2xl shadow-sm border p-6 hover:shadow-md transition-all group ${
+                student.admissionStatus === 'withdrawn' ? 'border-rose-200 opacity-75' : 'border-slate-200'
+              }`}
             >
               <div className="flex items-start justify-between mb-6">
                 <div className="flex items-center">
@@ -142,8 +165,15 @@ export default function StudentList() {
                     <p className="text-xs font-bold text-indigo-600 uppercase tracking-wider">{student.studentId}</p>
                   </div>
                 </div>
-                <div className="px-3 py-1 bg-slate-50 rounded-full border border-slate-100 text-xs font-bold text-slate-600">
-                  {student.currentClass}
+                <div className="flex flex-col items-end gap-1.5">
+                  <div className="px-3 py-1 bg-slate-50 rounded-full border border-slate-100 text-xs font-bold text-slate-600">
+                    {student.currentClass}
+                  </div>
+                  {student.admissionStatus === 'withdrawn' && (
+                    <div className="px-2.5 py-0.5 bg-rose-50 rounded-full border border-rose-100 text-[10px] font-bold text-rose-600 uppercase tracking-wider">
+                      Withdrawn
+                    </div>
+                  )}
                 </div>
               </div>
 

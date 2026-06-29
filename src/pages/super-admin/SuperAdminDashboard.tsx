@@ -62,12 +62,13 @@ export default function SuperAdminDashboard() {
         const schoolList = schoolsSnap.docs.map(d => ({ id: d.id, ...d.data() } as School));
         setSchools(schoolList);
         const studentsSnap = await getDocs(collection(db, 'students'));
+        const activeStudentCount = studentsSnap.docs.filter(d => d.data().admissionStatus !== 'withdrawn').length;
         setStats({
           totalSchools: schoolList.length,
           activeSchools: schoolList.filter(s => s.status === 'active').length,
           suspendedSchools: schoolList.filter(s => s.status === 'suspended').length,
           trialSchools: schoolList.filter(s => s.status === 'trial').length,
-          totalStudents: studentsSnap.size,
+          totalStudents: activeStudentCount,
           loading: false,
         });
       } catch {

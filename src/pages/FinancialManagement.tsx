@@ -31,7 +31,10 @@ export default function FinancialManagement() {
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [students, setStudents] = useState<Student[]>([]);
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<'overview' | 'invoices' | 'payments' | 'expenses'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'invoices' | 'pending' | 'payments' | 'expenses'>('overview');
+  const [reviewingClaim, setReviewingClaim] = useState<FeePayment | null>(null);
+  const [rejectReason, setRejectReason] = useState('');
+  const [reviewSaving, setReviewSaving] = useState(false);
   const [markingOverdue, setMarkingOverdue] = useState(false);
   
   // Modals
@@ -146,14 +149,64 @@ export default function FinancialManagement() {
         studentId: invoice.studentId,
         recordedBy: profile?.displayName || 'Admin',
         schoolId,
+        status: 'confirmed',
+        confirmedBy: profile?.displayName || 'Admin',
+        confirmedAt: serverTimestamp(),
       });
-      await updateDoc(doc(db, 'invoices', invoice.id!), { status: 'paid' });
+      await updateDoc(doc(db, 'invoices', invoice.id!), { status: 'paid', paidAt: serverTimestamp() });
       toast.success('Payment recorded!', { id: tid });
       setIsPaymentModalOpen(false);
       setPaymentForm({ ...paymentForm, invoiceId: '', amount: 0 });
     } catch (error) {
       toast.error('Failed to record payment', { id: tid });
       handleFirestoreError(error, OperationType.WRITE, 'fee_payments');
+    }
+  };
+
+  // Parent-submitted bank transfer / cash claims awaiting confirmation
+  const pendingClaims = payments.filter(p => p.status === 'pending');
+
+  const handleApproveClaim = async (payment: FeePayment) => {
+    setReviewSaving(true);
+    const tid = toast.loading('Confirming payment…');
+    try {
+      await updateDoc(doc(db, 'fee_payments', payment.id!), {
+        status: 'confirmed',
+        confirmedBy: profile?.displayName || 'Admin',
+        confirmedAt: serverTimestamp(),
+      });
+      await updateDoc(doc(db, 'invoices', payment.invoiceId), { status: 'paid', paidAt: serverTimestamp() });
+      toast.success('Payment confirmed!', { id: tid });
+      setReviewingClaim(null);
+    } catch (e: any) {
+      toast.error('Failed to confirm: ' + (e.message || 'unknown error'), { id: tid });
+    } finally {
+      setReviewSaving(false);
+    }
+  };
+
+  const handleRejectClaim = async (payment: FeePayment) => {
+    setReviewSaving(true);
+    const tid = toast.loading('Rejecting claim…');
+    try {
+      await updateDoc(doc(db, 'fee_payments', payment.id!), {
+        status: 'rejected',
+        confirmedBy: profile?.displayName || 'Admin',
+        confirmedAt: serverTimestamp(),
+        ...(rejectReason.trim() ? { rejectedReason: rejectReason.trim() } : {}),
+      });
+      const invoice = invoices.find(i => i.id === payment.invoiceId);
+      const today = new Date().toISOString().split('T')[0];
+      await updateDoc(doc(db, 'invoices', payment.invoiceId), {
+        status: invoice?.dueDate && invoice.dueDate < today ? 'overdue' : 'pending',
+      });
+      toast.success('Claim rejected.', { id: tid });
+      setReviewingClaim(null);
+      setRejectReason('');
+    } catch (e: any) {
+      toast.error('Failed to reject: ' + (e.message || 'unknown error'), { id: tid });
+    } finally {
+      setReviewSaving(false);
     }
   };
 
@@ -341,6 +394,12 @@ export default function FinancialManagement() {
       <div className="flex space-x-1 bg-slate-100 p-1 rounded-xl mb-8 w-fit">
         <button onClick={() => setActiveTab('overview')} className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${activeTab === 'overview' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>Overview</button>
         <button onClick={() => setActiveTab('invoices')} className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${activeTab === 'invoices' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>Invoices</button>
+        <button onClick={() => setActiveTab('pending')} className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-bold transition-all ${activeTab === 'pending' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>
+          Pending Confirmations
+          {pendingClaims.length > 0 && (
+            <span className="px-1.5 py-0.5 bg-amber-500 text-white text-[10px] font-bold rounded-full">{pendingClaims.length}</span>
+          )}
+        </button>
         <button onClick={() => setActiveTab('payments')} className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${activeTab === 'payments' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>Payments</button>
         <button onClick={() => setActiveTab('expenses')} className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${activeTab === 'expenses' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>Expenses</button>
       </div>
@@ -443,16 +502,25 @@ export default function FinancialManagement() {
                   <td className="px-6 py-4">
                     <span className={`px-2 py-1 rounded-full text-[10px] font-bold uppercase ${
                       invoice.status === 'paid' ? 'bg-emerald-50 text-emerald-700' :
+                      invoice.status === 'awaiting_confirmation' ? 'bg-indigo-50 text-indigo-700' :
                       invoice.status === 'pending' ? 'bg-amber-50 text-amber-700' : 'bg-rose-50 text-rose-700'
                     }`}>
-                      {invoice.status}
+                      {invoice.status === 'awaiting_confirmation' ? 'awaiting confirmation' : invoice.status}
                     </span>
                   </td>
                   <td className="px-6 py-4">
                     <div className="flex items-center gap-3">
-                      {invoice.status !== 'paid' && (
+                      {invoice.status === 'awaiting_confirmation' && (
+                        <button
+                          onClick={() => setActiveTab('pending')}
+                          className="text-xs font-bold text-indigo-600 hover:text-indigo-700"
+                        >
+                          Review Claim
+                        </button>
+                      )}
+                      {invoice.status !== 'paid' && invoice.status !== 'awaiting_confirmation' && (
                         <>
-                          <button 
+                          <button
                             onClick={() => {
                               setPaymentForm({ ...paymentForm, invoiceId: invoice.id, amount: invoice.amount });
                               setIsPaymentModalOpen(true);
@@ -486,6 +554,85 @@ export default function FinancialManagement() {
           </table>
         </div>
       )}
+
+      {activeTab === 'pending' && (
+        <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
+          <div className="px-6 py-4 border-b border-slate-100">
+            <p className="font-bold text-slate-900 text-sm">{pendingClaims.length} payment claim(s) awaiting confirmation</p>
+            <p className="text-xs text-slate-500 mt-0.5">Parents declared these via bank transfer or cash — verify against your bank statement / cash register before confirming.</p>
+          </div>
+          {pendingClaims.length === 0 ? (
+            <div className="py-16 text-center text-slate-400">
+              <CheckCircle2 className="w-10 h-10 mx-auto mb-3 opacity-40" />
+              Nothing pending — all caught up.
+            </div>
+          ) : (
+            <table className="w-full text-left">
+              <thead className="bg-slate-50 border-b border-slate-200">
+                <tr>
+                  <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase">Student</th>
+                  <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase">Amount</th>
+                  <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase">Method</th>
+                  <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase">Submitted</th>
+                  <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase">Action</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {pendingClaims.map(claim => {
+                  const invoice = invoices.find(i => i.id === claim.invoiceId);
+                  return (
+                    <tr key={claim.id}>
+                      <td className="px-6 py-4">
+                        <p className="text-sm font-bold text-slate-900">{invoice?.studentName ?? claim.studentId}</p>
+                        <p className="text-xs text-slate-500">{invoice?.description}</p>
+                      </td>
+                      <td className="px-6 py-4 text-sm font-medium">{fmt(claim.amount)}</td>
+                      <td className="px-6 py-4 text-sm text-slate-500 capitalize">{claim.paymentMethod.replace('_', ' ')}</td>
+                      <td className="px-6 py-4 text-sm text-slate-500">{claim.date}</td>
+                      <td className="px-6 py-4">
+                        <div className="flex items-center gap-3">
+                          <button onClick={() => handleApproveClaim(claim)} disabled={reviewSaving}
+                            className="flex items-center gap-1 text-xs font-bold text-emerald-600 hover:text-emerald-700 disabled:opacity-50">
+                            <CheckCircle2 className="w-3.5 h-3.5" /> Confirm
+                          </button>
+                          <button onClick={() => setReviewingClaim(claim)} disabled={reviewSaving}
+                            className="flex items-center gap-1 text-xs font-bold text-rose-600 hover:text-rose-700 disabled:opacity-50">
+                            <X className="w-3.5 h-3.5" /> Reject
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
+
+      {/* Reject claim modal */}
+      <AnimatePresence>
+        {reviewingClaim && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm">
+            <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-white rounded-3xl p-6 max-w-sm w-full shadow-2xl">
+              <h3 className="font-bold text-slate-900 mb-2">Reject this payment claim?</h3>
+              <p className="text-sm text-slate-500 mb-4">The invoice will return to its previous status. Optionally tell the parent why.</p>
+              <textarea value={rejectReason} onChange={e => setRejectReason(e.target.value)} rows={3}
+                placeholder="Reason (optional)…"
+                className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none resize-none text-sm mb-4" />
+              <div className="flex gap-3">
+                <button onClick={() => { setReviewingClaim(null); setRejectReason(''); }}
+                  className="flex-1 py-2.5 bg-slate-100 text-slate-700 font-bold rounded-xl hover:bg-slate-200 transition-all text-sm">Cancel</button>
+                <button onClick={() => handleRejectClaim(reviewingClaim)} disabled={reviewSaving}
+                  className="flex-1 py-2.5 bg-rose-600 text-white font-bold rounded-xl hover:bg-rose-700 transition-all text-sm disabled:opacity-60">
+                  {reviewSaving ? <Loader2 className="w-4 h-4 animate-spin mx-auto" /> : 'Reject Claim'}
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
 
       {activeTab === 'payments' && (
         <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">

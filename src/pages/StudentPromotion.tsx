@@ -78,7 +78,7 @@ export default function StudentPromotion() {
       collection(db, 'students'),
       where('schoolId', '==', schoolId!),
       where('currentClass', '==', selectedClass),
-      where('admissionStatus', '!=', 'graduated')
+      where('admissionStatus', 'not-in', ['graduated', 'withdrawn'])
     );
     const unsub = onSnapshot(q, snap => {
       const data = snap.docs.map(d => ({ id: d.id, ...d.data() } as Student));

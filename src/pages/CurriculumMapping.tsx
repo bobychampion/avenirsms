@@ -5,6 +5,7 @@ import {
   doc, serverTimestamp, orderBy, query, where,
 } from 'firebase/firestore';
 import { useSchoolId } from '../hooks/useSchoolId';
+import { useSchool } from '../components/SchoolContext';
 import { CurriculumItem, CurriculumDocument, SCHOOL_CLASSES, SUBJECTS } from '../types';
 import { generateCurriculumObjective, summarizeCurriculumDocument } from '../services/geminiService';
 import {
@@ -133,12 +134,14 @@ function AISummaryCard({ doc: cdoc, onDelete }: { doc: CurriculumDocument; onDel
 function AITrainingTab() {
   const { user } = useAuth();
   const schoolId = useSchoolId();
+  const { classes } = useSchool();
+  const levels = classes.length > 0 ? Array.from(new Set(classes.map(c => c.level))).sort() : SCHOOL_CLASSES;
   const [docs, setDocs] = useState<CurriculumDocument[]>([] as CurriculumDocument[]);
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<string>('');
   const [filterSubject, setFilterSubject] = useState('');
   const [filterLevel, setFilterLevel] = useState('');
-  const [form, setForm] = useState({ subject: SUBJECTS[0], level: SCHOOL_CLASSES[6], term: '1st Term' as const });
+  const [form, setForm] = useState({ subject: SUBJECTS[0], level: levels[0], term: '1st Term' as const });
   const fileRef = useRef<HTMLInputElement>(null);
   const dropRef = useRef<HTMLDivElement>(null);
   const [dragging, setDragging] = useState(false);
@@ -274,7 +277,7 @@ function AITrainingTab() {
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-5">
           {[
             { label: 'Subject', value: form.subject, key: 'subject' as const, opts: SUBJECTS },
-            { label: 'Level', value: form.level, key: 'level' as const, opts: SCHOOL_CLASSES },
+            { label: 'Level', value: form.level, key: 'level' as const, opts: levels },
           ].map(f => (
             <div key={f.key}>
               <label className="text-xs font-bold text-slate-500 uppercase tracking-wide block mb-1.5">{f.label}</label>
@@ -352,7 +355,7 @@ function AITrainingTab() {
               className="px-3 py-2 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none bg-white text-xs font-medium"
             >
               <option value="">All Levels</option>
-              {SCHOOL_CLASSES.map(c => <option key={c}>{c}</option>)}
+              {levels.map(c => <option key={c}>{c}</option>)}
             </select>
           </div>
         </div>
@@ -656,10 +659,12 @@ function AIDocumentImportPanel({
 
 export default function CurriculumMapping() {
   const schoolId = useSchoolId();
+  const { classes } = useSchool();
+  const levels = classes.length > 0 ? Array.from(new Set(classes.map(c => c.level))).sort() : SCHOOL_CLASSES;
   const [activeTab, setActiveTab] = useState<TabId>('mapping');
   const [items, setItems] = useState<CurriculumItem[]>([]);
   const [selectedSubject, setSelectedSubject] = useState(SUBJECTS[0]);
-  const [selectedLevel, setSelectedLevel] = useState(SCHOOL_CLASSES[6]);
+  const [selectedLevel, setSelectedLevel] = useState(levels[0]);
   const [selectedTerm, setSelectedTerm] = useState<'1st Term' | '2nd Term' | '3rd Term'>('1st Term');
   const [isModal, setIsModal] = useState(false);
   const [form, setForm] = useState<Partial<CurriculumItem>>({ topic: '', objective: '', completed: false });
@@ -794,7 +799,7 @@ export default function CurriculumMapping() {
             <div className="flex flex-wrap gap-4">
               {[
                 { label: 'Subject', value: selectedSubject, set: setSelectedSubject, opts: SUBJECTS },
-                { label: 'Level', value: selectedLevel, set: setSelectedLevel, opts: SCHOOL_CLASSES },
+                { label: 'Level', value: selectedLevel, set: setSelectedLevel, opts: levels },
               ].map(f => (
                 <div key={f.label}>
                   <label className="text-xs font-bold text-slate-500 uppercase tracking-wide block mb-1.5">{f.label}</label>

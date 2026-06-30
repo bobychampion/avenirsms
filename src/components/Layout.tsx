@@ -297,7 +297,15 @@ function AdminSidebar({ open, onClose, schoolName, logoUrl, primaryColor, sideba
           <Link
             to="/calendar"
             onClick={onClose}
-            className={cn('flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all', inactiveLink)}
+            className={cn(
+              'flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all',
+              location.pathname.startsWith('/calendar') ? `${activeText} shadow-lg` : inactiveLink
+            )}
+            style={location.pathname.startsWith('/calendar')
+              ? isBrand
+                ? { backgroundColor: brandIsLight ? 'rgba(0,0,0,0.15)' : 'rgba(255,255,255,0.2)' }
+                : { backgroundColor: primaryColor, boxShadow: `0 4px 14px ${primaryColor}50` }
+              : {}}
           >
             <Calendar className="w-4 h-4" />
             School Calendar

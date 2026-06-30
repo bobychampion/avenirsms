@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import {
   GraduationCap, LogOut, LayoutDashboard, CheckSquare, Home,
-  Users, Bell, Download, X, WifiOff
+  Users, Bell, Download, X, WifiOff, ChevronLeft
 } from 'lucide-react';
 import { useAuth } from './FirebaseProvider';
 import { useSchool } from './SchoolContext';
@@ -47,6 +47,8 @@ export function MobileShell({ children, role }: MobileShellProps) {
   const isOffline = useOfflineStatus();
 
   const tabs = role === 'admin' ? adminTabs : role === 'teacher' ? teacherTabs : parentTabs;
+  const isOffTab = !tabs.some(tab => tab.to === location.pathname);
+  const homeTo = tabs[0].to;
 
   const accentColor = role === 'admin'
     ? 'from-indigo-600 to-violet-600'
@@ -72,6 +74,15 @@ export function MobileShell({ children, role }: MobileShellProps) {
 
       {/* ── TOP BAR ── */}
       <header className="sticky top-0 z-40 bg-white/80 backdrop-blur-md border-b border-slate-100 h-14 flex items-center px-4 gap-3">
+        {isOffTab && (
+          <button
+            onClick={() => navigate(homeTo)}
+            className="p-1.5 -ml-1.5 text-slate-500 hover:text-slate-900 hover:bg-slate-100 rounded-lg flex-shrink-0"
+            title="Back"
+          >
+            <ChevronLeft className="w-5 h-5" />
+          </button>
+        )}
         {logoUrl ? (
           <img src={logoUrl} alt={schoolName} className="w-8 h-8 object-contain rounded-lg flex-shrink-0" />
         ) : (

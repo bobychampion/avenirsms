@@ -712,20 +712,58 @@ function ToggleRow({
   );
 }
 
-type TabId = 'school' | 'academic' | 'timetable' | 'subjects' | 'admissions' | 'attendance' | 'notifications' | 'access' | 'geofence' | 'customize';
+type TabId =
+  | 'school' | 'customize'
+  | 'academic' | 'timetable' | 'subjects' | 'attendance'
+  | 'admissions'
+  | 'finance'
+  | 'notifications'
+  | 'security' | 'geofence'
+  | 'reports'
+  | 'danger';
 
-const TABS: { id: TabId; label: string; icon: React.ReactNode }[] = [
-  { id: 'school',        label: 'School',           icon: <School className="w-4 h-4" /> },
-  { id: 'customize',     label: 'Customization',    icon: <Palette className="w-4 h-4" /> },
-  { id: 'academic',      label: 'Academic',         icon: <Award className="w-4 h-4" /> },
-  { id: 'timetable',     label: 'Timetable',        icon: <Clock className="w-4 h-4" /> },
-  { id: 'subjects',      label: 'Subjects',         icon: <BookOpen className="w-4 h-4" /> },
-  { id: 'admissions',    label: 'Admissions',       icon: <ClipboardCheck className="w-4 h-4" /> },
-  { id: 'attendance',    label: 'Attendance',       icon: <Users className="w-4 h-4" /> },
-  { id: 'notifications', label: 'Notifications',    icon: <Bell className="w-4 h-4" /> },
-  { id: 'access',        label: 'Access & Reports', icon: <ShieldCheck className="w-4 h-4" /> },
-  { id: 'geofence',      label: 'Geo-fence',        icon: <MapPin className="w-4 h-4" /> },
+interface SidebarTab { id: TabId; label: string; icon: React.ReactNode }
+interface SidebarGroup { label: string; colorClass: string; tabs: SidebarTab[] }
+
+/**
+ * Settings used to be one flat row of 10 tabs that overflowed the screen and
+ * scrolled horizontally — and "Finance" (tax, payment methods, fee
+ * categories) was hidden inside a tab literally called "Access & Reports",
+ * which is why it was hard to find. Grouped + color-coded sidebar instead.
+ */
+const SIDEBAR_GROUPS: SidebarGroup[] = [
+  { label: 'General', colorClass: 'text-slate-600 bg-slate-100', tabs: [
+    { id: 'school', label: 'School', icon: <School className="w-4 h-4" /> },
+    { id: 'customize', label: 'Customization', icon: <Palette className="w-4 h-4" /> },
+  ] },
+  { label: 'Academic', colorClass: 'text-blue-600 bg-blue-50', tabs: [
+    { id: 'academic', label: 'Academic', icon: <Award className="w-4 h-4" /> },
+    { id: 'timetable', label: 'Timetable', icon: <Clock className="w-4 h-4" /> },
+    { id: 'subjects', label: 'Subjects', icon: <BookOpen className="w-4 h-4" /> },
+    { id: 'attendance', label: 'Attendance', icon: <Users className="w-4 h-4" /> },
+  ] },
+  { label: 'Admissions', colorClass: 'text-violet-600 bg-violet-50', tabs: [
+    { id: 'admissions', label: 'Admissions', icon: <ClipboardCheck className="w-4 h-4" /> },
+  ] },
+  { label: 'Finance', colorClass: 'text-emerald-600 bg-emerald-50', tabs: [
+    { id: 'finance', label: 'Finance', icon: <DollarSign className="w-4 h-4" /> },
+  ] },
+  { label: 'Communication', colorClass: 'text-amber-600 bg-amber-50', tabs: [
+    { id: 'notifications', label: 'Notifications', icon: <Bell className="w-4 h-4" /> },
+  ] },
+  { label: 'Access & Security', colorClass: 'text-indigo-600 bg-indigo-50', tabs: [
+    { id: 'security', label: 'Access & Security', icon: <ShieldCheck className="w-4 h-4" /> },
+    { id: 'geofence', label: 'Geo-fence', icon: <MapPin className="w-4 h-4" /> },
+  ] },
+  { label: 'Reports', colorClass: 'text-cyan-600 bg-cyan-50', tabs: [
+    { id: 'reports', label: 'Report Cards', icon: <FileText className="w-4 h-4" /> },
+  ] },
 ];
+
+const DANGER_TAB: SidebarTab = { id: 'danger', label: 'Danger Zone', icon: <AlertTriangle className="w-4 h-4" /> };
+
+/** Flattened list, used for the mobile dropdown and the legacy ?tab= deep-link handling. */
+const ALL_TABS: SidebarTab[] = [...SIDEBAR_GROUPS.flatMap(g => g.tabs), DANGER_TAB];
 
 const COLOR_PRESETS = [
   { name: 'Indigo',       value: '#4f46e5' },
@@ -1120,8 +1158,10 @@ export default function SchoolSettingsPage() {
     </div>
   );
 
+  const activeTabMeta = ALL_TABS.find(t => t.id === activeTab);
+
   return (
-    <div className="p-6 lg:p-8 max-w-4xl mx-auto">
+    <div className="p-6 lg:p-8 max-w-7xl mx-auto">
       <UnsavedChangesDialog blocker={blocker} />
 
       {/* ── Page header ── */}
@@ -1150,23 +1190,73 @@ export default function SchoolSettingsPage() {
         </div>
       </div>
 
-      {/* ── Tab bar ── */}
-      <div className="flex gap-1 bg-slate-100 p-1 rounded-2xl mb-6 overflow-x-auto">
-        {TABS.map(tab => (
-          <button
-            key={tab.id}
-            onClick={() => setActiveTab(tab.id)}
-            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold whitespace-nowrap transition-all ${
-              activeTab === tab.id
-                ? 'bg-white text-indigo-700 shadow-sm'
-                : 'text-slate-500 hover:text-slate-800 hover:bg-white/60'
-            }`}
-          >
-            {tab.icon}
-            {tab.label}
-          </button>
-        ))}
+      {/* ── Mobile tab picker (sidebar is desktop-only) ── */}
+      <div className="lg:hidden mb-6">
+        <select
+          value={activeTab}
+          onChange={e => setActiveTab(e.target.value as TabId)}
+          className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm font-semibold bg-white"
+        >
+          {SIDEBAR_GROUPS.map(group => (
+            <optgroup key={group.label} label={group.label}>
+              {group.tabs.map(tab => <option key={tab.id} value={tab.id}>{tab.label}</option>)}
+            </optgroup>
+          ))}
+          <optgroup label="Danger Zone">
+            <option value={DANGER_TAB.id}>{DANGER_TAB.label}</option>
+          </optgroup>
+        </select>
       </div>
+
+      <div className="flex flex-col lg:flex-row gap-6 items-start">
+        {/* ── Sidebar nav (desktop) ── */}
+        <aside className="hidden lg:block w-64 shrink-0 sticky top-6 space-y-5">
+          {SIDEBAR_GROUPS.map(group => (
+            <div key={group.label}>
+              <p className={`px-3 mb-1.5 text-[11px] font-bold uppercase tracking-wider rounded-md inline-block py-0.5 ${group.colorClass}`}>
+                {group.label}
+              </p>
+              <div className="space-y-0.5">
+                {group.tabs.map(tab => (
+                  <button
+                    key={tab.id}
+                    onClick={() => setActiveTab(tab.id)}
+                    className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-sm font-semibold text-left transition-all ${
+                      activeTab === tab.id
+                        ? 'bg-indigo-50 text-indigo-700'
+                        : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'
+                    }`}
+                  >
+                    {tab.icon}
+                    {tab.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ))}
+          <div className="pt-3 border-t border-slate-200">
+            <button
+              onClick={() => setActiveTab('danger')}
+              className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-sm font-semibold text-left transition-all ${
+                activeTab === 'danger'
+                  ? 'bg-rose-50 text-rose-700'
+                  : 'text-rose-500 hover:bg-rose-50'
+              }`}
+            >
+              {DANGER_TAB.icon}
+              {DANGER_TAB.label}
+            </button>
+          </div>
+        </aside>
+
+        <div className="flex-1 min-w-0 w-full">
+          {/* Mobile-only current-section heading, since the sidebar (with its
+              group labels) is hidden below lg */}
+          {activeTabMeta && (
+            <h2 className="lg:hidden text-lg font-bold text-slate-900 mb-4 flex items-center gap-2">
+              {activeTabMeta.icon} {activeTabMeta.label}
+            </h2>
+          )}
 
       {/* ══════════════════════════════════════════════════════════════
           TAB: SCHOOL
@@ -1858,7 +1948,7 @@ export default function SchoolSettingsPage() {
       {/* ══════════════════════════════════════════════════════════════
           TAB: ACCESS & REPORTS
       ══════════════════════════════════════════════════════════════ */}
-      {activeTab === 'access' && (
+      {activeTab === 'security' && (
         <div className="space-y-6">
 
           {/* Portal & Access Control */}
@@ -1906,7 +1996,11 @@ export default function SchoolSettingsPage() {
               </select>
             </div>
           </section>
+        </div>
+      )}
 
+      {activeTab === 'reports' && (
+        <div className="space-y-6">
           {/* Report Card & Printing */}
           <section className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
             <h2 className="font-bold text-slate-800 text-sm flex items-center gap-2 mb-1">
@@ -1939,7 +2033,11 @@ export default function SchoolSettingsPage() {
                 checked={form.reportWatermarkEnabled} onChange={v => field('reportWatermarkEnabled', v)} />
             </div>
           </section>
+        </div>
+      )}
 
+      {activeTab === 'finance' && (
+        <div className="space-y-6">
           {/* Finance & Payroll */}
           <section className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
             <h2 className="font-bold text-slate-800 text-sm flex items-center gap-2 mb-1">
@@ -2084,7 +2182,11 @@ export default function SchoolSettingsPage() {
               </div>
             )}
           </section>
+        </div>
+      )}
 
+      {activeTab === 'security' && (
+        <div className="space-y-6">
           {/* AI & CBT */}
           <section className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
             <h2 className="font-bold text-slate-800 text-sm flex items-center gap-2 mb-1">
@@ -2153,8 +2255,11 @@ export default function SchoolSettingsPage() {
               label={form.examLocked ? '🔒 Exam results are LOCKED (PIN required)' : '🔓 Exam results are OPEN'}
               checked={form.examLocked} onChange={v => field('examLocked', v)} />
           </section>
+        </div>
+      )}
 
-          {/* Danger Zone */}
+      {activeTab === 'danger' && (
+        <div className="space-y-6">
           <DangerZone />
         </div>
       )}
@@ -2658,6 +2763,9 @@ export default function SchoolSettingsPage() {
 
         </div>
       )}
+
+        </div>
+      </div>
 
       {/* ── Sticky bottom save bar (visible on all tabs when dirty) ── */}
       {isDirty && (

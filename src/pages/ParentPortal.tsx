@@ -255,7 +255,10 @@ export default function ParentPortal() {
     const unsubInv = onSnapshot(
       qInv,
       snap => setInvoices(snap.docs.map(d => ({ id: d.id, ...d.data() } as Invoice))),
-      err => console.error('[ParentPortal] invoices query failed:', err.code, err.message)
+      err => {
+        console.error('[ParentPortal] invoices query failed:', err.code, err.message);
+        toast.error('Could not load fee invoices — please refresh or contact the school.');
+      }
     );
 
     const qAbsence = query(

@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import {
   collection, query, where, orderBy, limit, onSnapshot
 } from 'firebase/firestore';
-import { db } from '../../firebase';
+import { db, handleFirestoreError, OperationType } from '../../firebase';
 import { MobileShell } from '../../components/MobileShell';
 import { useAuth } from '../../components/FirebaseProvider';
 import { Application, Invoice, Notification } from '../../types';
@@ -56,7 +56,8 @@ export default function AdminMobileDashboard() {
         const docs = snap.docs.map(d => ({ id: d.id, ...d.data() } as Application & { id: string }));
         setApplications(docs);
         setStats(prev => ({ ...prev, pendingApplications: snap.size }));
-      }
+      },
+      (error) => handleFirestoreError(error, OperationType.LIST, 'applications')
     ));
 
     // Overdue invoices
@@ -67,7 +68,8 @@ export default function AdminMobileDashboard() {
         setOverdueInvoices(docs);
         const total = docs.reduce((sum, inv) => sum + (inv.amount || 0), 0);
         setStats(prev => ({ ...prev, overdueFeesTotal: total, overdueCount: snap.size }));
-      }
+      },
+      (error) => handleFirestoreError(error, OperationType.LIST, 'invoices')
     ));
 
     // Recent notifications
@@ -75,7 +77,8 @@ export default function AdminMobileDashboard() {
       query(collection(db, 'notifications'), where('schoolId', '==', schoolId!), orderBy('createdAt', 'desc'), limit(5)),
       snap => {
         setNotifications(snap.docs.map(d => ({ id: d.id, ...d.data() } as Notification & { id: string })));
-      }
+      },
+      (error) => handleFirestoreError(error, OperationType.LIST, 'notifications')
     ));
 
     return () => unsubs.forEach(u => u());

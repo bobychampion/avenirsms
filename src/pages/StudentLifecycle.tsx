@@ -5,7 +5,7 @@
  */
 import React, { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
-import { db } from '../firebase';
+import { db, handleFirestoreError, OperationType } from '../firebase';
 import {
   doc, onSnapshot, collection, query, where, orderBy,
   addDoc, setDoc, updateDoc, serverTimestamp, getDocs, writeBatch, deleteField,
@@ -318,7 +318,7 @@ function TimelineTab({ student, schoolId, profile }: TimelineTabProps) {
         setEvents(firestoreEvents);
       }
       setLoading(false);
-    });
+    }, (error) => { handleFirestoreError(error, OperationType.LIST, 'lifecycle_events'); setLoading(false); });
 
     return unsub;
   }, [schoolId, student.id, student.enrolledAt, student.studentName, student.currentClass]);
@@ -805,7 +805,7 @@ function BehavioralTab({ student, schoolId, profile }: BehavioralTabProps) {
     const unsub = onSnapshot(q, snap => {
       setRecords(snap.docs.map(d => ({ id: d.id, ...d.data() } as BehavioralRecord)));
       setLoading(false);
-    });
+    }, (error) => { handleFirestoreError(error, OperationType.LIST, 'behavioral_records'); setLoading(false); });
     return unsub;
   }, [schoolId, student.id]);
 

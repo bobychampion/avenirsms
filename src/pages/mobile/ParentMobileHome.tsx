@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import {
   collection, query, where, orderBy, limit, onSnapshot
 } from 'firebase/firestore';
-import { db } from '../../firebase';
+import { db, handleFirestoreError, OperationType } from '../../firebase';
 import { MobileShell } from '../../components/MobileShell';
 import Avatar from '../../components/Avatar';
 import { useAuth } from '../../components/FirebaseProvider';
@@ -55,7 +55,8 @@ export default function ParentMobileHome() {
           const kids = snap.docs.map(d => ({ id: d.id, ...d.data() } as Student & { id: string }));
           setChildren(kids);
           if (kids.length > 0 && !selectedChild) setSelectedChild(kids[0]);
-        }
+        },
+        (error) => handleFirestoreError(error, OperationType.LIST, 'students')
       );
       return () => unsub();
     }
@@ -66,7 +67,8 @@ export default function ParentMobileHome() {
         const kids = snap.docs.map(d => ({ id: d.id, ...d.data() } as Student & { id: string }));
         setChildren(kids);
         if (kids.length > 0 && !selectedChild) setSelectedChild(kids[0]);
-      }
+      },
+      (error) => handleFirestoreError(error, OperationType.LIST, 'students')
     );
     return () => unsub();
   }, [profile?.uid, schoolId]);
@@ -91,7 +93,8 @@ export default function ParentMobileHome() {
           map[data.date] = data;
         });
         setWeekAttendance(map);
-      }
+      },
+      (error) => handleFirestoreError(error, OperationType.LIST, 'attendance')
     );
     return () => unsub();
   }, [selectedChild?.id]);
@@ -107,7 +110,8 @@ export default function ParentMobileHome() {
         const total = snap.docs.reduce((sum, d) => sum + ((d.data() as Invoice).amount || 0), 0);
         setPendingBalance(total);
         setPendingCount(snap.size);
-      }
+      },
+      (error) => handleFirestoreError(error, OperationType.LIST, 'invoices')
     );
     return () => unsub();
   }, [selectedChild?.id]);
@@ -119,7 +123,8 @@ export default function ParentMobileHome() {
       query(collection(db, 'notifications'), where('schoolId', '==', schoolId!), where('type', '==', 'general'), orderBy('createdAt', 'desc'), limit(5)),
       snap => {
         setNotifications(snap.docs.map(d => ({ id: d.id, ...d.data() } as Notification & { id: string })));
-      }
+      },
+      (error) => handleFirestoreError(error, OperationType.LIST, 'notifications')
     );
     return () => unsub();
   }, []);

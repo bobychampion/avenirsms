@@ -418,7 +418,27 @@ service cloud.firestore {
     }
 
     match /expenses/{expenseId} {
-      allow read, write: if isSuperAdmin() || (isAdmin() && newDocBelongsToCallerSchool());
+      // Read/delete only have `resource` (the existing doc); `request.resource`
+      // is undefined outside create/update. The previous single `read, write`
+      // rule used newDocBelongsToCallerSchool() (which reads request.resource)
+      // for ALL operations including read — so every list/get on this
+      // collection errored out as permission-denied for non-super-admins.
+      allow read: if isSuperAdmin() || (isAdmin() && docBelongsToCallerSchool());
+      allow create: if isSuperAdmin() || (isAdmin() && newDocBelongsToCallerSchool());
+      allow update: if isSuperAdmin() || (isAdmin() && docBelongsToCallerSchool() && newDocBelongsToCallerSchool());
+      allow delete: if isSuperAdmin() || (isAdmin() && docBelongsToCallerSchool());
+    }
+
+    // ─── Fee Categories & Templates ────────────────────────────────────────────
+
+    match /fee_categories/{categoryId} {
+      allow read: if isSuperAdmin() || (isAdmin() && docBelongsToCallerSchool());
+      allow write: if isSuperAdmin() || (isAdmin() && newDocBelongsToCallerSchool());
+    }
+
+    match /fee_templates/{templateId} {
+      allow read: if isSuperAdmin() || (isAdmin() && docBelongsToCallerSchool());
+      allow write: if isSuperAdmin() || (isAdmin() && newDocBelongsToCallerSchool());
     }
 
     // ─── Staff, leave & payroll ───────────────────────────────────────────────

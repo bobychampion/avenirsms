@@ -8,9 +8,17 @@
  *  - SchoolProvider uses it as the effective schoolId for subscriptions
  *  - Layout shows a "Viewing: [School Name] [Exit]" banner
  *  - ProtectedRoute allows access to /admin/* routes
+ *
+ * Persisted to sessionStorage (mirroring ImpersonationContext) so a page
+ * refresh while browsing a school doesn't silently reset activeSchoolId to
+ * null — that used to empty out every school-scoped page on reload (the
+ * super_admin would get redirected back to /super-admin), which looked
+ * exactly like data "disappearing".
  */
 
 import React, { createContext, useContext, useState, ReactNode } from 'react';
+
+const STORAGE_KEY = 'avenir_active_school';
 
 interface SuperAdminContextType {
   /** The school the super_admin is currently viewing (null = own platform dashboard) */
@@ -25,18 +33,30 @@ interface SuperAdminContextType {
 
 const SuperAdminContext = createContext<SuperAdminContextType | undefined>(undefined);
 
+function readStoredSchool(): { id: string; name: string } | null {
+  try {
+    const raw = sessionStorage.getItem(STORAGE_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
 export function SuperAdminProvider({ children }: { children: ReactNode }) {
-  const [activeSchoolId, setActiveSchoolId] = useState<string | null>(null);
-  const [activeSchoolName, setActiveSchoolName] = useState('');
+  const stored = readStoredSchool();
+  const [activeSchoolId, setActiveSchoolId] = useState<string | null>(stored?.id ?? null);
+  const [activeSchoolName, setActiveSchoolName] = useState(stored?.name ?? '');
 
   const enterSchool = (id: string, name: string) => {
     setActiveSchoolId(id);
     setActiveSchoolName(name);
+    sessionStorage.setItem(STORAGE_KEY, JSON.stringify({ id, name }));
   };
 
   const exitSchool = () => {
     setActiveSchoolId(null);
     setActiveSchoolName('');
+    sessionStorage.removeItem(STORAGE_KEY);
   };
 
   return (

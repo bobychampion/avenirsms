@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { db } from '../firebase';
+import { db, handleFirestoreError, OperationType } from '../firebase';
 import { collection, query, onSnapshot, orderBy, addDoc, serverTimestamp, where } from 'firebase/firestore';
 import { useAuth } from '../components/FirebaseProvider';
 import { Student, Invoice, CURRENT_SESSION, TERMS, formatNaira } from '../types';
@@ -121,11 +121,11 @@ export default function WhatsAppNotifications() {
     const unsub = onSnapshot(q, snap => {
       setStudents(snap.docs.map(d => ({ id: d.id, ...d.data() } as Student)));
       setLoading(false);
-    });
+    }, (error) => { handleFirestoreError(error, OperationType.LIST, 'students'); setLoading(false); });
     const qI = query(collection(db, 'invoices'), where('schoolId', '==', schoolId!), where('status', 'in', ['pending', 'overdue']));
     const unsubI = onSnapshot(qI, snap => {
       setInvoices(snap.docs.map(d => ({ id: d.id, ...d.data() } as Invoice)));
-    });
+    }, (error) => handleFirestoreError(error, OperationType.LIST, 'invoices'));
     return () => { unsub(); unsubI(); };
   }, [schoolId]);
 
@@ -135,7 +135,7 @@ export default function WhatsAppNotifications() {
     const q = query(collection(db, 'whatsapp_logs'), where('schoolId', '==', schoolId!), orderBy('sentAt', 'desc'));
     const unsub = onSnapshot(q, snap => {
       setLogs(snap.docs.map(d => ({ id: d.id, ...d.data() } as WhatsAppLog)));
-    });
+    }, (error) => handleFirestoreError(error, OperationType.LIST, 'whatsapp_logs'));
     return () => unsub();
   }, [activeTab, schoolId]);
 

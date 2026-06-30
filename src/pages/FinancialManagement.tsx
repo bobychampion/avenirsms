@@ -2,8 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { db, handleFirestoreError, OperationType } from '../firebase';
 import { useAuth } from '../components/FirebaseProvider';
-import { collection, query, onSnapshot, orderBy, addDoc, serverTimestamp, doc, updateDoc, where, writeBatch } from 'firebase/firestore';
-import { Invoice, FeePayment, Expense, Student, TERMS, CURRENT_SESSION } from '../types';
+import { collection, query, onSnapshot, orderBy, addDoc, serverTimestamp, doc, updateDoc, deleteDoc, where, writeBatch } from 'firebase/firestore';
+import { Invoice, FeePayment, Expense, Student, FeeCategory, FeeTemplate, TERMS, CURRENT_SESSION } from '../types';
 import { motion, AnimatePresence } from 'motion/react';
 import toast from 'react-hot-toast';
 import { ConfirmDialog } from '../components/Toast';
@@ -11,11 +11,11 @@ import { generateFeeReminderDraft } from '../services/geminiService';
 import { useClassSelectOptions, useSchool } from '../components/SchoolContext';
 import { useSchoolId } from '../hooks/useSchoolId';
 import { formatCurrency } from '../utils/formatCurrency';
-import { 
-  DollarSign, Receipt, TrendingUp, TrendingDown, Plus, 
-  Search, Filter, Loader2, Download, PieChart, 
+import {
+  DollarSign, Receipt, TrendingUp, TrendingDown, Plus,
+  Search, Filter, Loader2, Download, PieChart,
   CreditCard, Wallet, Calendar, User, FileText, CheckCircle2, AlertCircle, ArrowLeft, Printer,
-  Sparkles, X, Copy, RefreshCw, Layers
+  Sparkles, X, Copy, RefreshCw, Layers, Tag, Repeat, Trash2, Users
 } from 'lucide-react';
 import { PieChart as RePieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend, BarChart, Bar, XAxis, YAxis, CartesianGrid } from 'recharts';
 import { DOCUMENT_TITLE_DEFAULT } from '../constants/appMeta';
@@ -30,12 +30,17 @@ export default function FinancialManagement() {
   const [payments, setPayments] = useState<FeePayment[]>([]);
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [students, setStudents] = useState<Student[]>([]);
+  const [feeCategories, setFeeCategories] = useState<FeeCategory[]>([]);
+  const [feeTemplates, setFeeTemplates] = useState<FeeTemplate[]>([]);
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<'overview' | 'invoices' | 'pending' | 'payments' | 'expenses'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'invoices' | 'pending' | 'templates' | 'payments' | 'expenses'>('overview');
   const [reviewingClaim, setReviewingClaim] = useState<FeePayment | null>(null);
   const [rejectReason, setRejectReason] = useState('');
   const [reviewSaving, setReviewSaving] = useState(false);
   const [markingOverdue, setMarkingOverdue] = useState(false);
+  const [selectedInvoiceIds, setSelectedInvoiceIds] = useState<Set<string>>(new Set());
+  const [deletingInvoiceId, setDeletingInvoiceId] = useState<string | null>(null);
+  const [bulkDeleting, setBulkDeleting] = useState(false);
   
   // Modals
   const [isInvoiceModalOpen, setIsInvoiceModalOpen] = useState(false);
@@ -43,17 +48,34 @@ export default function FinancialManagement() {
   const [isExpenseModalOpen, setIsExpenseModalOpen] = useState(false);
   const [receiptInvoice, setReceiptInvoice] = useState<Invoice | null>(null);
 
-  // Fee Schedule (bulk invoice creation)
+  // Bulk invoice creation (class or whole school, with per-student exclusions)
   const [isScheduleModalOpen, setIsScheduleModalOpen] = useState(false);
-  const [scheduleForm, setScheduleForm] = useState<{ description: string; amount: number; targetClass: string; term: '1st Term' | '2nd Term' | '3rd Term'; session: string; dueDate: string }>({
+  const [scheduleForm, setScheduleForm] = useState<{
+    target: 'class' | 'everyone';
+    description: string;
+    amount: number;
+    categoryId: string;
+    targetClass: string;
+    term: '1st Term' | '2nd Term' | '3rd Term';
+    session: string;
+    dueDate: string;
+    saveAsTemplate: boolean;
+    templateName: string;
+  }>({
+    target: 'class',
     description: 'School Fees',
     amount: 0,
+    categoryId: '',
     targetClass: '',
     term: TERMS[0],
     session: CURRENT_SESSION,
     dueDate: '',
+    saveAsTemplate: false,
+    templateName: '',
   });
+  const [excludedStudentIds, setExcludedStudentIds] = useState<Set<string>>(new Set());
   const [creatingSchedule, setCreatingSchedule] = useState(false);
+  const [deletingTemplateId, setDeletingTemplateId] = useState<string | null>(null);
 
   // AI Fee Reminder
   const [reminderInvoice, setReminderInvoice] = useState<Invoice | null>(null);
@@ -65,6 +87,7 @@ export default function FinancialManagement() {
     studentId: '',
     amount: 0,
     description: 'School Fees',
+    category: '',
     dueDate: '',
     term: '1st Term',
     session: `${new Date().getFullYear()}/${new Date().getFullYear() + 1}`,
@@ -88,32 +111,62 @@ export default function FinancialManagement() {
 
   useEffect(() => {
     if (!schoolId) return;
-    const unsubInvoices = onSnapshot(query(collection(db, 'invoices'), where('schoolId', '==', schoolId!), orderBy('createdAt', 'desc')), (snapshot) => {
-      setInvoices(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Invoice)));
-    });
+    // Each listener previously had no error callback — any failure (a
+    // transient permission hiccup, a missing index, or the Firestore SDK's
+    // internal listener-corruption bug seen elsewhere in this app) silently
+    // froze the UI on stale data with zero feedback. handleFirestoreError
+    // now surfaces it instead of swallowing it.
+    const unsubInvoices = onSnapshot(
+      query(collection(db, 'invoices'), where('schoolId', '==', schoolId!), orderBy('createdAt', 'desc')),
+      (snapshot) => setInvoices(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Invoice))),
+      (error) => handleFirestoreError(error, OperationType.LIST, 'invoices')
+    );
 
-    const unsubPayments = onSnapshot(query(collection(db, 'fee_payments'), where('schoolId', '==', schoolId!), orderBy('date', 'desc')), (snapshot) => {
-      setPayments(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as FeePayment)));
-    });
+    const unsubPayments = onSnapshot(
+      query(collection(db, 'fee_payments'), where('schoolId', '==', schoolId!), orderBy('date', 'desc')),
+      (snapshot) => setPayments(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as FeePayment))),
+      (error) => handleFirestoreError(error, OperationType.LIST, 'fee_payments')
+    );
 
-    const unsubExpenses = onSnapshot(query(collection(db, 'expenses'), where('schoolId', '==', schoolId!), orderBy('date', 'desc')), (snapshot) => {
-      setExpenses(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Expense)));
-    });
+    const unsubExpenses = onSnapshot(
+      query(collection(db, 'expenses'), where('schoolId', '==', schoolId!), orderBy('date', 'desc')),
+      (snapshot) => setExpenses(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Expense))),
+      (error) => handleFirestoreError(error, OperationType.LIST, 'expenses')
+    );
 
-    const unsubStudents = onSnapshot(query(collection(db, 'students'), where('schoolId', '==', schoolId!)), (snapshot) => {
-      setStudents(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Student)));
-      setLoading(false);
-    });
+    const unsubStudents = onSnapshot(
+      query(collection(db, 'students'), where('schoolId', '==', schoolId!)),
+      (snapshot) => { setStudents(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Student))); setLoading(false); },
+      (error) => { handleFirestoreError(error, OperationType.LIST, 'students'); setLoading(false); }
+    );
+
+    const unsubFeeCategories = onSnapshot(
+      query(collection(db, 'fee_categories'), where('schoolId', '==', schoolId!)),
+      (snapshot) => setFeeCategories(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as FeeCategory))),
+      (error) => handleFirestoreError(error, OperationType.LIST, 'fee_categories')
+    );
+
+    const unsubFeeTemplates = onSnapshot(
+      query(collection(db, 'fee_templates'), where('schoolId', '==', schoolId!), orderBy('createdAt', 'desc')),
+      (snapshot) => setFeeTemplates(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as FeeTemplate))),
+      (error) => handleFirestoreError(error, OperationType.LIST, 'fee_templates')
+    );
 
     return () => {
       unsubInvoices();
       unsubPayments();
       unsubExpenses();
       unsubStudents();
+      unsubFeeCategories();
+      unsubFeeTemplates();
     };
   }, [schoolId]);
 
-  const totalRevenue = payments.reduce((sum, p) => sum + p.amount, 0);
+  // A parent declaring a payment doesn't make it real — only count it once an
+  // admin has actually confirmed it. Missing `status` means an older record
+  // from before claims existed, which was always admin-recorded directly.
+  const confirmedPayments = payments.filter(p => !p.status || p.status === 'confirmed');
+  const totalRevenue = confirmedPayments.reduce((sum, p) => sum + p.amount, 0);
   const totalExpenses = expenses.reduce((sum, e) => sum + e.amount, 0);
   const outstandingFees = invoices.filter(i => i.status !== 'paid').reduce((sum, i) => sum + i.amount, 0);
 
@@ -249,28 +302,70 @@ export default function FinancialManagement() {
     }
   };
 
-  // Batch-create invoices for all students in a class
+  const handleDeleteInvoice = async (invoice: Invoice) => {
+    if (!window.confirm(`Delete the invoice for ${invoice.studentName} (${fmt(invoice.amount)})? This cannot be undone.`)) return;
+    setDeletingInvoiceId(invoice.id!);
+    try {
+      await deleteDoc(doc(db, 'invoices', invoice.id!));
+      setSelectedInvoiceIds(prev => { const next = new Set(prev); next.delete(invoice.id!); return next; });
+      toast.success('Invoice deleted.');
+    } catch (e: any) {
+      toast.error('Failed to delete: ' + (e.message || 'unknown error'));
+    } finally {
+      setDeletingInvoiceId(null);
+    }
+  };
+
+  const handleBulkDeleteInvoices = async () => {
+    if (selectedInvoiceIds.size === 0) return;
+    if (!window.confirm(`Delete ${selectedInvoiceIds.size} selected invoice(s)? This cannot be undone.`)) return;
+    setBulkDeleting(true);
+    const tid = toast.loading(`Deleting ${selectedInvoiceIds.size} invoice(s)…`);
+    try {
+      const batch = writeBatch(db);
+      selectedInvoiceIds.forEach(id => batch.delete(doc(db, 'invoices', id)));
+      await batch.commit();
+      toast.success(`${selectedInvoiceIds.size} invoice(s) deleted.`, { id: tid });
+      setSelectedInvoiceIds(new Set());
+    } catch (e: any) {
+      toast.error('Failed to delete: ' + (e.message || 'unknown error'), { id: tid });
+    } finally {
+      setBulkDeleting(false);
+    }
+  };
+
+  // Roster eligible for bulk invoicing under the current target mode —
+  // excludes withdrawn students (consistent with rosters elsewhere in the
+  // app) and anyone the admin unchecked in the modal.
+  const bulkTargetRoster = (scheduleForm.target === 'class'
+    ? students.filter(s => s.currentClass === scheduleForm.targetClass)
+    : students
+  ).filter(s => s.admissionStatus !== 'withdrawn');
+  const bulkSelectedStudents = bulkTargetRoster.filter(s => !excludedStudentIds.has(s.id!));
+
+  // Batch-create invoices for the selected target (class or whole school),
+  // optionally excluding specific students, optionally saving a reusable
+  // FeeTemplate so this doesn't need to be rebuilt from scratch next term.
   const handleCreateFeeSchedule = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!scheduleForm.targetClass || !scheduleForm.amount || !scheduleForm.dueDate) {
+    if (!scheduleForm.amount || !scheduleForm.dueDate || (scheduleForm.target === 'class' && !scheduleForm.targetClass)) {
       toast.error('Please fill in all required fields.');
       return;
     }
+    if (bulkSelectedStudents.length === 0) {
+      toast.error('No students selected.');
+      return;
+    }
     setCreatingSchedule(true);
-    const tid = toast.loading('Creating invoices for class…');
+    const tid = toast.loading(`Creating ${bulkSelectedStudents.length} invoice(s)…`);
     try {
-      const classStudents = students.filter(s => s.currentClass === scheduleForm.targetClass);
-      if (classStudents.length === 0) {
-        toast.error('No students found in that class.', { id: tid });
-        setCreatingSchedule(false);
-        return;
-      }
-      const batch: Promise<any>[] = classStudents.map(s =>
+      const batch: Promise<any>[] = bulkSelectedStudents.map(s =>
         addDoc(collection(db, 'invoices'), {
           studentId: s.id,
           studentName: s.studentName,
           description: scheduleForm.description,
           amount: Number(scheduleForm.amount),
+          ...(scheduleForm.categoryId ? { category: scheduleForm.categoryId } : {}),
           term: scheduleForm.term,
           session: scheduleForm.session,
           dueDate: scheduleForm.dueDate,
@@ -280,13 +375,61 @@ export default function FinancialManagement() {
         })
       );
       await Promise.all(batch);
-      toast.success(`Created ${classStudents.length} invoice(s) for ${scheduleForm.targetClass}`, { id: tid });
+
+      if (scheduleForm.saveAsTemplate && scheduleForm.templateName.trim()) {
+        await addDoc(collection(db, 'fee_templates'), {
+          schoolId,
+          name: scheduleForm.templateName.trim(),
+          ...(scheduleForm.categoryId ? { categoryId: scheduleForm.categoryId } : {}),
+          description: scheduleForm.description,
+          amount: Number(scheduleForm.amount),
+          target: scheduleForm.target,
+          ...(scheduleForm.target === 'class' ? { targetClass: scheduleForm.targetClass } : {}),
+          term: scheduleForm.term,
+          createdAt: serverTimestamp(),
+        });
+      }
+
+      toast.success(`Created ${bulkSelectedStudents.length} invoice(s)${scheduleForm.target === 'class' ? ` for ${scheduleForm.targetClass}` : ' for everyone'}`, { id: tid });
       setIsScheduleModalOpen(false);
-      setScheduleForm({ ...scheduleForm, targetClass: '', amount: 0, dueDate: '' });
+      setExcludedStudentIds(new Set());
+      setScheduleForm(p => ({ ...p, targetClass: '', amount: 0, dueDate: '', saveAsTemplate: false, templateName: '' }));
     } catch (err: any) {
       toast.error('Failed to create invoices: ' + err.message, { id: tid });
     } finally {
       setCreatingSchedule(false);
+    }
+  };
+
+  // Pre-fill the bulk-create modal from a saved template; admin only needs
+  // to set a due date (and session/term if it's changed) before submitting.
+  const handleGenerateFromTemplate = (template: FeeTemplate) => {
+    setScheduleForm({
+      target: template.target,
+      description: template.description,
+      amount: template.amount,
+      categoryId: template.categoryId ?? '',
+      targetClass: template.targetClass ?? '',
+      term: template.term,
+      session: CURRENT_SESSION,
+      dueDate: '',
+      saveAsTemplate: false,
+      templateName: '',
+    });
+    setExcludedStudentIds(new Set());
+    setIsScheduleModalOpen(true);
+  };
+
+  const handleDeleteTemplate = async (id: string) => {
+    if (!window.confirm('Delete this fee template?')) return;
+    setDeletingTemplateId(id);
+    try {
+      await deleteDoc(doc(db, 'fee_templates', id));
+      toast.success('Template deleted.');
+    } catch (e: any) {
+      toast.error('Failed to delete: ' + (e.message || 'unknown error'));
+    } finally {
+      setDeletingTemplateId(null);
     }
   };
 
@@ -345,9 +488,9 @@ export default function FinancialManagement() {
             <Plus className="w-4 h-4 mr-2" />
             New Invoice
           </button>
-          <button onClick={() => setIsScheduleModalOpen(true)} className="px-4 py-2 bg-white text-slate-700 font-bold rounded-xl border border-slate-200 hover:bg-slate-50 transition-all flex items-center">
+          <button onClick={() => { setScheduleForm(p => ({ ...p, target: 'class', targetClass: '', amount: 0, dueDate: '', saveAsTemplate: false, templateName: '' })); setExcludedStudentIds(new Set()); setIsScheduleModalOpen(true); }} className="px-4 py-2 bg-white text-slate-700 font-bold rounded-xl border border-slate-200 hover:bg-slate-50 transition-all flex items-center">
             <Layers className="w-4 h-4 mr-2 text-indigo-500" />
-            Fee Schedule
+            Bulk Create
           </button>
           <button onClick={() => setIsExpenseModalOpen(true)} className="px-4 py-2 bg-white text-slate-700 font-bold rounded-xl border border-slate-200 hover:bg-slate-50 transition-all flex items-center">
             <Plus className="w-4 h-4 mr-2" />
@@ -400,6 +543,7 @@ export default function FinancialManagement() {
             <span className="px-1.5 py-0.5 bg-amber-500 text-white text-[10px] font-bold rounded-full">{pendingClaims.length}</span>
           )}
         </button>
+        <button onClick={() => setActiveTab('templates')} className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${activeTab === 'templates' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>Fee Templates</button>
         <button onClick={() => setActiveTab('payments')} className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${activeTab === 'payments' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>Payments</button>
         <button onClick={() => setActiveTab('expenses')} className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${activeTab === 'expenses' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>Expenses</button>
       </div>
@@ -429,7 +573,7 @@ export default function FinancialManagement() {
               Recent Activity
             </h3>
             <div className="space-y-4">
-              {payments.slice(0, 5).map(p => (
+              {confirmedPayments.slice(0, 5).map(p => (
                 <div key={p.id} className="flex items-center justify-between p-3 bg-slate-50 rounded-2xl">
                   <div className="flex items-center">
                     <div className="p-2 bg-emerald-100 rounded-lg mr-3">
@@ -464,25 +608,43 @@ export default function FinancialManagement() {
 
       {activeTab === 'invoices' && (
         <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
-          <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
+          <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between flex-wrap gap-2">
             <p className="font-bold text-slate-900 text-sm">
               {invoices.length} invoices &nbsp;·&nbsp;
               <span className="text-amber-600">{invoices.filter(i => i.status === 'pending').length} pending</span>
               &nbsp;·&nbsp;
               <span className="text-rose-600">{invoices.filter(i => i.status === 'overdue').length} overdue</span>
             </p>
-            <button
-              onClick={markOverdueInvoices}
-              disabled={markingOverdue}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-rose-600 bg-rose-50 border border-rose-200 rounded-xl hover:bg-rose-100 transition-all disabled:opacity-50"
-            >
-              {markingOverdue ? <span className="w-3 h-3 border-2 border-rose-300 border-t-rose-600 rounded-full animate-spin" /> : <AlertCircle className="w-3.5 h-3.5" />}
-              Mark Overdue
-            </button>
+            <div className="flex items-center gap-2">
+              {selectedInvoiceIds.size > 0 && (
+                <button
+                  onClick={handleBulkDeleteInvoices}
+                  disabled={bulkDeleting}
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-white bg-rose-600 rounded-xl hover:bg-rose-700 transition-all disabled:opacity-50"
+                >
+                  {bulkDeleting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+                  Delete {selectedInvoiceIds.size} Selected
+                </button>
+              )}
+              <button
+                onClick={markOverdueInvoices}
+                disabled={markingOverdue}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-rose-600 bg-rose-50 border border-rose-200 rounded-xl hover:bg-rose-100 transition-all disabled:opacity-50"
+              >
+                {markingOverdue ? <span className="w-3 h-3 border-2 border-rose-300 border-t-rose-600 rounded-full animate-spin" /> : <AlertCircle className="w-3.5 h-3.5" />}
+                Mark Overdue
+              </button>
+            </div>
           </div>
           <table className="w-full text-left">
             <thead className="bg-slate-50 border-b border-slate-200">
               <tr>
+                <th className="px-6 py-4 w-10">
+                  <input type="checkbox"
+                    checked={invoices.length > 0 && selectedInvoiceIds.size === invoices.length}
+                    onChange={e => setSelectedInvoiceIds(e.target.checked ? new Set(invoices.map(i => i.id!)) : new Set())}
+                    className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500" />
+                </th>
                 <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase">Student</th>
                 <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase">Amount</th>
                 <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase">Due Date</th>
@@ -492,7 +654,16 @@ export default function FinancialManagement() {
             </thead>
             <tbody className="divide-y divide-slate-100">
               {invoices.map(invoice => (
-                <tr key={invoice.id}>
+                <tr key={invoice.id} className={selectedInvoiceIds.has(invoice.id!) ? 'bg-rose-50/40' : ''}>
+                  <td className="px-6 py-4">
+                    <input type="checkbox" checked={selectedInvoiceIds.has(invoice.id!)}
+                      onChange={() => setSelectedInvoiceIds(prev => {
+                        const next = new Set(prev);
+                        if (next.has(invoice.id!)) next.delete(invoice.id!); else next.add(invoice.id!);
+                        return next;
+                      })}
+                      className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500" />
+                  </td>
                   <td className="px-6 py-4">
                     <p className="text-sm font-bold text-slate-900">{invoice.studentName}</p>
                     <p className="text-xs text-slate-500">{invoice.term} {invoice.session}</p>
@@ -546,6 +717,14 @@ export default function FinancialManagement() {
                           <Printer className="w-3 h-3" /> Receipt
                         </button>
                       )}
+                      <button
+                        onClick={() => handleDeleteInvoice(invoice)}
+                        disabled={deletingInvoiceId === invoice.id}
+                        title="Delete invoice"
+                        className="p-1 text-slate-300 hover:text-rose-500 hover:bg-rose-50 rounded-lg transition-all disabled:opacity-50"
+                      >
+                        {deletingInvoiceId === invoice.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+                      </button>
                     </div>
                   </td>
                 </tr>
@@ -634,28 +813,88 @@ export default function FinancialManagement() {
         )}
       </AnimatePresence>
 
+      {activeTab === 'templates' && (
+        <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
+          <div className="px-6 py-4 border-b border-slate-100">
+            <p className="font-bold text-slate-900 text-sm">{feeTemplates.length} saved template(s)</p>
+            <p className="text-xs text-slate-500 mt-0.5">
+              Save a fee setup once (in "Bulk Create"), then click "Generate Invoices" here each term instead of rebuilding the form.
+            </p>
+          </div>
+          {feeTemplates.length === 0 ? (
+            <div className="py-16 text-center text-slate-400">
+              <Repeat className="w-10 h-10 mx-auto mb-3 opacity-40" />
+              No templates yet — check "Save as reusable template" when bulk-creating invoices.
+            </div>
+          ) : (
+            <div className="divide-y divide-slate-100">
+              {feeTemplates.map(t => (
+                <div key={t.id} className="px-6 py-4 flex items-center justify-between gap-4">
+                  <div className="min-w-0">
+                    <p className="font-bold text-slate-900 text-sm">{t.name}</p>
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      {t.description} · {fmt(t.amount)} · {t.target === 'class' ? `Class: ${t.targetClass}` : 'Everyone'} · {t.term}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-3 shrink-0">
+                    <button onClick={() => handleGenerateFromTemplate(t)}
+                      className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 text-white text-xs font-bold rounded-lg hover:bg-indigo-700 transition-colors">
+                      <Repeat className="w-3.5 h-3.5" /> Generate Invoices
+                    </button>
+                    <button onClick={() => handleDeleteTemplate(t.id!)} disabled={deletingTemplateId === t.id}
+                      className="p-1.5 text-slate-300 hover:text-rose-500 hover:bg-rose-50 rounded-lg transition-all disabled:opacity-50">
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
       {activeTab === 'payments' && (
         <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
+          <div className="px-6 py-4 border-b border-slate-100">
+            <p className="text-xs text-slate-500">
+              Only <strong className="text-emerald-600">Confirmed</strong> rows count toward Total Revenue. Pending/Rejected
+              are shown here for the audit trail only — a parent's claim alone is never treated as real income.
+            </p>
+          </div>
           <table className="w-full text-left">
             <thead className="bg-slate-50 border-b border-slate-200">
               <tr>
                 <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase">Date</th>
                 <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase">Amount</th>
                 <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase">Method</th>
+                <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase">Status</th>
                 <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase">Reference</th>
                 <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase">Recorded By</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {payments.map(payment => (
-                <tr key={payment.id}>
-                  <td className="px-6 py-4 text-sm font-medium">{payment.date}</td>
-                  <td className="px-6 py-4 text-sm font-bold text-emerald-600">{fmt(payment.amount)}</td>
-                  <td className="px-6 py-4 text-sm text-slate-500 capitalize">{payment.paymentMethod.replace('_', ' ')}</td>
-                  <td className="px-6 py-4 text-sm text-slate-500">{payment.reference || 'N/A'}</td>
-                  <td className="px-6 py-4 text-sm text-slate-500">{payment.recordedBy}</td>
-                </tr>
-              ))}
+              {payments.map(payment => {
+                const status = payment.status ?? 'confirmed';
+                return (
+                  <tr key={payment.id} className={status === 'rejected' ? 'opacity-60' : ''}>
+                    <td className="px-6 py-4 text-sm font-medium">{payment.date}</td>
+                    <td className={`px-6 py-4 text-sm font-bold ${status === 'confirmed' ? 'text-emerald-600' : status === 'rejected' ? 'text-slate-400 line-through' : 'text-amber-600'}`}>
+                      {fmt(payment.amount)}
+                    </td>
+                    <td className="px-6 py-4 text-sm text-slate-500 capitalize">{payment.paymentMethod.replace('_', ' ')}</td>
+                    <td className="px-6 py-4">
+                      <span className={`px-2 py-1 rounded-full text-[10px] font-bold uppercase ${
+                        status === 'confirmed' ? 'bg-emerald-50 text-emerald-700' :
+                        status === 'rejected' ? 'bg-rose-50 text-rose-700' : 'bg-amber-50 text-amber-700'
+                      }`}>
+                        {status}
+                      </span>
+                    </td>
+                    <td className="px-6 py-4 text-sm text-slate-500">{payment.reference || 'N/A'}</td>
+                    <td className="px-6 py-4 text-sm text-slate-500">{payment.recordedBy}</td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
@@ -730,6 +969,22 @@ export default function FinancialManagement() {
                     <input type="text" value={invoiceForm.session} onChange={e => setInvoiceForm({...invoiceForm, session: e.target.value})} className="w-full px-4 py-2 rounded-xl border border-slate-200 outline-none" />
                   </div>
                 </div>
+                {feeCategories.length > 0 && (
+                  <div className="space-y-2">
+                    <label className="text-xs font-bold text-slate-400 uppercase">Fee Category</label>
+                    <select value={invoiceForm.category ?? ''} onChange={e => {
+                      const cat = feeCategories.find(c => c.id === e.target.value);
+                      setInvoiceForm(prev => ({
+                        ...prev,
+                        category: e.target.value,
+                        ...(cat ? { description: cat.name, ...(cat.defaultAmount != null ? { amount: cat.defaultAmount } : {}) } : {}),
+                      }));
+                    }} className="w-full px-4 py-2 rounded-xl border border-slate-200 outline-none">
+                      <option value="">— No category / custom —</option>
+                      {feeCategories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                    </select>
+                  </div>
+                )}
                 <div className="space-y-2">
                   <label className="text-xs font-bold text-slate-400 uppercase">Description</label>
                   <input type="text" value={invoiceForm.description} onChange={e => setInvoiceForm({...invoiceForm, description: e.target.value})} className="w-full px-4 py-2 rounded-xl border border-slate-200 outline-none" />
@@ -913,14 +1168,14 @@ export default function FinancialManagement() {
         })()}
       </AnimatePresence>
 
-      {/* ── FEE SCHEDULE MODAL ── */}
+      {/* ── BULK CREATE MODAL ── */}
       <AnimatePresence>
         {isScheduleModalOpen && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
               onClick={() => setIsScheduleModalOpen(false)} className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm" />
             <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }}
-              className="relative z-10 bg-white rounded-3xl shadow-2xl w-full max-w-md">
+              className="relative z-10 bg-white rounded-3xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
               <div className="p-7">
                 <div className="flex items-center justify-between mb-6">
                   <div className="flex items-center gap-3">
@@ -928,8 +1183,8 @@ export default function FinancialManagement() {
                       <Layers className="w-5 h-5 text-indigo-600" />
                     </div>
                     <div>
-                      <h2 className="text-lg font-black text-slate-900">Fee Schedule</h2>
-                      <p className="text-xs text-slate-400">Create invoices for an entire class at once</p>
+                      <h2 className="text-lg font-black text-slate-900">Bulk Create Invoices</h2>
+                      <p className="text-xs text-slate-400">A whole class or the whole school, with exceptions</p>
                     </div>
                   </div>
                   <button onClick={() => setIsScheduleModalOpen(false)} className="w-8 h-8 flex items-center justify-center rounded-xl bg-slate-100 hover:bg-slate-200 transition-colors">
@@ -937,6 +1192,49 @@ export default function FinancialManagement() {
                   </button>
                 </div>
                 <form onSubmit={handleCreateFeeSchedule} className="space-y-4">
+                  {/* Target mode */}
+                  <div>
+                    <label className="text-xs font-bold text-slate-500 uppercase tracking-wide block mb-1.5">Target</label>
+                    <div className="flex gap-2">
+                      <button type="button" onClick={() => { setScheduleForm(p => ({ ...p, target: 'class' })); setExcludedStudentIds(new Set()); }}
+                        className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl border text-sm font-bold transition-all ${scheduleForm.target === 'class' ? 'border-indigo-300 bg-indigo-50 text-indigo-700' : 'border-slate-200 text-slate-500 hover:border-slate-300'}`}>
+                        <Layers className="w-4 h-4" /> A Class
+                      </button>
+                      <button type="button" onClick={() => { setScheduleForm(p => ({ ...p, target: 'everyone' })); setExcludedStudentIds(new Set()); }}
+                        className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl border text-sm font-bold transition-all ${scheduleForm.target === 'everyone' ? 'border-indigo-300 bg-indigo-50 text-indigo-700' : 'border-slate-200 text-slate-500 hover:border-slate-300'}`}>
+                        <Users className="w-4 h-4" /> Everyone
+                      </button>
+                    </div>
+                  </div>
+
+                  {scheduleForm.target === 'class' && (
+                    <div>
+                      <label className="text-xs font-bold text-slate-500 uppercase tracking-wide block mb-1.5">Class</label>
+                      <select value={scheduleForm.targetClass}
+                        onChange={e => { setScheduleForm(p => ({ ...p, targetClass: e.target.value })); setExcludedStudentIds(new Set()); }}
+                        required className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm bg-white">
+                        <option value="">Select class…</option>
+                        {classSelectOptions.map(o => <option key={o.key} value={o.value}>{o.label}</option>)}
+                      </select>
+                    </div>
+                  )}
+
+                  {feeCategories.length > 0 && (
+                    <div>
+                      <label className="text-xs font-bold text-slate-500 uppercase tracking-wide block mb-1.5">Fee Category</label>
+                      <select value={scheduleForm.categoryId} onChange={e => {
+                        const cat = feeCategories.find(c => c.id === e.target.value);
+                        setScheduleForm(p => ({
+                          ...p, categoryId: e.target.value,
+                          ...(cat ? { description: cat.name, ...(cat.defaultAmount != null ? { amount: cat.defaultAmount } : {}) } : {}),
+                        }));
+                      }} className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm bg-white">
+                        <option value="">— No category / custom —</option>
+                        {feeCategories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                      </select>
+                    </div>
+                  )}
+
                   <div>
                     <label className="text-xs font-bold text-slate-500 uppercase tracking-wide block mb-1.5">Fee Description</label>
                     <input type="text" value={scheduleForm.description}
@@ -961,15 +1259,6 @@ export default function FinancialManagement() {
                         required className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm" />
                     </div>
                   </div>
-                  <div>
-                    <label className="text-xs font-bold text-slate-500 uppercase tracking-wide block mb-1.5">Target Class</label>
-                    <select value={scheduleForm.targetClass}
-                      onChange={e => setScheduleForm(p => ({ ...p, targetClass: e.target.value }))}
-                      required className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm bg-white">
-                      <option value="">Select class…</option>
-                      {classSelectOptions.map(o => <option key={o.key} value={o.value}>{o.label}</option>)}
-                    </select>
-                  </div>
                   <div className="grid grid-cols-2 gap-4">
                     <div>
                       <label className="text-xs font-bold text-slate-500 uppercase tracking-wide block mb-1.5">Term</label>
@@ -986,21 +1275,71 @@ export default function FinancialManagement() {
                     </div>
                   </div>
 
-                  {scheduleForm.targetClass && (
-                    <div className="p-3 bg-indigo-50 rounded-xl border border-indigo-100 text-sm text-indigo-700 font-medium">
-                      This will create <strong>{students.filter(s => s.currentClass === scheduleForm.targetClass).length}</strong> invoice(s) for all students in <strong>{scheduleForm.targetClass}</strong>.
+                  {/* Roster with per-student exclusion */}
+                  {(scheduleForm.target === 'everyone' || scheduleForm.targetClass) && (
+                    <div>
+                      <div className="flex items-center justify-between mb-1.5">
+                        <label className="text-xs font-bold text-slate-500 uppercase tracking-wide">
+                          Students ({bulkSelectedStudents.length} of {bulkTargetRoster.length} selected)
+                        </label>
+                        {excludedStudentIds.size > 0 && (
+                          <button type="button" onClick={() => setExcludedStudentIds(new Set())} className="text-xs font-bold text-indigo-600 hover:text-indigo-700">
+                            Select all
+                          </button>
+                        )}
+                      </div>
+                      {bulkTargetRoster.length === 0 ? (
+                        <p className="text-sm text-slate-400 py-2">No active students found.</p>
+                      ) : (
+                        <div className="max-h-44 overflow-y-auto border border-slate-200 rounded-xl divide-y divide-slate-100">
+                          {bulkTargetRoster.map(s => {
+                            const excluded = excludedStudentIds.has(s.id!);
+                            return (
+                              <label key={s.id} className="flex items-center gap-2.5 px-3 py-2 text-sm cursor-pointer hover:bg-slate-50">
+                                <input type="checkbox" checked={!excluded}
+                                  onChange={() => setExcludedStudentIds(prev => {
+                                    const next = new Set(prev);
+                                    if (excluded) next.delete(s.id!); else next.add(s.id!);
+                                    return next;
+                                  })}
+                                  className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500" />
+                                <span className={excluded ? 'text-slate-400 line-through' : 'text-slate-700'}>{s.studentName}</span>
+                                {scheduleForm.target === 'everyone' && <span className="text-xs text-slate-400 ml-auto">{s.currentClass}</span>}
+                              </label>
+                            );
+                          })}
+                        </div>
+                      )}
                     </div>
                   )}
+
+                  {/* Save as template */}
+                  <div className="p-3 bg-slate-50 rounded-xl border border-slate-200">
+                    <label className="flex items-center gap-2.5 cursor-pointer">
+                      <input type="checkbox" checked={scheduleForm.saveAsTemplate}
+                        onChange={e => setScheduleForm(p => ({ ...p, saveAsTemplate: e.target.checked }))}
+                        className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500" />
+                      <span className="text-sm font-medium text-slate-700 flex items-center gap-2">
+                        <Repeat className="w-4 h-4 text-indigo-500" /> Save as reusable template
+                      </span>
+                    </label>
+                    {scheduleForm.saveAsTemplate && (
+                      <input type="text" value={scheduleForm.templateName}
+                        onChange={e => setScheduleForm(p => ({ ...p, templateName: e.target.value }))}
+                        placeholder="e.g. 3rd Term Tuition — Year 4" required={scheduleForm.saveAsTemplate}
+                        className="w-full mt-3 px-4 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm" />
+                    )}
+                  </div>
 
                   <div className="flex gap-3 pt-2">
                     <button type="button" onClick={() => setIsScheduleModalOpen(false)}
                       className="flex-1 py-2.5 bg-slate-100 text-slate-600 font-bold rounded-xl text-sm hover:bg-slate-200 transition-all">
                       Cancel
                     </button>
-                    <button type="submit" disabled={creatingSchedule}
+                    <button type="submit" disabled={creatingSchedule || bulkSelectedStudents.length === 0}
                       className="flex-1 py-2.5 bg-indigo-600 text-white font-bold rounded-xl text-sm hover:bg-indigo-700 transition-all flex items-center justify-center gap-2 disabled:opacity-60">
                       {creatingSchedule ? <Loader2 className="w-4 h-4 animate-spin" /> : <Layers className="w-4 h-4" />}
-                      Create All Invoices
+                      Create {bulkSelectedStudents.length || ''} Invoice{bulkSelectedStudents.length === 1 ? '' : 's'}
                     </button>
                   </div>
                 </form>

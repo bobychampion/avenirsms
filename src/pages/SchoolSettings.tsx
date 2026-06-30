@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { db } from '../firebase';
+import { db, handleFirestoreError, OperationType } from '../firebase';
 import { doc, getDoc, setDoc, updateDoc, serverTimestamp, collection, getDocs, writeBatch, onSnapshot, addDoc, deleteDoc, query, where } from 'firebase/firestore';
 import { motion } from 'motion/react';
 import toast from 'react-hot-toast';
@@ -11,7 +11,7 @@ import {
   Upload, Eye, EyeOff, Users, Bell, ShieldCheck, FileText, ClipboardCheck,
   MapPin, Navigation, CheckCircle2, XCircle, RefreshCw, Brain,
   Palette, Link as LinkIcon, Monitor, ExternalLink, Brush, Clock,
-  CreditCard, Landmark, Banknote,
+  CreditCard, Landmark, Banknote, Tag,
 } from 'lucide-react';
 import TimetablePeriodEditor from '../components/TimetablePeriodEditor';
 import {
@@ -22,7 +22,7 @@ import {
 } from '../utils/timetablePeriods';
 import { GeoFence } from '../types';
 import { haversineDistance } from '../services/geofenceService';
-import { SCHOOL_CLASSES, SUBJECTS, TERMS, GradingSystem, CustomGradeScale, LevelGradingOverride, GRADING_SYSTEM_OPTIONS, SubjectDefinition, UserProfile } from '../types';
+import { SCHOOL_CLASSES, SUBJECTS, TERMS, GradingSystem, CustomGradeScale, LevelGradingOverride, GRADING_SYSTEM_OPTIONS, SubjectDefinition, UserProfile, FeeCategory } from '../types';
 import { useUnsavedChanges } from '../hooks/useUnsavedChanges';
 import UnsavedChangesDialog from '../components/UnsavedChangesDialog';
 import StorageSettingsPanel from '../components/StorageSettingsPanel';
@@ -838,6 +838,11 @@ export default function SchoolSettingsPage() {
   const [savingSubject, setSavingSubject] = useState(false);
   const [subjectLevelFilter, setSubjectLevelFilter] = useState<'All' | 'Primary' | 'Secondary'>('All');
 
+  // Fee Categories state
+  const [feeCategories, setFeeCategories] = useState<FeeCategory[]>([]);
+  const [feeCategoryForm, setFeeCategoryForm] = useState({ name: '', defaultAmount: '' });
+  const [savingFeeCategory, setSavingFeeCategory] = useState(false);
+
   // Geo-fence state
   const [geofence, setGeofence] = useState<GeoFence | null>(null);
   const [geofenceForm, setGeofenceForm] = useState({ lat: '', lng: '', radius: '200' });
@@ -891,6 +896,11 @@ export default function SchoolSettingsPage() {
     const unsubClasses = onSnapshot(query(collection(db, 'classes'), where('schoolId', '==', schoolId!)), snap => {
       if (!snap.empty) setSubjectClassNames(snap.docs.map(d => (d.data() as any).name as string));
     });
+    const unsubFeeCategories = onSnapshot(
+      query(collection(db, 'fee_categories'), where('schoolId', '==', schoolId!)),
+      snap => setFeeCategories(snap.docs.map(d => ({ id: d.id, ...d.data() } as FeeCategory))),
+      (error) => handleFirestoreError(error, OperationType.LIST, 'fee_categories')
+    );
     // Load geo-fence
     const unsubFence = onSnapshot(doc(db, 'geofences', schoolId ?? 'main'), snap => {
       if (snap.exists()) {
@@ -903,7 +913,7 @@ export default function SchoolSettingsPage() {
         });
       }
     });
-    return () => { unsubSubjects(); unsubTeachers(); unsubClasses(); unsubFence(); };
+    return () => { unsubSubjects(); unsubTeachers(); unsubClasses(); unsubFence(); unsubFeeCategories(); };
   }, [schoolId]);
 
   const handleDetectLocation = () => {
@@ -1077,6 +1087,31 @@ export default function SchoolSettingsPage() {
     if (!window.confirm('Delete this subject?')) return;
     await deleteDoc(doc(db, 'subjects', id)).catch(e => toast.error(e.message));
     toast.success('Subject deleted');
+  };
+
+  const handleSaveFeeCategory = async () => {
+    if (!feeCategoryForm.name.trim()) { toast.error('Category name is required'); return; }
+    setSavingFeeCategory(true);
+    try {
+      await addDoc(collection(db, 'fee_categories'), {
+        schoolId: schoolId ?? 'main',
+        name: feeCategoryForm.name.trim(),
+        ...(feeCategoryForm.defaultAmount ? { defaultAmount: Number(feeCategoryForm.defaultAmount) } : {}),
+        createdAt: serverTimestamp(),
+      });
+      setFeeCategoryForm({ name: '', defaultAmount: '' });
+      toast.success('Fee category added!');
+    } catch (e: any) {
+      toast.error('Failed to add category: ' + (e.message || 'Unknown'));
+    } finally {
+      setSavingFeeCategory(false);
+    }
+  };
+
+  const handleDeleteFeeCategory = async (id: string) => {
+    if (!window.confirm('Delete this fee category? Existing invoices using it are unaffected.')) return;
+    await deleteDoc(doc(db, 'fee_categories', id)).catch(e => toast.error(e.message));
+    toast.success('Fee category deleted');
   };
 
   if (loading) return (
@@ -1999,6 +2034,53 @@ export default function SchoolSettingsPage() {
                   From your own Paystack dashboard (Settings → API Keys & Webhooks). This is the
                   public key only — never paste your secret key anywhere in this app.
                 </p>
+              </div>
+            )}
+          </section>
+
+          {/* Fee Categories */}
+          <section className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
+            <h2 className="font-bold text-slate-800 text-sm flex items-center gap-2 mb-1">
+              <Tag className="w-4 h-4 text-indigo-600" /> Fee Categories
+            </h2>
+            <p className="text-xs text-slate-500 mb-5">
+              Define the types of fees your school charges (e.g. Tuition, Transport, Exam Fee). Admins pick
+              one when creating an invoice — an optional default amount auto-fills the form but stays editable.
+            </p>
+
+            <div className="flex flex-col sm:flex-row gap-2 mb-5">
+              <input value={feeCategoryForm.name}
+                onChange={e => setFeeCategoryForm(f => ({ ...f, name: e.target.value }))}
+                placeholder="e.g. Tuition"
+                className="flex-1 px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm" />
+              <input value={feeCategoryForm.defaultAmount} type="number" min={0}
+                onChange={e => setFeeCategoryForm(f => ({ ...f, defaultAmount: e.target.value }))}
+                placeholder="Default amount (optional)"
+                className="sm:w-48 px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm" />
+              <button onClick={handleSaveFeeCategory} disabled={savingFeeCategory || !feeCategoryForm.name.trim()}
+                className="flex items-center justify-center gap-2 px-4 py-2.5 bg-indigo-600 text-white font-bold rounded-xl hover:bg-indigo-700 transition-all text-sm disabled:opacity-50 shrink-0">
+                <Plus className="w-4 h-4" /> Add
+              </button>
+            </div>
+
+            {feeCategories.length === 0 ? (
+              <p className="text-slate-400 text-sm text-center py-6">No fee categories yet — add one above.</p>
+            ) : (
+              <div className="space-y-2">
+                {feeCategories.map(c => (
+                  <div key={c.id} className="flex items-center justify-between p-3 bg-slate-50 rounded-xl border border-slate-200">
+                    <div>
+                      <span className="font-bold text-slate-800 text-sm">{c.name}</span>
+                      {c.defaultAmount != null && (
+                        <span className="ml-2 text-xs text-slate-500">default: {c.defaultAmount.toLocaleString()}</span>
+                      )}
+                    </div>
+                    <button onClick={() => handleDeleteFeeCategory(c.id!)}
+                      className="p-1.5 hover:bg-rose-100 rounded-lg transition-colors">
+                      <Trash2 className="w-3.5 h-3.5 text-rose-500" />
+                    </button>
+                  </div>
+                ))}
               </div>
             )}
           </section>

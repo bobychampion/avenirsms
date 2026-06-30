@@ -399,6 +399,41 @@ export interface Invoice {
   paidAt?: any;
   /** Paystack transaction reference, set when paid via card. */
   paystackReference?: string;
+  /** Always written in practice; declared here so it's no longer just an undocumented runtime field. */
+  schoolId?: string;
+  /** References FeeCategory.id. Optional for backward compatibility with invoices created before categories existed. */
+  category?: string;
+  /** Set when this invoice was bulk-created from a FeeTemplate. */
+  templateId?: string;
+}
+
+/** Admin-configurable per-school fee type, e.g. "Tuition", "Transport", "PTA Levy". */
+export interface FeeCategory {
+  id?: string;
+  schoolId: string;
+  name: string;
+  defaultAmount?: number;
+  createdAt: any;
+}
+
+/**
+ * Reusable invoice blueprint — since there's no Cloud Function/cron to
+ * auto-generate fees on a schedule (Spark plan), a template instead lets an
+ * admin re-run the same bulk-create with one click each term, rather than
+ * rebuilding the form from scratch.
+ */
+export interface FeeTemplate {
+  id?: string;
+  schoolId: string;
+  name: string;
+  categoryId?: string;
+  description: string;
+  amount: number;
+  target: 'class' | 'everyone';
+  targetClass?: string;
+  term: Invoice['term'];
+  createdAt: any;
+  lastGeneratedAt?: any;
 }
 
 export interface FeePayment {

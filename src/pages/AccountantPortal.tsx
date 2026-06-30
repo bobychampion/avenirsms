@@ -5,7 +5,7 @@
 import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { collection, query, where, onSnapshot } from 'firebase/firestore';
-import { db } from '../firebase';
+import { db, handleFirestoreError, OperationType } from '../firebase';
 import { useSchool } from '../components/SchoolContext';
 import { formatCurrency } from '../utils/formatCurrency';
 import { DollarSign, Receipt, FileText, ArrowRight, TrendingUp, AlertCircle } from 'lucide-react';
@@ -29,7 +29,7 @@ export default function AccountantPortal() {
         }, 0);
         setStats(s => ({ ...s, outstanding }));
       },
-      () => {},
+      (error) => handleFirestoreError(error, OperationType.LIST, 'invoices'),
     );
 
     const payUnsub = onSnapshot(
@@ -42,7 +42,7 @@ export default function AccountantPortal() {
         }, 0);
         setStats(s => ({ ...s, paidThisMonth: paid }));
       },
-      () => {},
+      (error) => handleFirestoreError(error, OperationType.LIST, 'fee_payments'),
     );
 
     const expUnsub = onSnapshot(
@@ -55,7 +55,7 @@ export default function AccountantPortal() {
         }, 0);
         setStats(s => ({ ...s, expensesThisMonth: exp }));
       },
-      () => {},
+      (error) => handleFirestoreError(error, OperationType.LIST, 'expenses'),
     );
 
     return () => { invUnsub(); payUnsub(); expUnsub(); };

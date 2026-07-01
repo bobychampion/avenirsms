@@ -14,6 +14,7 @@ import { useAuth } from './FirebaseProvider';
 import { useSchool } from './SchoolContext';
 import { useEffectiveProfile } from '../hooks/useEffectiveProfile';
 import { ImpersonationBanner } from './ImpersonationBanner';
+import DemoBanner from './DemoBanner';
 import NotificationBell from './NotificationBell';
 import {
   DollarSign, Receipt, FileText, BarChart3,
@@ -144,6 +145,7 @@ export function StaffLayout({ role, children }: { role: StaffRole; children: Rea
 
       <div className="flex-1 flex flex-col min-w-0">
         <ImpersonationBanner />
+        <DemoBanner />
         {/* Mobile header */}
         <header className="lg:hidden sticky top-0 z-30 bg-white border-b border-slate-200 px-4 py-3 flex items-center justify-between">
           <button onClick={() => setMobileOpen(true)} className="p-2 -ml-2 rounded-lg hover:bg-slate-100">

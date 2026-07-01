@@ -864,11 +864,17 @@ export interface GeoFence {
 }
 
 /**
- * A teacher GPS check-in or check-out event.
- * Stored in Firestore: attendance_checkins/{uid}_{date}_{type}
+ * A staff GPS check-in or check-out event.
+ * Stored in Firestore: attendance_checkins (auto-ID, multiple events per day allowed).
+ * Legacy teacher-only records used {uid}_{date}_{type} IDs — still readable.
  */
 export interface TeacherCheckIn {
   id?: string;
+  // Generalised fields (all staff)
+  staffId: string;        // uid of any staff member
+  staffName: string;      // display name
+  staffRole: string;      // 'teacher' | 'admin' | 'hr' | 'accountant' | 'librarian' | …
+  // Legacy fields kept for backward compat with existing teacher records
   teacherId: string;
   teacherName: string;
   type: 'check_in' | 'check_out';
@@ -879,8 +885,10 @@ export interface TeacherCheckIn {
   accuracy: number;       // GPS accuracy in metres
   withinFence: boolean;   // Was the GPS position inside the school geo-fence?
   spoofDetected?: boolean;
+  autoDetected?: boolean; // true when fired by watchPosition crossing, false = manual button
   manualOverride?: boolean;
   overrideReason?: string;
+  schoolId: string;
 }
 
 export function formatDate(dateStr: string): string {

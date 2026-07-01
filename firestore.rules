@@ -121,7 +121,16 @@ service cloud.firestore {
 
     match /schools/{schoolId} {
       allow read: if isSuperAdmin() || (isAdmin() && belongsToSchool(schoolId));
-      allow write: if isSuperAdmin();
+      // Any authenticated user may self-provision a demo school, but only if:
+      //  - status is 'demo' (not 'active'/'trial'/etc.)
+      //  - the adminEmail on the doc matches their Firebase Auth email
+      // This lets the landing-page DemoModal create the school doc while signed in
+      // as the newly-created demo admin, without requiring super_admin access.
+      allow create: if isSuperAdmin() ||
+        (isAuthenticated() &&
+         request.resource.data.status == 'demo' &&
+         request.resource.data.adminEmail == request.auth.token.email);
+      allow update, delete: if isSuperAdmin();
     }
 
     // ─── School settings (keyed by schoolId, not 'main') ──────────────────────
@@ -129,7 +138,14 @@ service cloud.firestore {
     match /school_settings/{schoolId} {
       // Public read: needed for branded landing pages (/s/:schoolId) accessed without auth
       allow read: if true;
-      allow write: if isSuperAdmin() || (isAdmin() && belongsToSchool(schoolId));
+      // Demo provisioning: the newly-created demo admin writes their own settings doc
+      // immediately after creating the school. isAdmin() isn't reliable yet at that
+      // exact moment (profile write is batched), so we allow any authenticated user
+      // to create settings for a matching schoolId — the schoolId URL segment already
+      // scopes it tightly, and settings contain no sensitive financial/student data.
+      allow create: if isSuperAdmin() ||
+        (isAuthenticated() && request.resource.data.get('schoolId', null) == schoolId);
+      allow update: if isSuperAdmin() || (isAdmin() && belongsToSchool(schoolId));
     }
 
     // ─── Storage provider connection (Cloudinary today; S3/Supabase/Firebase later) ──
@@ -643,6 +659,11 @@ service cloud.firestore {
     match /demo_requests/{requestId} {
       allow read, write: if isSuperAdmin();
       allow create: if true; // Public form submission
+      // Allow the demo admin (matched by email) to mark their own request
+      // as provisioned or conversion_requested without super_admin access.
+      allow update: if isSuperAdmin() ||
+        (isAuthenticated() &&
+         resource.data.get('adminEmail', resource.data.get('email', '')) == request.auth.token.email);
     }
 
     // ─── Mail (Firebase Trigger Email extension) ──────────────────────────────

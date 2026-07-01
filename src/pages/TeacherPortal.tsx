@@ -4,7 +4,7 @@ import { db, handleFirestoreError, OperationType } from '../firebase';
 import { useAuth } from '../components/FirebaseProvider';
 import {
   collection, query, onSnapshot, where, addDoc, serverTimestamp,
-  orderBy, updateDoc, doc, deleteDoc, getDocs, writeBatch, setDoc, getDoc,
+  orderBy, updateDoc, doc, deleteDoc, getDocs, writeBatch, getDoc,
 } from 'firebase/firestore';
 import { Student, Assignment, AssignmentSubmission, Message, SUBJECTS, TERMS, Grade, calculateGrade, StudentSkills, SKILL_LABELS, SkillRating, StudentSkillRecord, Timetable, DAYS_OF_WEEK, GeoFence, TeacherCheckIn, CurriculumDocument, ClassSubject, SchoolClass } from '../types';
 import { getCurrentPosition, isWithinFence, isAccuracyAcceptable, isSpoofedVelocity } from '../services/geofenceService';
@@ -135,25 +135,22 @@ export default function TeacherPortal() {
   const [skills, setSkills] = useState<Record<string, StudentSkills>>({});
   const [savingSkills, setSavingSkills] = useState(false);
 
-  // GPS check-in state
+  // GPS check-in state — multi-event per day
   const [geofence, setGeofence] = useState<GeoFence | null>(null);
-  const [todayCheckIn, setTodayCheckIn] = useState<TeacherCheckIn | null>(null);
-  const [todayCheckOut, setTodayCheckOut] = useState<TeacherCheckIn | null>(null);
+  const [todayEvents, setTodayEvents] = useState<TeacherCheckIn[]>([]);
   const [checkInLoading, setCheckInLoading] = useState(false);
   const [autoTracking, setAutoTracking] = useState(false);
   const [currentlyInFence, setCurrentlyInFence] = useState<boolean | null>(null);
 
   // Refs so watchPosition callback always sees latest state
   const geofenceRef     = useRef<GeoFence | null>(null);
-  const checkInRef      = useRef<TeacherCheckIn | null>(null);
-  const checkOutRef     = useRef<TeacherCheckIn | null>(null);
+  const lastEventRef    = useRef<TeacherCheckIn | null>(null); // last event of today
   const prevInsideRef   = useRef<boolean | null>(null);
   const watchIdRef      = useRef<number | null>(null);
   const processingRef   = useRef(false); // prevent double-fire
 
-  useEffect(() => { geofenceRef.current  = geofence;      }, [geofence]);
-  useEffect(() => { checkInRef.current   = todayCheckIn;  }, [todayCheckIn]);
-  useEffect(() => { checkOutRef.current  = todayCheckOut; }, [todayCheckOut]);
+  useEffect(() => { geofenceRef.current = geofence; }, [geofence]);
+  useEffect(() => { lastEventRef.current = todayEvents[todayEvents.length - 1] ?? null; }, [todayEvents]);
 
   // ── Load teacher's assigned classes from Firestore ───────────────────────────
   // A teacher is assigned to a class if:
@@ -332,20 +329,19 @@ export default function TeacherPortal() {
       setGeofence(snap.exists() ? ({ id: snap.id, ...snap.data() } as GeoFence) : null);
     });
 
-    // Subscribe to today's check-in / check-out events for this teacher
+    // Subscribe to today's check-in / check-out events for this staff member
     const today = new Date().toISOString().split('T')[0];
     const qCheckins = query(
       collection(db, 'attendance_checkins'),
       where('schoolId', '==', schoolId!),
-      where('teacherId', '==', user.uid),
+      where('staffId', '==', user.uid),
       where('date', '==', today),
     );
     const unsubCheckins = onSnapshot(qCheckins, snap => {
-      snap.docs.forEach(d => {
-        const ev = { id: d.id, ...d.data() } as TeacherCheckIn;
-        if (ev.type === 'check_in') setTodayCheckIn(ev);
-        if (ev.type === 'check_out') setTodayCheckOut(ev);
-      });
+      const events = snap.docs
+        .map(d => ({ id: d.id, ...d.data() } as TeacherCheckIn))
+        .sort((a, b) => (a.timestamp?.toMillis?.() ?? 0) - (b.timestamp?.toMillis?.() ?? 0));
+      setTodayEvents(events);
     });
 
     return () => {
@@ -396,8 +392,10 @@ export default function TeacherPortal() {
       processingRef.current = true;
       try {
         const today = new Date().toISOString().split('T')[0];
-        const docId = `${user.uid}_${today}_${type}`;
-        await setDoc(doc(db, 'attendance_checkins', docId), {
+        await addDoc(collection(db, 'attendance_checkins'), {
+          staffId: user.uid,
+          staffName: profile.displayName,
+          staffRole: 'teacher',
           teacherId: user.uid,
           teacherName: profile.displayName,
           type,
@@ -405,11 +403,11 @@ export default function TeacherPortal() {
           timestamp: serverTimestamp(),
           lat, lng,
           accuracy: Math.round(accuracy),
-          withinFence: type === 'check_in', // check_in only fires inside fence
+          withinFence: type === 'check_in',
           spoofDetected: false,
           autoDetected: true,
           schoolId: schoolId ?? 'main',
-        });
+        } satisfies Omit<TeacherCheckIn, 'id'>);
 
         // Browser notification so teacher knows it fired
         if ('Notification' in window && Notification.permission === 'granted') {
@@ -445,12 +443,14 @@ export default function TeacherPortal() {
           setCurrentlyInFence(inside);
 
           // ── Crossed IN → auto check-in ──────────────────────────────────────
-          if (inside && prev === false && !checkInRef.current) {
+          // Fire if last recorded event was a check_out (or no events yet today)
+          if (inside && prev === false && lastEventRef.current?.type !== 'check_in') {
             void recordAutoEvent('check_in', lat, lng, accuracy, pos.timestamp);
           }
 
           // ── Crossed OUT → auto check-out ────────────────────────────────────
-          if (!inside && prev === true && checkInRef.current && !checkOutRef.current) {
+          // Fire only if currently checked in (last event is a check_in)
+          if (!inside && prev === true && lastEventRef.current?.type === 'check_in') {
             void recordAutoEvent('check_out', lat, lng, accuracy, pos.timestamp);
           }
 
@@ -469,16 +469,11 @@ export default function TeacherPortal() {
       setAutoTracking(false);
     };
 
-    // Start watching if work is not done for today
-    if (!todayCheckIn || !todayCheckOut) {
-      startWatch();
-    } else {
-      stopWatch();
-    }
-
+    // Always watch while portal is open — multi-event day requires continuous tracking
+    startWatch();
     return stopWatch;
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user?.uid, profile?.displayName, todayCheckIn?.id, todayCheckOut?.id]);
+  }, [user?.uid, profile?.displayName]);
 
   // Load existing attendance when class or date changes (in attendance tab)
   useEffect(() => {
@@ -846,13 +841,10 @@ export default function TeacherPortal() {
       }
 
       // ── 3. Velocity / spoof check ───────────────────────────────────────────
-      // Compare against today's previous check-in to detect impossible movement.
-      const previous = todayCheckIn
-        ? {
-            lat: todayCheckIn.lat,
-            lng: todayCheckIn.lng,
-            timestamp: todayCheckIn.timestamp?.toMillis?.() ?? Date.now(),
-          }
+      // Compare against the most recent event of the day to detect impossible movement.
+      const lastEv = todayEvents[todayEvents.length - 1] ?? null;
+      const previous = lastEv
+        ? { lat: lastEv.lat, lng: lastEv.lng, timestamp: lastEv.timestamp?.toMillis?.() ?? Date.now() }
         : null;
 
       const spoofed = isSpoofedVelocity(
@@ -861,9 +853,11 @@ export default function TeacherPortal() {
       );
 
       const today = new Date().toISOString().split('T')[0];
-      const docId = `${user.uid}_${today}_${type}`;
 
-      await setDoc(doc(db, 'attendance_checkins', docId), {
+      await addDoc(collection(db, 'attendance_checkins'), {
+        staffId: user.uid,
+        staffName: profile.displayName,
+        staffRole: 'teacher',
         teacherId: user.uid,
         teacherName: profile.displayName,
         type,
@@ -872,8 +866,9 @@ export default function TeacherPortal() {
         lat: gps.lat,
         lng: gps.lng,
         accuracy: Math.round(gps.accuracy),
-        withinFence: true,   // only reachable for check_in if within fence (check_out skips fence check)
+        withinFence: type === 'check_in',
         spoofDetected: spoofed,
+        autoDetected: false,
         schoolId: schoolId ?? 'main',
       } satisfies Omit<TeacherCheckIn, 'id'>);
 
@@ -971,8 +966,7 @@ export default function TeacherPortal() {
       {/* Clock-In Hero (restyle of GPS widget — logic untouched, see handleGpsEvent/watchPosition above) */}
       <ClockInHero
         geofence={geofence}
-        todayCheckIn={todayCheckIn}
-        todayCheckOut={todayCheckOut}
+        todayEvents={todayEvents}
         currentlyInFence={currentlyInFence}
         autoTracking={autoTracking}
         checkInLoading={checkInLoading}

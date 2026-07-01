@@ -18,13 +18,24 @@ import {
 interface DemoRequest {
   id: string;
   schoolName: string;
-  contactName: string;
+  adminName?: string;
+  contactName?: string;
   email: string;
+  adminEmail?: string;
   phone: string;
+  phone2?: string;
+  reportEmail?: string;
   studentCount?: string;
   plan?: string;
   message?: string;
-  status: 'pending' | 'contacted' | 'converted' | 'dismissed';
+  status: 'pending' | 'provisioned' | 'contacted' | 'conversion_requested' | 'converted' | 'dismissed';
+  schoolId?: string;
+  adminUid?: string;
+  provisionedAt?: any;
+  conversionRequestedAt?: any;
+  finalSchoolName?: string;
+  urlSlug?: string;
+  review?: string;
   createdAt: any;
 }
 
@@ -33,22 +44,25 @@ interface PlatformStats {
   activeSchools: number;
   suspendedSchools: number;
   trialSchools: number;
+  demoSchools: number;
   totalStudents: number;
   loading: boolean;
 }
 
 const DEMO_STATUS_CONFIG: Record<DemoRequest['status'], { label: string; color: string }> = {
-  pending:   { label: 'Pending',   color: 'bg-amber-100 text-amber-700' },
-  contacted: { label: 'Contacted', color: 'bg-blue-100 text-blue-700' },
-  converted: { label: 'Converted', color: 'bg-emerald-100 text-emerald-700' },
-  dismissed: { label: 'Dismissed', color: 'bg-slate-100 text-slate-500' },
+  pending:               { label: 'Pending',              color: 'bg-amber-100 text-amber-700' },
+  provisioned:           { label: 'Demo Active',          color: 'bg-indigo-100 text-indigo-700' },
+  contacted:             { label: 'Contacted',            color: 'bg-blue-100 text-blue-700' },
+  conversion_requested:  { label: 'Wants to Convert →',   color: 'bg-violet-100 text-violet-700' },
+  converted:             { label: 'Converted',            color: 'bg-emerald-100 text-emerald-700' },
+  dismissed:             { label: 'Dismissed',            color: 'bg-slate-100 text-slate-500' },
 };
 
 export default function SuperAdminDashboard() {
   const [schools, setSchools] = useState<School[]>([]);
   const [stats, setStats] = useState<PlatformStats>({
     totalSchools: 0, activeSchools: 0, suspendedSchools: 0,
-    trialSchools: 0, totalStudents: 0, loading: true,
+    trialSchools: 0, demoSchools: 0, totalStudents: 0, loading: true,
   });
   const [demoRequests, setDemoRequests] = useState<DemoRequest[]>([]);
   const [demoLoading, setDemoLoading] = useState(true);
@@ -68,6 +82,7 @@ export default function SuperAdminDashboard() {
           activeSchools: schoolList.filter(s => s.status === 'active').length,
           suspendedSchools: schoolList.filter(s => s.status === 'suspended').length,
           trialSchools: schoolList.filter(s => s.status === 'trial').length,
+          demoSchools: schoolList.filter(s => s.status === 'demo').length,
           totalStudents: activeStudentCount,
           loading: false,
         });
@@ -97,16 +112,29 @@ export default function SuperAdminDashboard() {
     }
   };
 
-  const pendingCount = demoRequests.filter(r => r.status === 'pending').length;
+  const pendingCount = demoRequests.filter(r => r.status === 'pending' || r.status === 'conversion_requested').length;
 
   const filteredDemos = demoFilter === 'all'
     ? demoRequests
     : demoRequests.filter(r => r.status === demoFilter);
 
+  const activateDemoSchool = async (req: DemoRequest) => {
+    if (!req.schoolId) return;
+    setUpdatingId(req.id);
+    try {
+      await updateDoc(doc(db, 'schools', req.schoolId), { status: 'active', subscriptionExpiresAt: null });
+      await updateDoc(doc(db, 'demo_requests', req.id), { status: 'converted' });
+      setDemoRequests(prev => prev.map(r => r.id === req.id ? { ...r, status: 'converted' } : r));
+    } finally {
+      setUpdatingId(null);
+    }
+  };
+
   const kpiCards = [
     { label: 'Total Schools',   value: stats.totalSchools,   icon: Building2,    color: 'bg-indigo-600', sub: `${stats.activeSchools} active` },
     { label: 'Active Schools',  value: stats.activeSchools,  icon: CheckCircle2, color: 'bg-emerald-600', sub: `${stats.suspendedSchools} suspended` },
     { label: 'Trial Schools',   value: stats.trialSchools,   icon: Clock,        color: 'bg-amber-500',  sub: 'Pending conversion' },
+    { label: 'Demo Schools',    value: stats.demoSchools,    icon: Zap,          color: 'bg-violet-500', sub: '7-day auto-provisioned' },
     { label: 'Total Students',  value: stats.totalStudents,  icon: Users,        color: 'bg-purple-600', sub: 'Across all schools' },
   ];
 
@@ -194,13 +222,13 @@ export default function SuperAdminDashboard() {
             )}
           </div>
           {/* Filter tabs */}
-          <div className="flex gap-1">
-            {(['all', 'pending', 'contacted', 'converted', 'dismissed'] as const).map(f => (
+          <div className="flex flex-wrap gap-1">
+            {(['all', 'pending', 'provisioned', 'conversion_requested', 'contacted', 'converted', 'dismissed'] as const).map(f => (
               <button key={f} onClick={() => setDemoFilter(f)}
-                className={`px-3 py-1 rounded-lg text-xs font-semibold transition-colors capitalize ${
+                className={`px-3 py-1 rounded-lg text-xs font-semibold transition-colors ${
                   demoFilter === f ? 'bg-indigo-600 text-white' : 'text-slate-500 hover:bg-slate-100'
                 }`}
-              >{f}</button>
+              >{DEMO_STATUS_CONFIG[f as DemoRequest['status']]?.label ?? 'All'}</button>
             ))}
           </div>
         </div>
@@ -228,16 +256,31 @@ export default function SuperAdminDashboard() {
                       )}
                     </div>
                     <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-500 mt-1">
-                      <span className="flex items-center gap-1"><Users className="w-3 h-3" />{req.contactName}</span>
-                      <a href={`mailto:${req.email}`} className="flex items-center gap-1 hover:text-indigo-600 transition-colors">
-                        <Mail className="w-3 h-3" />{req.email}
+                      <span className="flex items-center gap-1"><Users className="w-3 h-3" />{req.adminName || req.contactName}</span>
+                      <a href={`mailto:${req.adminEmail || req.email}`} className="flex items-center gap-1 hover:text-indigo-600 transition-colors">
+                        <Mail className="w-3 h-3" />{req.adminEmail || req.email}
                       </a>
                       <a href={`tel:${req.phone}`} className="flex items-center gap-1 hover:text-indigo-600 transition-colors">
                         <Phone className="w-3 h-3" />{req.phone}
                       </a>
-                      {req.studentCount && <span className="flex items-center gap-1"><BookOpen className="w-3 h-3" />{req.studentCount} students</span>}
+                      {req.phone2 && <span className="flex items-center gap-1"><Phone className="w-3 h-3" />{req.phone2}</span>}
+                      {req.reportEmail && <span className="flex items-center gap-1"><Mail className="w-3 h-3" />{req.reportEmail} (reports)</span>}
+                      {req.plan && <span className="flex items-center gap-1"><BookOpen className="w-3 h-3" />{req.plan}</span>}
                       <span className="text-slate-400">{formatDate(req.createdAt)}</span>
                     </div>
+                    {req.status === 'provisioned' && req.schoolId && (
+                      <p className="mt-1.5 text-xs text-indigo-600 font-medium">
+                        Demo active · School ID: {req.schoolId.slice(0, 10)}…
+                      </p>
+                    )}
+                    {req.status === 'conversion_requested' && (
+                      <div className="mt-2 p-2 bg-violet-50 rounded-lg border border-violet-100 text-xs space-y-0.5">
+                        <p className="font-bold text-violet-800">Wants to convert:</p>
+                        {req.finalSchoolName && <p className="text-violet-700">School name: {req.finalSchoolName}</p>}
+                        {req.urlSlug && <p className="text-violet-700">Slug: /{req.urlSlug}</p>}
+                        {req.review && <p className="text-violet-700 italic">Review: "{req.review}"</p>}
+                      </div>
+                    )}
                     {req.message && (
                       <p className="mt-1.5 text-xs text-slate-500 italic line-clamp-2">"{req.message}"</p>
                     )}
@@ -248,6 +291,12 @@ export default function SuperAdminDashboard() {
                       <button onClick={() => updateDemoStatus(req.id, 'contacted')} disabled={updatingId === req.id}
                         className="px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold transition-colors disabled:opacity-50">
                         Mark Contacted
+                      </button>
+                    )}
+                    {(req.status === 'conversion_requested' || req.status === 'provisioned') && req.schoolId && (
+                      <button onClick={() => activateDemoSchool(req)} disabled={updatingId === req.id}
+                        className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition-colors disabled:opacity-50">
+                        ✓ Activate School
                       </button>
                     )}
                     {req.status === 'contacted' && (
@@ -262,12 +311,6 @@ export default function SuperAdminDashboard() {
                         className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors disabled:opacity-50">
                         <X className="w-3.5 h-3.5" />
                       </button>
-                    )}
-                    {req.status === 'converted' && (
-                      <Link to="/super-admin/schools/new"
-                        className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold transition-colors">
-                        Onboard →
-                      </Link>
                     )}
                   </div>
                 </div>

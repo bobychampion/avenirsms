@@ -59,9 +59,11 @@ import RolesPermissions from './pages/RolesPermissions';
 import ParentList from './pages/ParentList';
 import SchoolDataReset from './pages/SchoolDataReset';
 import DataPortability from './pages/DataPortability';
+import DemoConvertPage from './pages/DemoConvertPage';
 import HrLeave from './pages/hr/HrLeave';
 import HrOnboarding from './pages/hr/HrOnboarding';
 import HrPolicies from './pages/hr/HrPolicies';
+import HrStaffAttendance from './pages/hr/HrStaffAttendance';
 import LibraryCatalog from './pages/library/LibraryCatalog';
 import LibraryCirculation from './pages/library/LibraryCirculation';
 import LibraryFines from './pages/library/LibraryFines';
@@ -303,6 +305,7 @@ function AppContent() {
           <Route path="/admin/settings" element={<Layout><ProtectedRoute role="admin"><SchoolSettingsPage /></ProtectedRoute></Layout>} />
           <Route path="/admin/data-reset" element={<Layout><ProtectedRoute role="admin"><SchoolDataReset /></ProtectedRoute></Layout>} />
           <Route path="/admin/data-portability" element={<Layout><ProtectedRoute role="admin"><DataPortability /></ProtectedRoute></Layout>} />
+          <Route path="/admin/convert-demo" element={<Layout><ProtectedRoute role="admin"><DemoConvertPage /></ProtectedRoute></Layout>} />
           <Route path="/admin/integrations/google" element={<Layout><ProtectedRoute role="admin"><IntegrationSettings /></ProtectedRoute></Layout>} />
           <Route path="/auth/google/callback" element={<ProtectedRoute role="admin"><GoogleOAuthCallback /></ProtectedRoute>} />
           <Route path="/admin/notifications" element={<Layout><ProtectedRoute role="admin"><NotificationsManagement /></ProtectedRoute></Layout>} />
@@ -333,6 +336,7 @@ function AppContent() {
           <Route path="/hr/leave" element={<ProtectedRoute roles={["hr", "admin", "School_admin"]}><StaffLayout role="hr"><HrLeave /></StaffLayout></ProtectedRoute>} />
           <Route path="/hr/onboarding" element={<ProtectedRoute roles={["hr", "admin", "School_admin"]}><StaffLayout role="hr"><HrOnboarding /></StaffLayout></ProtectedRoute>} />
           <Route path="/hr/policies" element={<ProtectedRoute roles={["hr", "admin", "School_admin"]}><StaffLayout role="hr"><HrPolicies /></StaffLayout></ProtectedRoute>} />
+          <Route path="/hr/attendance" element={<Layout><ProtectedRoute roles={["hr", "admin", "School_admin"]}><HrStaffAttendance /></ProtectedRoute></Layout>} />
 
           {/* Librarian portal + sub-pages */}
           <Route path="/library" element={<ProtectedRoute roles={["librarian", "admin", "School_admin"]}><StaffLayout role="librarian"><LibraryPortal /></StaffLayout></ProtectedRoute>} />

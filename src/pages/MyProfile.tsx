@@ -14,7 +14,8 @@ import { useStorageSettings } from '../hooks/useStorageSettings';
 import { uploadFile } from '../services/storage/uploadFile';
 import Avatar from '../components/Avatar';
 import toast from 'react-hot-toast';
-import { Camera, Loader2, CloudOff, Save, User as UserIcon, ArrowLeft, KeyRound, Bell, CheckCircle } from 'lucide-react';
+import { Camera, Loader2, CloudOff, Save, User as UserIcon, ArrowLeft, KeyRound, Bell, CheckCircle, MapPin } from 'lucide-react';
+import StaffClockWidget from '../components/StaffClockWidget';
 
 export default function MyProfile() {
   const { user, profile } = useAuth();
@@ -224,6 +225,14 @@ export default function MyProfile() {
             Update Password
           </button>
         </form>
+      </div>
+
+      {/* Staff Attendance Clock-In (shown for all roles — teachers also benefit from the profile shortcut) */}
+      <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 sm:p-8 mt-6">
+        <h2 className="text-sm font-bold text-slate-900 flex items-center gap-2 mb-4">
+          <MapPin className="w-4 h-4 text-emerald-600" /> Attendance Clock-In
+        </h2>
+        <StaffClockWidget />
       </div>
 
       {/* Notification Preferences */}

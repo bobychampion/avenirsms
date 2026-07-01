@@ -5,6 +5,7 @@ import { useSchool } from './SchoolContext';
 import { useSuperAdmin } from './SuperAdminContext';
 import { useImpersonation } from './ImpersonationContext';
 import { ImpersonationBanner } from './ImpersonationBanner';
+import DemoBanner from './DemoBanner';
 import NotificationBell from './NotificationBell';
 import { useMobile } from '../hooks/useMobile';
 import { MobileShell } from './MobileShell';
@@ -424,6 +425,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
     return (
       <div className="h-screen bg-slate-50 flex flex-col overflow-hidden">
         <ImpersonationBanner />
+        <DemoBanner />
         <header className="bg-white border-b border-slate-200 sticky top-0 z-30 h-16 flex items-center px-4 sm:px-6 gap-4">
           <Link to="/teacher" className="flex items-center gap-2.5 shrink-0">
             {logoUrl ? (
@@ -487,6 +489,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
         <AdminSidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} schoolName={schoolName} logoUrl={logoUrl} primaryColor={primaryColor} sidebarStyle={sidebarStyle} navGroups={accountantNavGroups} />
         <div className="flex-1 flex flex-col min-w-0">
           <ImpersonationBanner />
+        <DemoBanner />
           <header className="bg-white border-b border-slate-200 sticky top-0 z-30 h-16 flex items-center px-4 sm:px-6 gap-4">
             <button onClick={() => setSidebarOpen(true)} className="lg:hidden p-2 text-slate-500 hover:text-slate-900 hover:bg-slate-100 rounded-lg">
               <Menu className="w-5 h-5" />
@@ -523,6 +526,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
         {/* Main Content */}
         <div className="flex-1 flex flex-col min-w-0">
           <ImpersonationBanner />
+        <DemoBanner />
           {/* Top Bar */}
           <header className="bg-white border-b border-slate-200 sticky top-0 z-30 h-16 flex items-center px-4 sm:px-6 gap-4">
             <button

@@ -9,7 +9,7 @@ import { Link } from 'react-router-dom';
 import { collection, query, where, onSnapshot } from 'firebase/firestore';
 import { db } from '../firebase';
 import { useSchool } from '../components/SchoolContext';
-import { Users, UserPlus, CalendarOff, ClipboardList, ArrowRight } from 'lucide-react';
+import { Users, UserPlus, CalendarOff, ClipboardList, ArrowRight, MapPin } from 'lucide-react';
 
 export default function HrPortal() {
   const { schoolId, schoolName } = useSchool();
@@ -45,6 +45,7 @@ export default function HrPortal() {
 
       <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <QuickLink to="/admin/staff" icon={<Users className="w-5 h-5" />} title="Staff Directory" desc="View, add, deactivate staff records." />
+        <QuickLink to="/hr/attendance" icon={<MapPin className="w-5 h-5" />} title="Attendance Roster" desc="See who clocked in, when, and total hours on campus." />
         <QuickLink to="/hr/leave" icon={<CalendarOff className="w-5 h-5" />} title="Leave Requests" desc="Approve or decline staff leave applications." />
         <QuickLink to="/hr/onboarding" icon={<UserPlus className="w-5 h-5" />} title="Onboarding" desc="Track new-hire paperwork and orientation." />
         <QuickLink to="/hr/policies" icon={<ClipboardList className="w-5 h-5" />} title="Policies & Documents" desc="Maintain the staff handbook and policy library." />

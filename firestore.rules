@@ -346,7 +346,15 @@ service cloud.firestore {
     }
 
     match /attendance_checkins/{checkinId} {
-      allow read: if isAuthenticated() && (isSuperAdmin() || (isAdmin() && docBelongsToCallerSchool()) || isOwner(resource.data.get('teacherId', '')));
+      // isOwner(teacherId) covers teacher self-reads (legacy + new docs).
+      // isOwner(staffId) covers non-teacher staff self-reads when querying by staffId.
+      // Both fields are always written with the same uid value on new docs.
+      allow read: if isAuthenticated() && (
+        isSuperAdmin() ||
+        (isAdmin() && docBelongsToCallerSchool()) ||
+        isOwner(resource.data.get('teacherId', '')) ||
+        isOwner(resource.data.get('staffId', ''))
+      );
       allow create: if isAuthenticated() && newDocBelongsToCallerSchool();
       allow update: if isSuperAdmin() || (isAdmin() && docBelongsToCallerSchool());
     }

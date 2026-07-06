@@ -68,18 +68,25 @@ export default function StaffClockWidget() {
   useEffect(() => {
     if (!user || !schoolId) return;
     const today = new Date().toISOString().split('T')[0];
+    // Query by teacherId (not staffId) — the security rule grants per-user read
+    // access via isOwner(teacherId). We always write teacherId: user.uid, so
+    // this covers all records regardless of role.
     const q = query(
       collection(db, 'attendance_checkins'),
       where('schoolId', '==', schoolId),
-      where('staffId', '==', user.uid),
+      where('teacherId', '==', user.uid),
       where('date', '==', today),
     );
-    const unsub = onSnapshot(q, snap => {
-      const events = snap.docs
-        .map(d => ({ id: d.id, ...d.data() } as TeacherCheckIn))
-        .sort((a, b) => (a.timestamp?.toMillis?.() ?? 0) - (b.timestamp?.toMillis?.() ?? 0));
-      setTodayEvents(events);
-    });
+    const unsub = onSnapshot(
+      q,
+      snap => {
+        const events = snap.docs
+          .map(d => ({ id: d.id, ...d.data() } as TeacherCheckIn))
+          .sort((a, b) => (a.timestamp?.toMillis?.() ?? 0) - (b.timestamp?.toMillis?.() ?? 0));
+        setTodayEvents(events);
+      },
+      err => console.error('[StaffClockWidget] attendance_checkins listener failed:', err.message),
+    );
     return () => unsub();
   }, [user?.uid, schoolId]);
 

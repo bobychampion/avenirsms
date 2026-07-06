@@ -329,20 +329,29 @@ export default function TeacherPortal() {
       setGeofence(snap.exists() ? ({ id: snap.id, ...snap.data() } as GeoFence) : null);
     });
 
-    // Subscribe to today's check-in / check-out events for this staff member
+    // Subscribe to today's check-in / check-out events for this staff member.
+    // Query by teacherId (not staffId) because the Firestore security rule grants
+    // per-user read access via isOwner(teacherId). Firestore validates queries
+    // against rules at plan time — it can prove isOwner(teacherId) when the
+    // query filter is teacherId==uid, but cannot prove it when filtering by staffId.
+    // We always write teacherId: user.uid alongside staffId, so this catches all records.
     const today = new Date().toISOString().split('T')[0];
     const qCheckins = query(
       collection(db, 'attendance_checkins'),
       where('schoolId', '==', schoolId!),
-      where('staffId', '==', user.uid),
+      where('teacherId', '==', user.uid),
       where('date', '==', today),
     );
-    const unsubCheckins = onSnapshot(qCheckins, snap => {
-      const events = snap.docs
-        .map(d => ({ id: d.id, ...d.data() } as TeacherCheckIn))
-        .sort((a, b) => (a.timestamp?.toMillis?.() ?? 0) - (b.timestamp?.toMillis?.() ?? 0));
-      setTodayEvents(events);
-    });
+    const unsubCheckins = onSnapshot(
+      qCheckins,
+      snap => {
+        const events = snap.docs
+          .map(d => ({ id: d.id, ...d.data() } as TeacherCheckIn))
+          .sort((a, b) => (a.timestamp?.toMillis?.() ?? 0) - (b.timestamp?.toMillis?.() ?? 0));
+        setTodayEvents(events);
+      },
+      err => console.error('[TeacherPortal] attendance_checkins listener failed:', err.message),
+    );
 
     return () => {
       unsubStudents(); unsubAssign(); unsubMsgs(); unsubSent();
@@ -532,7 +541,7 @@ export default function TeacherPortal() {
     }));
     const tid = toast.loading('Saving attendance…');
     try {
-      await batchUpsertAttendance(records);
+      await batchUpsertAttendance(records, schoolId);
       toast.success('Attendance saved!', { id: tid });
       setAttendanceSaved(true);
       setTimeout(() => setAttendanceSaved(false), 3000);

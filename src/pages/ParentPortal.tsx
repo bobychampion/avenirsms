@@ -49,6 +49,7 @@ export default function ParentPortal() {
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<TabType>('progress');
   const [filterTerm, setFilterTerm] = useState<string>(TERMS[0]);
+  const [attendanceMonth, setAttendanceMonth] = useState<string>(''); // '' = all months
   const [newMessage, setNewMessage] = useState({ receiverId: '', content: '' });
   const [reportCardTerm, setReportCardTerm] = useState<string>(TERMS[0]);
   const [reportCardSkills, setReportCardSkills] = useState<any>(null);
@@ -679,81 +680,200 @@ export default function ParentPortal() {
       )}
 
       {/* ── ATTENDANCE ── */}
-      {activeTab === 'attendance' && (
-        <div className="space-y-6">
-          {/* Summary cards */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            {[
-              { label: 'Total Days', value: attendance.length, color: 'slate' },
-              { label: 'Present', value: attendance.filter(a => a.status === 'present').length, color: 'emerald' },
-              { label: 'Absent', value: attendance.filter(a => a.status === 'absent').length, color: 'rose' },
-              { label: 'Late', value: attendance.filter(a => a.status === 'late').length, color: 'amber' },
-            ].map(s => (
-              <div key={s.label} className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
-                <p className={`text-2xl font-bold text-${s.color}-600`}>{s.value}</p>
-                <p className="text-xs text-slate-500 font-medium mt-0.5">{s.label}</p>
-              </div>
-            ))}
-          </div>
+      {activeTab === 'attendance' && (() => {
+        // Unique months with data, newest first
+        const availableMonths = Array.from(
+          new Set<string>(attendance.map(a => a.date.slice(0, 7)))
+        ).sort((a, b) => b.localeCompare(a));
 
-          {/* Rate bar */}
-          {attendance.length > 0 && (
-            <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
-              <div className="flex justify-between items-center mb-2">
-                <span className="text-sm font-bold text-slate-700">Overall Attendance Rate</span>
-                <span className={`text-sm font-bold ${attendanceRate >= 75 ? 'text-emerald-600' : attendanceRate >= 50 ? 'text-amber-600' : 'text-rose-600'}`}>
-                  {attendanceRate}%
-                </span>
-              </div>
-              <div className="w-full bg-slate-100 rounded-full h-3">
-                <div
-                  className={`h-3 rounded-full transition-all ${attendanceRate >= 75 ? 'bg-emerald-500' : attendanceRate >= 50 ? 'bg-amber-500' : 'bg-rose-500'}`}
-                  style={{ width: `${attendanceRate}%` }}
-                />
-              </div>
-              {attendanceRate < 75 && (
-                <p className="text-xs text-amber-600 font-medium mt-2 flex items-center gap-1">
-                  <AlertCircle className="w-3 h-3" />
-                  Attendance below 75%. Please contact the school if there are any concerns.
+        // Always show a specific month in the grid; default to most recent with data
+        const displayMonth = attendanceMonth || availableMonths[0] || new Date().toISOString().slice(0, 7);
+        const [gridYear, gridMonth] = displayMonth.split('-').map(Number);
+        const daysInMonth = new Date(gridYear, gridMonth, 0).getDate();
+        const days = Array.from({ length: daysInMonth }, (_, i) => i + 1);
+
+        // date string → status lookup for this month
+        const dateMap: Record<string, 'present' | 'absent' | 'late'> = {};
+        attendance.forEach(a => {
+          if (a.date.startsWith(displayMonth)) dateMap[a.date] = a.status as 'present' | 'absent' | 'late';
+        });
+
+        const fmtMonth = (ym: string) => {
+          const [y, m] = ym.split('-');
+          return new Date(Number(y), Number(m) - 1).toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+        };
+
+        const isWeekend = (d: number) => {
+          const dow = new Date(gridYear, gridMonth - 1, d).getDay();
+          return dow === 0 || dow === 6;
+        };
+
+        const dateStr = (d: number) => `${displayMonth}-${String(d).padStart(2, '0')}`;
+
+        const presentCount = days.filter(d => dateMap[dateStr(d)] === 'present').length;
+        const absentCount  = days.filter(d => dateMap[dateStr(d)] === 'absent').length;
+        const lateCount    = days.filter(d => dateMap[dateStr(d)] === 'late').length;
+        const recordedDays = days.filter(d => !!dateMap[dateStr(d)]).length;
+        const monthRate    = recordedDays > 0 ? Math.round((presentCount / recordedDays) * 100) : 0;
+
+        const dotClass = (status: string | undefined) => {
+          if (status === 'present') return 'bg-emerald-400';
+          if (status === 'absent')  return 'bg-rose-300';
+          if (status === 'late')    return 'bg-amber-300';
+          return 'bg-slate-200';
+        };
+
+        return (
+          <div className="space-y-4">
+
+            {/* ── Header card: class label + month picker + legend ── */}
+            <div className="bg-white rounded-2xl border border-slate-200 shadow-sm px-5 py-4">
+              <div className="flex flex-wrap items-center gap-3">
+                {/* Class + month label */}
+                <p className="text-sm font-bold text-slate-800 flex items-center gap-2 shrink-0">
+                  <User className="w-4 h-4 text-indigo-500" />
+                  {selectedChild?.currentClass} — {fmtMonth(displayMonth)}
                 </p>
+
+                {/* Month selector */}
+                <select
+                  value={displayMonth}
+                  onChange={e => setAttendanceMonth(e.target.value)}
+                  className="px-3 py-1.5 rounded-xl border border-slate-200 text-xs font-medium bg-white focus:ring-2 focus:ring-indigo-500 outline-none"
+                >
+                  {availableMonths.length === 0
+                    ? <option value={displayMonth}>No records yet</option>
+                    : availableMonths.map(ym => <option key={ym} value={ym}>{fmtMonth(ym)}</option>)
+                  }
+                </select>
+
+                {/* Legend */}
+                <div className="flex flex-wrap items-center gap-x-4 gap-y-1 ml-auto text-xs text-slate-500">
+                  {[
+                    { label: 'Present',   dot: 'bg-emerald-400' },
+                    { label: 'Absent',    dot: 'bg-rose-300'    },
+                    { label: 'Late',      dot: 'bg-amber-300'   },
+                    { label: 'No record', dot: 'bg-slate-200'   },
+                  ].map(l => (
+                    <span key={l.label} className="flex items-center gap-1.5 font-medium">
+                      <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${l.dot}`} />
+                      {l.label}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            {/* ── Calendar grid ── */}
+            <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+              {attendance.length === 0 ? (
+                <div className="py-16 text-center text-slate-400">
+                  <CheckCircle2 className="w-10 h-10 mx-auto mb-3 text-slate-200" />
+                  <p className="text-sm">No attendance records found for this student.</p>
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="min-w-full border-collapse text-left">
+                    {/* Day-number header row */}
+                    <thead>
+                      <tr className="border-b border-slate-100">
+                        <th className="sticky left-0 bg-white z-10 px-4 py-3 text-xs font-bold text-slate-500 uppercase tracking-wide min-w-[9rem] border-r border-slate-100">
+                          Student
+                        </th>
+                        {days.map(d => (
+                          <th
+                            key={d}
+                            className={`w-7 py-3 text-center text-xs font-semibold select-none ${
+                              isWeekend(d) ? 'text-slate-300 bg-slate-50' : 'text-slate-400'
+                            }`}
+                          >
+                            {d}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+
+                    <tbody>
+                      {/* Student dot row */}
+                      <tr className="border-b border-slate-50">
+                        <td className="sticky left-0 bg-white z-10 px-4 py-3 text-sm font-semibold text-slate-800 border-r border-slate-100 truncate max-w-[9rem]">
+                          {selectedChild?.studentName}
+                        </td>
+                        {days.map(d => {
+                          const ds = dateStr(d);
+                          const st = dateMap[ds];
+                          return (
+                            <td
+                              key={d}
+                              title={st ? `${ds}: ${st}` : `${ds}: no record`}
+                              className={`py-3 text-center ${isWeekend(d) ? 'bg-slate-50' : ''}`}
+                            >
+                              <span className={`inline-block w-4 h-4 rounded-full ${dotClass(st)}`} />
+                            </td>
+                          );
+                        })}
+                      </tr>
+
+                      {/* Total row */}
+                      <tr className="bg-slate-50/70">
+                        <td className="sticky left-0 bg-slate-50 z-10 px-4 py-2 text-xs font-bold text-slate-400 uppercase tracking-wide border-r border-slate-100">
+                          Total
+                        </td>
+                        {days.map(d => {
+                          const st = dateMap[dateStr(d)];
+                          return (
+                            <td key={d} className={`py-2 text-center text-xs font-bold ${isWeekend(d) ? 'bg-slate-50' : ''}`}>
+                              {st === 'present'
+                                ? <span className="text-emerald-500">1</span>
+                                : st === 'absent'
+                                  ? <span className="text-rose-400">·</span>
+                                  : st === 'late'
+                                    ? <span className="text-amber-400">·</span>
+                                    : null}
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
               )}
             </div>
-          )}
 
-          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-            <div className="overflow-x-auto">
-              <table className="w-full text-left">
-                <thead className="bg-slate-50">
-                  <tr>
-                    <th className="px-6 py-3 text-xs font-bold text-slate-400 uppercase">Date</th>
-                    <th className="px-6 py-3 text-xs font-bold text-slate-400 uppercase">Status</th>
-                    <th className="px-6 py-3 text-xs font-bold text-slate-400 uppercase">Class</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {attendance.slice(0, 50).map(r => (
-                    <tr key={r.id} className="hover:bg-slate-50/50">
-                      <td className="px-6 py-3 text-sm text-slate-900 font-medium">{r.date}</td>
-                      <td className="px-6 py-3">
-                        <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold uppercase ${
-                          r.status === 'present' ? 'bg-emerald-50 text-emerald-700' :
-                          r.status === 'absent' ? 'bg-rose-50 text-rose-700' : 'bg-amber-50 text-amber-700'
-                        }`}>{r.status}</span>
-                      </td>
-                      <td className="px-6 py-3 text-sm text-slate-500">{r.class}</td>
-                    </tr>
-                  ))}
-                  {attendance.length === 0 && (
-                    <tr>
-                      <td colSpan={3} className="px-6 py-12 text-center text-slate-400">No attendance records found.</td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
+            {/* ── Summary stat cards ── */}
+            {recordedDays > 0 && (
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                {[
+                  { label: 'Present',         value: presentCount,  dot: 'bg-emerald-400', textColor: 'text-emerald-600' },
+                  { label: 'Absent',          value: absentCount,   dot: 'bg-rose-300',    textColor: 'text-rose-500'    },
+                  { label: 'Late',            value: lateCount,     dot: 'bg-amber-300',   textColor: 'text-amber-500'   },
+                  { label: 'Attendance Rate', value: `${monthRate}%`, dot: '',
+                    textColor: monthRate >= 75 ? 'text-emerald-600' : monthRate >= 50 ? 'text-amber-500' : 'text-rose-500' },
+                ].map(s => (
+                  <div key={s.label} className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm flex items-center gap-3">
+                    {s.dot && <span className={`w-3 h-3 rounded-full shrink-0 ${s.dot}`} />}
+                    <div>
+                      <p className={`text-xl font-extrabold ${s.textColor}`}>{s.value}</p>
+                      <p className="text-[11px] text-slate-400 font-medium mt-0.5">{s.label}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Low-attendance warning */}
+            {monthRate > 0 && monthRate < 75 && (
+              <div className="flex items-start gap-3 bg-amber-50 border border-amber-200 rounded-2xl px-4 py-3">
+                <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                <p className="text-xs text-amber-700 font-medium">
+                  Attendance is below 75% for {fmtMonth(displayMonth)}. Please contact the school if there are any concerns.
+                </p>
+              </div>
+            )}
+
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* ── ASSIGNMENTS ── */}
       {activeTab === 'assignments' && (

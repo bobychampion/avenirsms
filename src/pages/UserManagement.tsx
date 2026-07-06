@@ -3,7 +3,9 @@ import { useNavigate } from 'react-router-dom';
 import { db, auth, handleFirestoreError, OperationType } from '../firebase';
 import { collection, query, onSnapshot, doc, updateDoc, orderBy, serverTimestamp, setDoc, where, addDoc, getDocs, writeBatch, deleteField } from 'firebase/firestore';
 import { useSchoolId } from '../hooks/useSchoolId';
-import { createUserWithEmailAndPassword, updateProfile } from 'firebase/auth';
+import { createUserWithEmailAndPassword, updateProfile, signOut, getAuth } from 'firebase/auth';
+import { initializeApp, deleteApp } from 'firebase/app';
+import firebaseConfig from '../../firebase-applet-config.json';
 import { UserProfile } from '../types';
 import { motion, AnimatePresence } from 'motion/react';
 import toast from 'react-hot-toast';
@@ -222,12 +224,28 @@ export default function UserManagement() {
     setCreatingUser(true);
     const tid = toast.loading(`Creating ${inviteForm.role} account…`);
     try {
-      const cred = await createUserWithEmailAndPassword(auth, inviteForm.email, inviteForm.password);
-      await updateProfile(cred.user, { displayName: inviteForm.displayName });
-      await setDoc(doc(db, 'users', cred.user.uid), {
-        uid: cred.user.uid,
+      // Use a secondary Firebase app so the admin's current session is never
+      // interrupted. createUserWithEmailAndPassword on the main auth instance
+      // automatically signs in as the new account, which logs the admin out
+      // mid-operation and causes permission errors on all live Firestore listeners.
+      const secondaryApp = initializeApp(firebaseConfig as object, `create-user-${Date.now()}`);
+      const secondaryAuth = getAuth(secondaryApp);
+      let newUid: string;
+      let newDisplayName: string;
+      try {
+        const cred = await createUserWithEmailAndPassword(secondaryAuth, inviteForm.email, inviteForm.password);
+        await updateProfile(cred.user, { displayName: inviteForm.displayName });
+        newUid = cred.user.uid;
+        newDisplayName = cred.user.displayName ?? inviteForm.displayName;
+      } finally {
+        await signOut(secondaryAuth).catch(() => {});
+        await deleteApp(secondaryApp).catch(() => {});
+      }
+
+      await setDoc(doc(db, 'users', newUid), {
+        uid: newUid,
         email: inviteForm.email,
-        displayName: inviteForm.displayName,
+        displayName: newDisplayName,
         role: inviteForm.role,
         disabled: false,
         schoolId: schoolId ?? 'main',
@@ -246,7 +264,7 @@ export default function UserManagement() {
         if (!existingStaffSnap.empty) {
           // Link the existing staff record and clear the stored pending password
           await updateDoc(doc(db, 'staff', existingStaffSnap.docs[0].id), {
-            userId: cred.user.uid,
+            userId: newUid,
             pendingPassword: null,
             updatedAt: serverTimestamp(),
           });
@@ -256,7 +274,7 @@ export default function UserManagement() {
             : inviteForm.role === 'accountant' ? 'admin_staff'
             : inviteForm.role as 'teacher' | 'admin_staff' | 'support';
           await addDoc(collection(db, 'staff'), {
-            staffName: inviteForm.displayName,
+            staffName: newDisplayName,
             email: inviteForm.email,
             role: staffRole,
             basicSalary: 0,
@@ -267,7 +285,7 @@ export default function UserManagement() {
             qualification: '',
             department: '',
             photoUrl: '',
-            userId: cred.user.uid,
+            userId: newUid,
             schoolId: schoolId ?? 'main',
             employedAt: serverTimestamp(),
           });

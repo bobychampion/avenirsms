@@ -8,12 +8,12 @@
  * Route: /admin/migrate
  */
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
-  collection, getDocs, writeBatch, doc, setDoc, getDoc, serverTimestamp
+  collection, getDocs, writeBatch, doc, setDoc, getDoc, serverTimestamp, onSnapshot, query, orderBy,
 } from 'firebase/firestore';
 import { db } from '../firebase';
-import { Database, CheckCircle2, AlertCircle, Loader2, PlayCircle, ChevronDown, ChevronRight } from 'lucide-react';
+import { Database, CheckCircle2, AlertCircle, Loader2, PlayCircle, ChevronDown, ChevronRight, Building2 } from 'lucide-react';
 
 // All collections that need schoolId backfilled (excluding 'schools' which is new)
 const COLLECTIONS_TO_MIGRATE = [
@@ -40,7 +40,10 @@ interface CollectionProgress {
   error?: string;
 }
 
-const DEFAULT_SCHOOL_ID = 'main';
+interface SchoolOption {
+  id: string;
+  name: string;
+}
 
 async function migrateCollection(
   name: string,
@@ -133,6 +136,23 @@ async function seedSchoolDocument(schoolId: string): Promise<void> {
 }
 
 export default function DataMigration() {
+  // ── School selection ──────────────────────────────────────────────────────
+  const [schools, setSchools] = useState<SchoolOption[]>([]);
+  const [selectedSchoolId, setSelectedSchoolId] = useState('');
+  const [customId, setCustomId] = useState('');
+  const [useCustom, setUseCustom] = useState(false);
+  const schoolId = (useCustom ? customId : selectedSchoolId).trim();
+
+  useEffect(() => {
+    const unsub = onSnapshot(
+      query(collection(db, 'schools'), orderBy('name')),
+      snap => setSchools(snap.docs.map(d => ({ id: d.id, name: (d.data().name as string) || d.id }))),
+      () => {},
+    );
+    return () => unsub();
+  }, []);
+
+  // ── Migration state ───────────────────────────────────────────────────────
   const [collections, setCollections] = useState<CollectionProgress[]>(
     COLLECTIONS_TO_MIGRATE.map(name => ({
       name, status: 'pending', total: 0, migrated: 0
@@ -145,7 +165,13 @@ export default function DataMigration() {
   const [running, setRunning] = useState(false);
   const [done, setDone] = useState(false);
   const [expanded, setExpanded] = useState(false);
-  const schoolId = DEFAULT_SCHOOL_ID;
+
+  const resetState = () => {
+    setCollections(COLLECTIONS_TO_MIGRATE.map(name => ({ name, status: 'pending', total: 0, migrated: 0 })));
+    setUsersProgress({ name: 'users', status: 'pending', total: 0, migrated: 0 });
+    setSchoolSeedStatus('pending');
+    setDone(false);
+  };
 
   const updateCollection = (name: string, patch: Partial<CollectionProgress>) => {
     setCollections(prev => prev.map(c => c.name === name ? { ...c, ...patch } : c));
@@ -214,8 +240,82 @@ export default function DataMigration() {
         </div>
         <div>
           <h1 className="text-2xl font-bold text-slate-900">Multi-Tenant Migration</h1>
-          <p className="text-slate-500 text-sm">Backfills <code className="bg-slate-100 px-1 rounded">schoolId: "{schoolId}"</code> on all existing Firestore documents</p>
+          <p className="text-slate-500 text-sm">
+            Backfills{' '}
+            <code className="bg-slate-100 px-1 rounded">
+              schoolId: "{schoolId || '…'}"
+            </code>{' '}
+            on all existing Firestore documents
+          </p>
         </div>
+      </div>
+
+      {/* ── School selector ── */}
+      <div className="bg-white border border-slate-200 rounded-xl p-5 space-y-4">
+        <div className="flex items-center gap-2 mb-1">
+          <Building2 className="w-4 h-4 text-purple-600" />
+          <p className="font-bold text-slate-900 text-sm">Select target school</p>
+        </div>
+
+        {!useCustom && (
+          <div>
+            <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">
+              School
+            </label>
+            {schools.length === 0 ? (
+              <p className="text-sm text-slate-400 italic">
+                No schools found in Firestore yet — use a custom ID below.
+              </p>
+            ) : (
+              <select
+                value={selectedSchoolId}
+                onChange={e => { setSelectedSchoolId(e.target.value); resetState(); }}
+                className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-purple-500 outline-none text-sm bg-white"
+              >
+                <option value="">— choose a school —</option>
+                {schools.map(s => (
+                  <option key={s.id} value={s.id}>{s.name} ({s.id})</option>
+                ))}
+              </select>
+            )}
+          </div>
+        )}
+
+        {useCustom && (
+          <div>
+            <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">
+              Custom school ID
+            </label>
+            <input
+              type="text"
+              value={customId}
+              onChange={e => { setCustomId(e.target.value); resetState(); }}
+              placeholder="e.g. greenfield_academy"
+              className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-purple-500 outline-none text-sm font-mono"
+            />
+            <p className="text-xs text-slate-400 mt-1.5">
+              Must match the exact Firestore document ID of the school.
+            </p>
+          </div>
+        )}
+
+        <button
+          type="button"
+          onClick={() => { setUseCustom(u => !u); resetState(); setSelectedSchoolId(''); setCustomId(''); }}
+          className="text-xs text-purple-600 hover:text-purple-800 font-semibold"
+        >
+          {useCustom ? '← Pick from existing schools' : 'Enter a custom ID instead →'}
+        </button>
+
+        {schoolId && (
+          <div className="flex items-center gap-2 bg-purple-50 border border-purple-200 rounded-xl px-4 py-2.5">
+            <CheckCircle2 className="w-4 h-4 text-purple-600 shrink-0" />
+            <p className="text-sm text-purple-800">
+              Will backfill <strong>all documents</strong> with{' '}
+              <code className="bg-purple-100 px-1 rounded font-mono">schoolId: "{schoolId}"</code>
+            </p>
+          </div>
+        )}
       </div>
 
       {/* Info card */}
@@ -225,7 +325,7 @@ export default function DataMigration() {
           <li>This is a one-time operation — safe to run multiple times (idempotent).</li>
           <li>Only documents <strong>without</strong> a <code className="bg-amber-100 px-0.5 rounded">schoolId</code> field are updated.</li>
           <li><code className="bg-amber-100 px-0.5 rounded">super_admin</code> users are excluded from the users backfill.</li>
-          <li>A <code className="bg-amber-100 px-0.5 rounded">schools/main</code> document is created if it doesn't exist.</li>
+          <li>A <code className="bg-amber-100 px-0.5 rounded">schools/{schoolId || '…'}</code> document is created if it doesn't exist.</li>
         </ul>
       </div>
 
@@ -233,7 +333,9 @@ export default function DataMigration() {
       <div className="bg-white border border-slate-200 rounded-xl p-4 flex items-center gap-3">
         {statusIcon(schoolSeedStatus)}
         <div className="flex-1">
-          <p className="font-semibold text-slate-800 text-sm">Seed <code>schools/main</code> document</p>
+          <p className="font-semibold text-slate-800 text-sm">
+            Seed <code>schools/{schoolId || '…'}</code> document
+          </p>
           <p className="text-slate-500 text-xs">Creates the platform-level school record</p>
         </div>
         {schoolSeedStatus === 'done' && <span className="text-xs text-emerald-600 font-medium">Done</span>}
@@ -312,17 +414,24 @@ export default function DataMigration() {
           </div>
         </div>
       ) : (
-        <button
-          onClick={runMigration}
-          disabled={running}
-          className="w-full flex items-center justify-center gap-2 bg-purple-600 hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold py-3 px-6 rounded-xl transition-colors shadow-lg shadow-purple-200"
-        >
-          {running ? (
-            <><Loader2 className="w-5 h-5 animate-spin" />Running migration…</>
-          ) : (
-            <><PlayCircle className="w-5 h-5" />Run Migration</>
+        <>
+          {!schoolId && (
+            <p className="text-center text-sm text-slate-400 font-medium py-1">
+              Select a school above to enable the migration
+            </p>
           )}
-        </button>
+          <button
+            onClick={runMigration}
+            disabled={running || !schoolId}
+            className="w-full flex items-center justify-center gap-2 bg-purple-600 hover:bg-purple-700 disabled:opacity-40 disabled:cursor-not-allowed text-white font-bold py-3 px-6 rounded-xl transition-colors shadow-lg shadow-purple-200"
+          >
+            {running ? (
+              <><Loader2 className="w-5 h-5 animate-spin" />Running migration…</>
+            ) : (
+              <><PlayCircle className="w-5 h-5" />Run Migration for &ldquo;{schoolId || '…'}&rdquo;</>
+            )}
+          </button>
+        </>
       )}
     </div>
   );

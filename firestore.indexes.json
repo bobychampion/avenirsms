@@ -184,6 +184,24 @@
       ]
     },
     {
+      "collectionGroup": "attendance",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "schoolId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "studentId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "date",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
       "collectionGroup": "attendance_checkins",
       "queryScope": "COLLECTION",
       "fields": [

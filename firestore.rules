@@ -377,11 +377,16 @@ service cloud.firestore {
     // ─── Messages ─────────────────────────────────────────────────────────────
 
     match /messages/{messageId} {
+      // receiverId may be stored as a uid or an email (parent invites teachers
+      // by email), and the client queries with `where('receiverId','in',[uid,email])`.
+      // Firestore can only prove an 'in' query safe if every possible value it
+      // could match is covered by the rule, so both forms must be allowed here.
       allow read: if isAuthenticated() && (
         isSuperAdmin() ||
         (docBelongsToCallerSchool() && (
           request.auth.uid == resource.data.senderId ||
-          request.auth.uid == resource.data.receiverId
+          request.auth.uid == resource.data.receiverId ||
+          request.auth.token.email == resource.data.receiverId
         ))
       );
       allow create: if isAuthenticated() && newDocBelongsToCallerSchool();
@@ -521,10 +526,16 @@ service cloud.firestore {
     // ─── Notifications ────────────────────────────────────────────────────────
 
     match /notifications/{notifId} {
+      // Client queries with `where('recipientId','in',[uid,'all'])` for broadcast
+      // notifications, so the rule must cover the literal 'all' recipient too —
+      // otherwise Firestore can't prove the 'in' query safe and denies it outright.
       allow read: if isAuthenticated() && (
         isSuperAdmin() ||
         (isAdmin() && docBelongsToCallerSchool()) ||
-        (docBelongsToCallerSchool() && resource.data.get('recipientId', '') == request.auth.uid)
+        (docBelongsToCallerSchool() && (
+          resource.data.get('recipientId', '') == request.auth.uid ||
+          resource.data.get('recipientId', '') == 'all'
+        ))
       );
       // newDocBelongsToCallerSchool() compares against the CALLER's OWN
       // profile.schoolId, which is null for super_admin even while they're

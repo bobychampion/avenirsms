@@ -498,7 +498,10 @@ export interface LeaveRequest {
   reason: string;
   status: 'pending' | 'approved' | 'rejected';
   createdAt: any;
+  schoolId?: string;
   reviewedBy?: string;
+  reviewComment?: string;
+  reviewedAt?: any;
 }
 
 export interface Payroll {

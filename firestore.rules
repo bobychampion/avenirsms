@@ -490,10 +490,14 @@ service cloud.firestore {
                     (isHR() && docBelongsToCallerSchool()) ||
                     isOwner(resource.data.get('staffId', '')));
       allow create: if isAuthenticated() && newDocBelongsToCallerSchool();
-      // Admins and HR can approve/reject; staff can only update their own (e.g. withdraw)
+      // Admins and HR can approve/reject any field. Owners cannot edit their own
+      // request (approval integrity) — they cancel a still-pending one via delete instead.
       allow update: if isSuperAdmin() ||
                     (isAdmin() && docBelongsToCallerSchool()) ||
                     (isHR() && docBelongsToCallerSchool());
+      allow delete: if isSuperAdmin() ||
+                    (isAdmin() && docBelongsToCallerSchool()) ||
+                    (isOwner(resource.data.get('staffId', '')) && resource.data.get('status', '') == 'pending');
     }
 
     // ─── HR Policies (Phase 3 — HR portal) ────────────────────────────────────

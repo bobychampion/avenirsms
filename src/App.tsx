@@ -67,6 +67,7 @@ import HrStaffAttendance from './pages/hr/HrStaffAttendance';
 import LibraryCatalog from './pages/library/LibraryCatalog';
 import LibraryCirculation from './pages/library/LibraryCirculation';
 import LibraryFines from './pages/library/LibraryFines';
+import MyLeavePage from './pages/staff/MyLeavePage';
 import CoverManager from './pages/CoverManager';
 import TripRegister from './pages/TripRegister';
 import AbsenceRequests from './pages/AbsenceRequests';
@@ -329,6 +330,7 @@ function AppContent() {
 
           {/* Accountant portal — dedicated landing + reuses /admin/finance pages */}
           <Route path="/accountant" element={<ProtectedRoute role="accountant"><StaffLayout role="accountant"><AccountantPortal /></StaffLayout></ProtectedRoute>} />
+          <Route path="/accountant/leave" element={<ProtectedRoute role="accountant"><StaffLayout role="accountant"><MyLeavePage /></StaffLayout></ProtectedRoute>} />
 
           {/* HR portal + sub-pages */}
           <Route path="/hr" element={<ProtectedRoute roles={["hr", "admin", "School_admin"]}><StaffLayout role="hr"><HrPortal /></StaffLayout></ProtectedRoute>} />
@@ -343,6 +345,7 @@ function AppContent() {
           <Route path="/library/catalog" element={<ProtectedRoute roles={["librarian", "admin", "School_admin"]}><StaffLayout role="librarian"><LibraryCatalog /></StaffLayout></ProtectedRoute>} />
           <Route path="/library/circulation" element={<ProtectedRoute roles={["librarian", "admin", "School_admin"]}><StaffLayout role="librarian"><LibraryCirculation /></StaffLayout></ProtectedRoute>} />
           <Route path="/library/fines" element={<ProtectedRoute roles={["librarian", "admin", "School_admin"]}><StaffLayout role="librarian"><LibraryFines /></StaffLayout></ProtectedRoute>} />
+          <Route path="/library/leave" element={<ProtectedRoute roles={["librarian", "admin", "School_admin"]}><StaffLayout role="librarian"><MyLeavePage /></StaffLayout></ProtectedRoute>} />
 
           {/* Calendar (all roles) */}
           <Route path="/calendar" element={<Layout><ProtectedRoute><SchoolCalendar /></ProtectedRoute></Layout>} />

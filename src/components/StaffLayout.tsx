@@ -39,6 +39,7 @@ const NAV_BY_ROLE: Record<StaffRole, { title: string; items: NavItem[] }> = {
       { to: '/admin/finance', label: 'Invoices & Payments', icon: Receipt },
       { to: '/admin/payroll', label: 'Payroll', icon: DollarSign },
       { to: '/admin/analytics', label: 'Reports', icon: FileText },
+      { to: '/accountant/leave', label: 'My Leave', icon: CalendarOff },
     ],
   },
   hr: {
@@ -58,6 +59,7 @@ const NAV_BY_ROLE: Record<StaffRole, { title: string; items: NavItem[] }> = {
       { to: '/library/catalog', label: 'Catalog', icon: BookOpen },
       { to: '/library/circulation', label: 'Issue / Return', icon: RotateCcw },
       { to: '/library/fines', label: 'Fines', icon: AlertCircle },
+      { to: '/library/leave', label: 'My Leave', icon: CalendarOff },
     ],
   },
 };

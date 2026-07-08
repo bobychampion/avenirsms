@@ -22,15 +22,16 @@ import {
   Edit2, Trash2, X, AlertCircle, ClipboardList, CheckSquare,
   Sparkles, FileText, Copy, ChevronDown, Star, Award,
   MapPin, Navigation, LogIn, LogOut, ShieldAlert, Lock,
-  ChevronRight, Inbox, GraduationCap, Home, BookMarked,
+  ChevronRight, Inbox, GraduationCap, Home, BookMarked, CalendarOff,
 } from 'lucide-react';
 import { initFCMForUser, onForegroundMessage, showFcmPushNotification } from '../services/notificationService';
 import ProfileHeader from './TeacherPortal/ProfileHeader';
 import ClockInHero from './TeacherPortal/ClockInHero';
 import TeacherOverview from './TeacherPortal/TeacherOverview';
 import CurriculumPage from './TeacherPortal/CurriculumPage';
+import MyLeaveRequests from '../components/MyLeaveRequests';
 
-type TabType = 'home' | 'students' | 'attendance' | 'assignments' | 'grades' | 'skills' | 'messages' | 'ai_tools' | 'timetable' | 'absences' | 'curriculum';
+type TabType = 'home' | 'students' | 'attendance' | 'assignments' | 'grades' | 'skills' | 'messages' | 'ai_tools' | 'timetable' | 'absences' | 'curriculum' | 'leave';
 
 interface AttendanceRow {
   studentId: string;
@@ -934,6 +935,7 @@ export default function TeacherPortal() {
     { id: 'curriculum', label: 'Curriculum', Icon: BookMarked },
     { id: 'assignments', label: 'Assignments', Icon: BookOpen },
     { id: 'messages', label: 'Messages', Icon: MessageSquare },
+    { id: 'leave', label: 'My Leave', Icon: CalendarOff },
     { id: 'ai_tools', label: 'AI Tools', Icon: Sparkles },
   ];
 
@@ -1029,6 +1031,11 @@ export default function TeacherPortal() {
           currentTerm={currentTerm}
           currentSession={currentSession}
         />
+      )}
+
+      {/* ── MY LEAVE TAB ── */}
+      {activeTab === 'leave' && (
+        <MyLeaveRequests schoolId={schoolId} />
       )}
 
       {/* ── STUDENTS TAB ── */}

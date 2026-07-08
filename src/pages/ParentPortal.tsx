@@ -4,7 +4,7 @@ import { db, handleFirestoreError, OperationType } from '../firebase';
 import { useAuth } from '../components/FirebaseProvider';
 import {
   collection, query, onSnapshot, where, addDoc, serverTimestamp,
-  orderBy, updateDoc, doc, getDocs
+  orderBy, updateDoc, doc, getDoc, getDocs
 } from 'firebase/firestore';
 import { Student, Assignment, AssignmentSubmission, Message, Grade, Attendance, SchoolEvent, Invoice, Notification, TERMS, CURRENT_SESSION, calculateGrade, SKILL_LABELS, SKILL_RATING_LABELS, SkillRating } from '../types';
 import { motion, AnimatePresence } from 'motion/react';
@@ -74,12 +74,39 @@ export default function ParentPortal() {
   const [contactQuery, setContactQuery] = useState('');
   const [showContactDropdown, setShowContactDropdown] = useState(false);
 
+  // Direct per-id lookups — covers any conversation partner the bulk directory
+  // query misses (e.g. a staff doc missing `schoolId`, or a role outside the
+  // enumerated staff-role list), since a single-doc read only needs the doc's
+  // own fields to satisfy the rule, not a matching composite index.
+  const [resolvedNames, setResolvedNames] = useState<Record<string, string>>({});
+
   const contactNameMap = React.useMemo(() => {
     const map: Record<string, string> = {};
     staffDirectory.forEach(s => { map[s.id] = s.name; });
     suggestedContacts.forEach(s => { if (!map[s.id]) map[s.id] = s.name; });
+    Object.keys(resolvedNames).forEach(id => { if (!map[id]) map[id] = resolvedNames[id]; });
     return map;
-  }, [staffDirectory, suggestedContacts]);
+  }, [staffDirectory, suggestedContacts, resolvedNames]);
+
+  // Fallback resolver for conversation partners not found via the bulk directory query
+  useEffect(() => {
+    if (!user) return;
+    const knownIds = new Set<string>([...staffDirectory.map(s => s.id), ...suggestedContacts.map(s => s.id), ...Object.keys(resolvedNames)]);
+    const partnerIds: string[] = messages.map(m => m.senderId === user.uid ? m.receiverId : m.senderId);
+    const unknownIds = Array.from(new Set(partnerIds))
+      .filter((id): id is string => Boolean(id) && !knownIds.has(id) && !/\S+@\S+\.\S+/.test(id));
+    unknownIds.forEach(async (id: string) => {
+      try {
+        const snap = await getDoc(doc(db, 'users', id));
+        if (snap.exists()) {
+          const d = snap.data();
+          setResolvedNames(prev => ({ ...prev, [id]: (d.displayName as string) || (d.email as string) || id }));
+        }
+      } catch (err) {
+        console.error('[ParentPortal] failed to resolve contact name for', id, err);
+      }
+    });
+  }, [messages, staffDirectory, suggestedContacts, resolvedNames, user]);
 
   // Load the searchable staff directory for this school (teachers, admins, etc.)
   useEffect(() => {
@@ -95,7 +122,7 @@ export default function ParentPortal() {
         email: (d.data().email as string) || '',
         role: (d.data().role as string) || 'staff',
       })));
-    }).catch(() => {});
+    }).catch(err => console.error('[ParentPortal] staff directory query failed:', err.code, err.message));
   }, [schoolId]);
 
   // Build "quick dial" suggestions: each child's class teacher, plus school admin/bursar

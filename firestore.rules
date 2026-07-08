@@ -200,7 +200,12 @@ service cloud.firestore {
                     isOwner(userId) ||
                     (isAuthenticated() &&
                      (isAdmin() || isTeacher()) &&
-                     resource.data.get('schoolId', null) == userProfile().schoolId);
+                     resource.data.get('schoolId', null) == userProfile().schoolId) ||
+                    // Parents may browse the staff directory (to start a message
+                    // to a teacher/admin) but never other parents' or students' profiles.
+                    (isAuthenticated() && isParent() &&
+                     resource.data.get('schoolId', null) == userProfile().schoolId &&
+                     resource.data.get('role', '') in ['teacher', 'admin', 'School_admin', 'accountant', 'hr', 'staff', 'librarian']);
 
       allow create: if emailRoleConsistent(request.resource.data) && (
                     // User creating their own profile on first sign-in

@@ -68,6 +68,85 @@ export default function ParentPortal() {
   // Fee payment modal
   const [payingInvoice, setPayingInvoice] = useState<Invoice | null>(null);
 
+  // Messaging: staff directory (for name resolution + search) and suggested contacts
+  const [staffDirectory, setStaffDirectory] = useState<{ id: string; name: string; email: string; role: string }[]>([]);
+  const [suggestedContacts, setSuggestedContacts] = useState<{ id: string; name: string; role: string }[]>([]);
+  const [contactQuery, setContactQuery] = useState('');
+  const [showContactDropdown, setShowContactDropdown] = useState(false);
+
+  const contactNameMap = React.useMemo(() => {
+    const map: Record<string, string> = {};
+    staffDirectory.forEach(s => { map[s.id] = s.name; });
+    suggestedContacts.forEach(s => { if (!map[s.id]) map[s.id] = s.name; });
+    return map;
+  }, [staffDirectory, suggestedContacts]);
+
+  // Load the searchable staff directory for this school (teachers, admins, etc.)
+  useEffect(() => {
+    if (!schoolId) return;
+    getDocs(query(
+      collection(db, 'users'),
+      where('schoolId', '==', schoolId),
+      where('role', 'in', ['teacher', 'admin', 'School_admin', 'accountant', 'hr', 'staff', 'librarian']),
+    )).then(snap => {
+      setStaffDirectory(snap.docs.map(d => ({
+        id: d.id,
+        name: (d.data().displayName as string) || (d.data().email as string) || d.id,
+        email: (d.data().email as string) || '',
+        role: (d.data().role as string) || 'staff',
+      })));
+    }).catch(() => {});
+  }, [schoolId]);
+
+  // Build "quick dial" suggestions: each child's class teacher, plus school admin/bursar
+  useEffect(() => {
+    if (!schoolId || children.length === 0) { setSuggestedContacts([]); return; }
+    let cancelled = false;
+    (async () => {
+      const suggestions: { id: string; name: string; role: string }[] = [];
+      const seen = new Set<string>();
+      for (const child of children) {
+        if (!child.currentClass) continue;
+        try {
+          const classSnap = await getDocs(query(
+            collection(db, 'classes'),
+            where('schoolId', '==', schoolId),
+            where('name', '==', child.currentClass),
+          ));
+          const classData = classSnap.docs[0]?.data();
+          const tutorId = classData?.formTutorId as string | undefined;
+          const tutorName = classData?.formTutorName as string | undefined;
+          if (tutorId && !seen.has(tutorId)) {
+            seen.add(tutorId);
+            suggestions.push({ id: tutorId, name: tutorName || 'Class Teacher', role: `${child.studentName}'s Teacher` });
+          }
+        } catch { /* non-fatal */ }
+      }
+      try {
+        const adminSnap = await getDocs(query(
+          collection(db, 'users'), where('schoolId', '==', schoolId), where('role', 'in', ['admin', 'School_admin']),
+        ));
+        adminSnap.docs.forEach(d => {
+          if (!seen.has(d.id)) {
+            seen.add(d.id);
+            suggestions.push({ id: d.id, name: (d.data().displayName as string) || (d.data().email as string), role: 'School Admin' });
+          }
+        });
+        const acctSnap = await getDocs(query(
+          collection(db, 'users'), where('schoolId', '==', schoolId), where('role', '==', 'accountant'),
+        ));
+        acctSnap.docs.forEach(d => {
+          if (!seen.has(d.id)) {
+            seen.add(d.id);
+            suggestions.push({ id: d.id, name: (d.data().displayName as string) || (d.data().email as string), role: 'Bursar' });
+          }
+        });
+      } catch { /* non-fatal */ }
+      if (!cancelled) setSuggestedContacts(suggestions);
+    })();
+    return () => { cancelled = true; };
+  }, [schoolId, children]);
+
   // ─── FCM Initialisation ──────────────────────────────────────────────────────
   // Parents are the actual target of fee/absence reminder pushes, but this
   // was previously only wired up in AdminDashboard — so parents never had a
@@ -1180,19 +1259,20 @@ export default function ParentPortal() {
               <h3 className="font-bold text-slate-900 flex items-center gap-2"><MessageSquare className="w-4 h-4 text-indigo-600" />Conversations</h3>
             </div>
             <div className="flex-1 overflow-y-auto p-3 space-y-2">
-              <button onClick={() => setNewMessage({ receiverId: '', content: '' })}
+              <button onClick={() => { setNewMessage({ receiverId: '', content: '' }); setContactQuery(''); setShowContactDropdown(true); }}
                 className="w-full p-3 rounded-2xl border-2 border-dashed border-slate-200 text-slate-400 hover:border-indigo-300 hover:text-indigo-500 transition-all text-sm font-bold flex items-center justify-center gap-2">
                 <Plus className="w-4 h-4" /> New Conversation
               </button>
               {Array.from(new Set(messages.map(m => m.senderId === user?.uid ? m.receiverId : m.senderId))).map(otherId => {
                 const lastMsg = messages.find(m => m.senderId === otherId || m.receiverId === otherId);
                 const unread = messages.filter(m => m.senderId === otherId && !m.read).length;
+                const displayName = lastMsg?.senderId === otherId ? lastMsg.senderName : (contactNameMap[otherId] || otherId);
                 return (
                   <button key={otherId}
                     onClick={() => { setNewMessage({ receiverId: otherId, content: '' }); messages.filter(m => m.senderId === otherId && !m.read).forEach(async m => { await updateDoc(doc(db, 'messages', m.id!), { read: true }); }); }}
                     className={`w-full p-4 text-left rounded-2xl transition-all border ${newMessage.receiverId === otherId ? 'bg-indigo-50 border-indigo-100' : 'hover:bg-slate-50 border-transparent'}`}>
                     <div className="flex justify-between items-start mb-1">
-                      <p className="font-bold text-slate-900 text-sm truncate max-w-[120px]">{lastMsg?.senderId === otherId ? lastMsg.senderName : otherId}</p>
+                      <p className="font-bold text-slate-900 text-sm truncate max-w-[120px]">{displayName}</p>
                       {unread > 0 && <span className="bg-indigo-600 text-white text-[10px] px-1.5 py-0.5 rounded-full font-bold">{unread}</span>}
                     </div>
                     <p className="text-xs text-slate-500 truncate">{lastMsg?.content}</p>
@@ -1206,7 +1286,7 @@ export default function ParentPortal() {
             {newMessage.receiverId ? (
               <>
                 <div className="p-5 border-b border-slate-100 bg-slate-50/50">
-                  <h3 className="font-bold text-slate-900">{newMessage.receiverId}</h3>
+                  <h3 className="font-bold text-slate-900">{contactNameMap[newMessage.receiverId] || newMessage.receiverId}</h3>
                   <p className="text-[10px] text-slate-400 uppercase font-bold tracking-wider">Communication Log</p>
                 </div>
                 <div className="flex-1 overflow-y-auto p-5 space-y-4 bg-slate-50/30">
@@ -1239,9 +1319,63 @@ export default function ParentPortal() {
                 </div>
                 <h3 className="text-lg font-bold text-slate-900 mb-2">Send a message</h3>
                 <p className="text-slate-500 text-sm max-w-xs mb-6">Contact your child's teacher or school administration.</p>
-                <div className="w-full max-w-xs">
-                  <input type="email" placeholder="Enter teacher or staff email..." onChange={e => setNewMessage({ ...newMessage, receiverId: e.target.value })}
-                    className="w-full px-4 py-3 rounded-xl border border-slate-200 outline-none focus:ring-2 focus:ring-indigo-500 text-sm" />
+                <div className="w-full max-w-xs relative text-left">
+                  <input
+                    type="text"
+                    value={contactQuery}
+                    onChange={e => { setContactQuery(e.target.value); setShowContactDropdown(true); }}
+                    onFocus={() => setShowContactDropdown(true)}
+                    onBlur={() => setTimeout(() => setShowContactDropdown(false), 150)}
+                    placeholder="Search teacher, staff, or email..."
+                    className="w-full px-4 py-3 rounded-xl border border-slate-200 outline-none focus:ring-2 focus:ring-indigo-500 text-sm"
+                  />
+                  {showContactDropdown && (() => {
+                    const q = contactQuery.trim().toLowerCase();
+                    const matches = q
+                      ? staffDirectory.filter(s => s.name.toLowerCase().includes(q) || s.email.toLowerCase().includes(q))
+                      : [];
+                    const isEmail = /\S+@\S+\.\S+/.test(contactQuery.trim());
+                    const pick = (id: string) => { setNewMessage({ receiverId: id, content: '' }); setContactQuery(''); setShowContactDropdown(false); };
+                    return (
+                      <div className="absolute z-10 mt-1 w-full bg-white border border-slate-200 rounded-xl shadow-lg max-h-64 overflow-y-auto">
+                        {!q && suggestedContacts.length > 0 && (
+                          <div className="p-2">
+                            <p className="px-2 py-1 text-[10px] font-bold text-slate-400 uppercase tracking-wide">Suggested</p>
+                            {suggestedContacts.map(c => (
+                              <button key={c.id} type="button" onClick={() => pick(c.id)}
+                                className="w-full flex items-center justify-between px-3 py-2 rounded-lg hover:bg-indigo-50 text-left">
+                                <span className="text-sm font-semibold text-slate-800">{c.name}</span>
+                                <span className="text-xs text-slate-400">{c.role}</span>
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                        {!q && suggestedContacts.length === 0 && (
+                          <p className="px-4 py-3 text-xs text-slate-400">Start typing a name or email to search staff.</p>
+                        )}
+                        {q && matches.length > 0 && (
+                          <div className="p-2">
+                            {matches.map(s => (
+                              <button key={s.id} type="button" onClick={() => pick(s.id)}
+                                className="w-full flex items-center justify-between px-3 py-2 rounded-lg hover:bg-indigo-50 text-left">
+                                <span className="text-sm font-semibold text-slate-800">{s.name}</span>
+                                <span className="text-xs text-slate-400 capitalize">{s.role}</span>
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                        {q && matches.length === 0 && !isEmail && (
+                          <p className="px-4 py-3 text-xs text-slate-400">No staff found matching "{contactQuery}".</p>
+                        )}
+                        {q && isEmail && (
+                          <button type="button" onClick={() => pick(contactQuery.trim())}
+                            className="w-full px-3 py-2 text-left text-sm text-indigo-600 hover:bg-indigo-50 border-t border-slate-100 font-medium">
+                            Message "{contactQuery.trim()}" directly
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })()}
                 </div>
               </div>
             )}

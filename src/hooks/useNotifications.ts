@@ -43,7 +43,11 @@ export function useNotifications() {
   const markRead = async (id: string) => {
     const target = notifications.find(n => n.id === id);
     if (!target || target.recipientId === 'all') return;
-    await updateDoc(doc(db, 'notifications', id), { read: true });
+    try {
+      await updateDoc(doc(db, 'notifications', id), { read: true });
+    } catch (err: any) {
+      console.error('[useNotifications] markRead failed:', err.code, err.message);
+    }
   };
 
   const markAllRead = async () => {
@@ -51,7 +55,11 @@ export function useNotifications() {
     if (unread.length === 0) return;
     const batch = writeBatch(db);
     unread.forEach(n => batch.update(doc(db, 'notifications', n.id!), { read: true }));
-    await batch.commit();
+    try {
+      await batch.commit();
+    } catch (err: any) {
+      console.error('[useNotifications] markAllRead failed:', err.code, err.message);
+    }
   };
 
   return { notifications, unreadCount, loading, markRead, markAllRead };

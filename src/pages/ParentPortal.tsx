@@ -1296,7 +1296,13 @@ export default function ParentPortal() {
                 const displayName = lastMsg?.senderId === otherId ? lastMsg.senderName : (contactNameMap[otherId] || otherId);
                 return (
                   <button key={otherId}
-                    onClick={() => { setNewMessage({ receiverId: otherId, content: '' }); messages.filter(m => m.senderId === otherId && !m.read).forEach(async m => { await updateDoc(doc(db, 'messages', m.id!), { read: true }); }); }}
+                    onClick={() => {
+                      setNewMessage({ receiverId: otherId, content: '' });
+                      messages.filter(m => m.senderId === otherId && !m.read).forEach(m => {
+                        updateDoc(doc(db, 'messages', m.id!), { read: true })
+                          .catch(err => console.error('[ParentPortal] mark message read failed:', err.code, err.message));
+                      });
+                    }}
                     className={`w-full p-4 text-left rounded-2xl transition-all border ${newMessage.receiverId === otherId ? 'bg-indigo-50 border-indigo-100' : 'hover:bg-slate-50 border-transparent'}`}>
                     <div className="flex justify-between items-start mb-1">
                       <p className="font-bold text-slate-900 text-sm truncate max-w-[120px]">{displayName}</p>

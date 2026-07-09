@@ -111,6 +111,77 @@ export default function TeacherPortal() {
   // New Message Form
   const [newMessage, setNewMessage] = useState({ receiverId: '', content: '' });
 
+  // Messaging: contact directory (parents of this teacher's students + school
+  // admins) for name resolution + the "New Conversation" search/suggestions.
+  const [adminContacts, setAdminContacts] = useState<{ id: string; name: string; email: string; role: string }[]>([]);
+  const [contactQuery, setContactQuery] = useState('');
+  const [showContactDropdown, setShowContactDropdown] = useState(false);
+  const [resolvedNames, setResolvedNames] = useState<Record<string, string>>({});
+
+  // Every guardian of a student this teacher has visibility over, keyed by
+  // both possible receiverId forms (linked uid and/or email) since messages
+  // may address either.
+  const guardianContacts = React.useMemo(() => {
+    const list: { id: string; name: string; email: string; role: string }[] = [];
+    const seen = new Set<string>();
+    students.forEach(s => {
+      if (!s.guardianName) return;
+      const label = `${s.guardianName} (${s.studentName}'s Guardian)`;
+      const id = s.guardianUserId || s.guardianEmail;
+      if (id && !seen.has(id)) { seen.add(id); list.push({ id, name: label, email: s.guardianEmail || '', role: 'guardian' }); }
+      // Also index by email even when a uid is the primary id, so lookups by either form resolve.
+      if (s.guardianUserId && s.guardianEmail && !seen.has(s.guardianEmail)) {
+        seen.add(s.guardianEmail);
+        list.push({ id: s.guardianEmail, name: label, email: s.guardianEmail, role: 'guardian' });
+      }
+    });
+    return list;
+  }, [students]);
+
+  useEffect(() => {
+    if (!schoolId) return;
+    getDocs(query(
+      collection(db, 'users'),
+      where('schoolId', '==', schoolId),
+      where('role', 'in', ['admin', 'School_admin']),
+    )).then(snap => {
+      setAdminContacts(snap.docs.map(d => ({
+        id: d.id,
+        name: (d.data().displayName as string) || (d.data().email as string) || d.id,
+        email: (d.data().email as string) || '',
+        role: 'School Admin',
+      })));
+    }).catch(err => console.error('[TeacherPortal] admin directory query failed:', err.code, err.message));
+  }, [schoolId]);
+
+  const contactNameMap = React.useMemo(() => {
+    const map: Record<string, string> = {};
+    guardianContacts.forEach(c => { map[c.id] = c.name; });
+    adminContacts.forEach(c => { if (!map[c.id]) map[c.id] = c.name; });
+    Object.keys(resolvedNames).forEach(id => { if (!map[id]) map[id] = resolvedNames[id]; });
+    return map;
+  }, [guardianContacts, adminContacts, resolvedNames]);
+
+  // Fallback resolver for conversation partners not covered by loaded students/admins
+  useEffect(() => {
+    if (!user) return;
+    const knownIds = new Set<string>([...guardianContacts.map(c => c.id), ...adminContacts.map(c => c.id), ...Object.keys(resolvedNames)]);
+    const partnerIds: string[] = messages.map(m => m.senderId === user.uid ? m.receiverId : m.senderId);
+    const unknownIds = Array.from(new Set(partnerIds))
+      .filter((id): id is string => Boolean(id) && !knownIds.has(id) && !/\S+@\S+\.\S+/.test(id));
+    unknownIds.forEach(async (id: string) => {
+      try {
+        const snap = await getDoc(doc(db, 'users', id));
+        if (snap.exists()) {
+          const d = snap.data();
+          setResolvedNames(prev => ({ ...prev, [id]: (d.displayName as string) || (d.email as string) || id }));
+        }
+      } catch (err) {
+        console.error('[TeacherPortal] failed to resolve contact name for', id, err);
+      }
+    });
+  }, [messages, guardianContacts, adminContacts, resolvedNames, user]);
+
   // AI Tools state
   const [aiTool, setAiTool] = useState<'lesson' | 'questions'>('lesson');
   const [aiSubject, setAiSubject] = useState(allSubjects[0]);
@@ -1768,19 +1839,26 @@ export default function TeacherPortal() {
               <h3 className="font-bold text-slate-900 flex items-center gap-2"><MessageSquare className="w-4 h-4 text-indigo-600" />Conversations</h3>
             </div>
             <div className="flex-1 overflow-y-auto p-3 space-y-2">
-              <button onClick={() => setNewMessage({ receiverId: '', content: '' })}
+              <button onClick={() => { setNewMessage({ receiverId: '', content: '' }); setContactQuery(''); setShowContactDropdown(true); }}
                 className="w-full p-3 text-left rounded-2xl border-2 border-dashed border-slate-200 text-slate-400 hover:border-indigo-300 hover:text-indigo-500 transition-all text-sm font-bold flex items-center justify-center gap-2">
                 <Plus className="w-4 h-4" /> New Conversation
               </button>
               {Array.from(new Set(messages.map(m => m.senderId === user?.uid ? m.receiverId : m.senderId))).map(otherId => {
                 const lastMsg = messages.find(m => m.senderId === otherId || m.receiverId === otherId);
                 const unread = messages.filter(m => m.senderId === otherId && !m.read).length;
+                const displayName = lastMsg?.senderId === otherId ? lastMsg.senderName : (contactNameMap[otherId] || otherId);
                 return (
                   <button key={otherId}
-                    onClick={() => { setNewMessage({ receiverId: otherId, content: '' }); messages.filter(m => m.senderId === otherId && !m.read).forEach(async m => { await updateDoc(doc(db, 'messages', m.id!), { read: true }); }); }}
+                    onClick={() => {
+                      setNewMessage({ receiverId: otherId, content: '' });
+                      messages.filter(m => m.senderId === otherId && !m.read).forEach(m => {
+                        updateDoc(doc(db, 'messages', m.id!), { read: true })
+                          .catch(err => console.error('[TeacherPortal] mark message read failed:', err.code, err.message));
+                      });
+                    }}
                     className={`w-full p-4 text-left rounded-2xl transition-all border ${newMessage.receiverId === otherId ? 'bg-indigo-50 border-indigo-100' : 'hover:bg-slate-50 border-transparent'}`}>
                     <div className="flex justify-between items-start mb-1">
-                      <p className="font-bold text-slate-900 text-sm truncate max-w-[120px]">{lastMsg?.senderId === otherId ? lastMsg.senderName : otherId}</p>
+                      <p className="font-bold text-slate-900 text-sm truncate max-w-[120px]">{displayName}</p>
                       {unread > 0 && <span className="bg-indigo-600 text-white text-[10px] px-1.5 py-0.5 rounded-full font-bold">{unread}</span>}
                     </div>
                     <p className="text-xs text-slate-500 truncate">{lastMsg?.content}</p>
@@ -1794,7 +1872,7 @@ export default function TeacherPortal() {
             {newMessage.receiverId ? (
               <>
                 <div className="p-5 border-b border-slate-100 bg-slate-50/50">
-                  <h3 className="font-bold text-slate-900">{newMessage.receiverId}</h3>
+                  <h3 className="font-bold text-slate-900">{contactNameMap[newMessage.receiverId] || newMessage.receiverId}</h3>
                   <p className="text-[10px] text-slate-400 uppercase font-bold tracking-wider">Communication Log</p>
                 </div>
                 <div className="flex-1 overflow-y-auto p-5 space-y-4 bg-slate-50/30">
@@ -1826,10 +1904,52 @@ export default function TeacherPortal() {
                   <MessageSquare className="w-8 h-8 text-indigo-600" />
                 </div>
                 <h3 className="text-lg font-bold text-slate-900 mb-2">Select a conversation</h3>
-                <p className="text-slate-500 text-sm max-w-xs mb-6">Choose from the left or enter a parent email to start a new conversation.</p>
-                <div className="w-full max-w-xs">
-                  <input type="email" placeholder="Enter parent email..." onChange={e => setNewMessage({ ...newMessage, receiverId: e.target.value })}
-                    className="w-full px-4 py-3 rounded-xl border border-slate-200 outline-none focus:ring-2 focus:ring-indigo-500 text-sm" />
+                <p className="text-slate-500 text-sm max-w-xs mb-6">Choose from the left or search for a parent/guardian or school admin.</p>
+                <div className="w-full max-w-xs relative text-left">
+                  <input
+                    type="text"
+                    value={contactQuery}
+                    onChange={e => { setContactQuery(e.target.value); setShowContactDropdown(true); }}
+                    onFocus={() => setShowContactDropdown(true)}
+                    onBlur={() => setTimeout(() => setShowContactDropdown(false), 150)}
+                    placeholder="Search guardian, admin, or email..."
+                    className="w-full px-4 py-3 rounded-xl border border-slate-200 outline-none focus:ring-2 focus:ring-indigo-500 text-sm"
+                  />
+                  {showContactDropdown && (() => {
+                    const q = contactQuery.trim().toLowerCase();
+                    const allContacts = [...guardianContacts, ...adminContacts];
+                    const matches = q
+                      ? allContacts.filter(c => c.name.toLowerCase().includes(q) || c.email.toLowerCase().includes(q))
+                      : allContacts.slice(0, 8);
+                    const isEmail = /\S+@\S+\.\S+/.test(contactQuery.trim());
+                    const pick = (id: string) => { setNewMessage({ receiverId: id, content: '' }); setContactQuery(''); setShowContactDropdown(false); };
+                    return (
+                      <div className="absolute z-10 mt-1 w-full bg-white border border-slate-200 rounded-xl shadow-lg max-h-64 overflow-y-auto">
+                        {!q && matches.length > 0 && (
+                          <p className="px-4 py-1.5 text-[10px] font-bold text-slate-400 uppercase tracking-wide">Suggested</p>
+                        )}
+                        {matches.length > 0 ? (
+                          <div className="p-2 pt-0">
+                            {matches.map(c => (
+                              <button key={c.id} type="button" onClick={() => pick(c.id)}
+                                className="w-full flex items-center justify-between px-3 py-2 rounded-lg hover:bg-indigo-50 text-left">
+                                <span className="text-sm font-semibold text-slate-800 truncate">{c.name}</span>
+                                <span className="text-xs text-slate-400 shrink-0 ml-2">{c.role}</span>
+                              </button>
+                            ))}
+                          </div>
+                        ) : q && !isEmail ? (
+                          <p className="px-4 py-3 text-xs text-slate-400">No contacts found matching "{contactQuery}".</p>
+                        ) : null}
+                        {q && isEmail && (
+                          <button type="button" onClick={() => pick(contactQuery.trim())}
+                            className="w-full px-3 py-2 text-left text-sm text-indigo-600 hover:bg-indigo-50 border-t border-slate-100 font-medium">
+                            Message "{contactQuery.trim()}" directly
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })()}
                 </div>
               </div>
             )}

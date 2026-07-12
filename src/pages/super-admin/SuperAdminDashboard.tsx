@@ -6,7 +6,7 @@
 
 import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { collection, getDocs, query, orderBy, doc, updateDoc, where } from 'firebase/firestore';
+import { collection, getDocs, query, orderBy, doc, updateDoc, where, getCountFromServer } from 'firebase/firestore';
 import { db } from '../../firebase';
 import { School } from '../../types';
 import toast from 'react-hot-toast';
@@ -88,18 +88,25 @@ export default function SuperAdminDashboard() {
   useEffect(() => {
     const load = async () => {
       try {
+        // Full document read is unavoidable here — every field (status, plan, etc.)
+        // is used to build the school list/table below, not just a count.
         const schoolsSnap = await getDocs(collection(db, 'schools'));
         const schoolList = schoolsSnap.docs.map(d => ({ id: d.id, ...d.data() } as School));
         setSchools(schoolList);
-        const studentsSnap = await getDocs(collection(db, 'students'));
-        const activeStudentCount = studentsSnap.docs.filter(d => d.data().admissionStatus !== 'withdrawn').length;
+        // Total students is a pure count for one KPI tile — use a server-side
+        // aggregation query instead of downloading every student document from
+        // every school. This used to scan the entire `students` collection on
+        // every dashboard load/refresh, which is what drove the read spike.
+        const countSnap = await getCountFromServer(
+          query(collection(db, 'students'), where('admissionStatus', '!=', 'withdrawn'))
+        );
         setStats({
           totalSchools: schoolList.length,
           activeSchools: schoolList.filter(s => s.status === 'active').length,
           suspendedSchools: schoolList.filter(s => s.status === 'suspended').length,
           trialSchools: schoolList.filter(s => s.status === 'trial').length,
           demoSchools: schoolList.filter(s => s.status === 'demo').length,
-          totalStudents: activeStudentCount,
+          totalStudents: countSnap.data().count,
           loading: false,
         });
       } catch {

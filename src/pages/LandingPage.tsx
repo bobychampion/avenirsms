@@ -501,10 +501,13 @@ function DemoModal({ open, onClose }: { open: boolean; onClose: () => void }) {
       });
       await batch.commit();
 
-      // 7. Update demo_request to provisioned state
+      // 7. Update demo_request to provisioned state. tempPassword is stored here
+      //    so super_admin can look it up later (e.g. if the requester loses the
+      //    one-time display below) — there's no email delivery on the Spark plan,
+      //    so this is currently the only recovery path for a forgotten demo password.
       setProvisionStep('Finalising…');
       await setDoc(demoReqRef, {
-        status: 'provisioned', schoolId, adminUid: uid, provisionedAt: serverTimestamp(),
+        status: 'provisioned', schoolId, adminUid: uid, provisionedAt: serverTimestamp(), tempPassword,
       }, { merge: true });
 
       // 8. Sign OUT so the landing page doesn't auto-redirect (credentials must be

@@ -9,10 +9,11 @@ import { Link } from 'react-router-dom';
 import { collection, getDocs, query, orderBy, doc, updateDoc, where } from 'firebase/firestore';
 import { db } from '../../firebase';
 import { School } from '../../types';
+import toast from 'react-hot-toast';
 import {
   Building2, Users, CheckCircle2, CreditCard, Plus, ArrowRight,
   TrendingUp, AlertCircle, Clock, FileText, Zap, Bell, Mail,
-  Phone, BookOpen, ChevronDown, CheckCheck, X, Inbox,
+  Phone, BookOpen, ChevronDown, CheckCheck, X, Inbox, Eye, EyeOff, Copy, KeyRound,
 } from 'lucide-react';
 
 interface DemoRequest {
@@ -31,6 +32,8 @@ interface DemoRequest {
   status: 'pending' | 'provisioned' | 'contacted' | 'conversion_requested' | 'converted' | 'dismissed';
   schoolId?: string;
   adminUid?: string;
+  /** One-time temp password generated at signup — stored so it can be recovered if lost (no email delivery on Spark plan). */
+  tempPassword?: string;
   provisionedAt?: any;
   conversionRequestedAt?: any;
   finalSchoolName?: string;
@@ -68,6 +71,19 @@ export default function SuperAdminDashboard() {
   const [demoLoading, setDemoLoading] = useState(true);
   const [demoFilter, setDemoFilter] = useState<DemoRequest['status'] | 'all'>('all');
   const [updatingId, setUpdatingId] = useState<string | null>(null);
+  const [revealedPasswords, setRevealedPasswords] = useState<Set<string>>(new Set());
+
+  const togglePasswordReveal = (id: string) => {
+    setRevealedPasswords(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
+  const copyPassword = (password: string) => {
+    navigator.clipboard.writeText(password).then(() => toast.success('Password copied.'));
+  };
 
   useEffect(() => {
     const load = async () => {
@@ -272,6 +288,31 @@ export default function SuperAdminDashboard() {
                       <p className="mt-1.5 text-xs text-indigo-600 font-medium">
                         Demo active · School ID: {req.schoolId.slice(0, 10)}…
                       </p>
+                    )}
+                    {req.tempPassword && (
+                      <div className="mt-2 flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5 w-fit">
+                        <KeyRound className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                        <span className="text-xs text-slate-500">Admin login password:</span>
+                        <span className="text-xs font-mono font-bold text-slate-800">
+                          {revealedPasswords.has(req.id) ? req.tempPassword : '••••••••••'}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => togglePasswordReveal(req.id)}
+                          title={revealedPasswords.has(req.id) ? 'Hide' : 'Reveal'}
+                          className="p-1 text-slate-400 hover:text-slate-700 hover:bg-slate-200 rounded transition-colors"
+                        >
+                          {revealedPasswords.has(req.id) ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => copyPassword(req.tempPassword!)}
+                          title="Copy password"
+                          className="p-1 text-slate-400 hover:text-slate-700 hover:bg-slate-200 rounded transition-colors"
+                        >
+                          <Copy className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
                     )}
                     {req.status === 'conversion_requested' && (
                       <div className="mt-2 p-2 bg-violet-50 rounded-lg border border-violet-100 text-xs space-y-0.5">

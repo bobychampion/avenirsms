@@ -1462,9 +1462,9 @@ export default function SchoolSettingsPage() {
             </p>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               {([
-                { value: 'secondary', label: 'Secondary / Primary School', hint: 'Classes & form tutors' },
-                { value: 'college', label: 'College (Health, Technical, Nursing…)', hint: 'Adds Departments' },
-                { value: 'online', label: 'Online Training Provider', hint: 'No physical attendance/GPS' },
+                { value: 'secondary', label: 'Secondary / Primary School', hint: 'Classes & form tutors', Icon: School },
+                { value: 'college', label: 'College (Health, Technical, Nursing…)', hint: 'Adds Departments', Icon: Landmark },
+                { value: 'online', label: 'Online Training Provider', hint: 'No physical attendance/GPS', Icon: Monitor },
               ] as const).map(opt => (
                 <button
                   key={opt.value}
@@ -1476,6 +1476,7 @@ export default function SchoolSettingsPage() {
                       : 'border-slate-200 hover:border-slate-300'
                   }`}
                 >
+                  <opt.Icon className={`w-5 h-5 mb-2 ${(form.institutionType || 'secondary') === opt.value ? 'text-indigo-600' : 'text-slate-400'}`} />
                   <p className="text-sm font-bold text-slate-800">{opt.label}</p>
                   <p className="text-xs text-slate-500 mt-0.5">{opt.hint}</p>
                 </button>

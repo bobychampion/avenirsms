@@ -19,7 +19,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import {
   X, Settings, Upload, CheckCircle2, ArrowRight, ArrowLeft,
   Loader2, FileSpreadsheet, Users, Sparkles, AlertTriangle,
-  School, ChevronRight, Download,
+  School, ChevronRight, Download, Landmark, Monitor,
 } from 'lucide-react';
 import { generateStudentId as genId } from '../services/firestoreService';
 import { OnboardingStep } from '../hooks/useOnboarding';
@@ -223,20 +223,21 @@ function SettingsStep({ schoolId, onDone, onNavigate }: { schoolId: string; onDo
         <p className="text-xs text-slate-500 mb-3">This shapes terminology and which features appear. You can change it later in Settings.</p>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
           {([
-            { value: 'secondary' as const, label: 'Secondary / Primary School' },
-            { value: 'college' as const, label: 'College (Health, Technical, Nursing…)' },
-            { value: 'online' as const, label: 'Online Training Provider' },
+            { value: 'secondary' as const, label: 'Secondary / Primary School', Icon: School },
+            { value: 'college' as const, label: 'College (Health, Technical, Nursing…)', Icon: Landmark },
+            { value: 'online' as const, label: 'Online Training Provider', Icon: Monitor },
           ]).map(opt => (
             <button
               key={opt.value}
               type="button"
               disabled={savingType}
               onClick={() => handleSelectInstitutionType(opt.value)}
-              className={`text-left px-3 py-2.5 rounded-lg border-2 text-sm font-medium transition-colors disabled:opacity-50 ${
+              className={`text-left px-3 py-2.5 rounded-lg border-2 text-sm font-medium transition-colors disabled:opacity-50 flex items-start gap-2 ${
                 institutionType === opt.value ? 'border-indigo-500 bg-indigo-50 text-indigo-700' : 'border-slate-200 text-slate-600 hover:border-slate-300'
               }`}
             >
-              {opt.label}
+              <opt.Icon className={`w-4 h-4 mt-0.5 shrink-0 ${institutionType === opt.value ? 'text-indigo-600' : 'text-slate-400'}`} />
+              <span>{opt.label}</span>
             </button>
           ))}
         </div>

@@ -102,6 +102,14 @@ export interface SchoolSettings {
   /** Placeholder/format hint shown under the identity document input, e.g. '11-digit NIN'. */
   identityDocumentHint: string;
   // Academic configuration
+  /**
+   * Institution type — drives terminology and which feature set is shown.
+   * 'secondary': current default behavior (classes, form tutors, WAEC-style reports).
+   * 'college': adds the Department tier (health/technical/nursing colleges — fixed
+   * cohorts per program/year, not open course registration).
+   * 'online': fully remote training provider — hides GPS/physical-attendance features.
+   */
+  institutionType?: 'secondary' | 'college' | 'online';
   gradingSystem: GradingSystem;
   customGradingScale: CustomGradeScale[];
   /** Per-level overrides (keyed by entry in schoolLevels), e.g. Kindergarten uses a descriptive scale while Secondary uses WAEC. */
@@ -258,6 +266,7 @@ export const defaultSettings: SchoolSettings = {
   identityDocumentLabel: 'NIN',
   identityDocumentHint: '11-digit NIN',
   // Academic
+  institutionType: 'secondary',
   gradingSystem: 'percentage',
   customGradingScale: [],
   levelGradingOverrides: {},
@@ -1439,6 +1448,37 @@ export default function SchoolSettingsPage() {
       ══════════════════════════════════════════════════════════════ */}
       {activeTab === 'academic' && (
         <div className="space-y-6">
+
+          {/* Institution Type */}
+          <section className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
+            <h2 className="font-bold text-slate-800 text-sm flex items-center gap-2 mb-1">
+              <Award className="w-4 h-4 text-indigo-600" /> Institution Type
+            </h2>
+            <p className="text-xs text-slate-500 mb-5">
+              Choose the option closest to your institution. This shapes terminology and which features appear across the app.
+            </p>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              {([
+                { value: 'secondary', label: 'Secondary / Primary School', hint: 'Classes & form tutors' },
+                { value: 'college', label: 'College (Health, Technical, Nursing…)', hint: 'Adds Departments' },
+                { value: 'online', label: 'Online Training Provider', hint: 'No physical attendance/GPS' },
+              ] as const).map(opt => (
+                <button
+                  key={opt.value}
+                  type="button"
+                  onClick={() => field('institutionType', opt.value)}
+                  className={`text-left px-4 py-3 rounded-xl border-2 transition-colors ${
+                    (form.institutionType || 'secondary') === opt.value
+                      ? 'border-indigo-500 bg-indigo-50'
+                      : 'border-slate-200 hover:border-slate-300'
+                  }`}
+                >
+                  <p className="text-sm font-bold text-slate-800">{opt.label}</p>
+                  <p className="text-xs text-slate-500 mt-0.5">{opt.hint}</p>
+                </button>
+              ))}
+            </div>
+          </section>
 
           {/* Academic Period */}
           <section className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">

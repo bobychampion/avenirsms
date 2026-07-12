@@ -71,6 +71,8 @@ interface SchoolContextValue {
   taxModel: 'nigeria_paye' | 'flat_rate' | 'none';
   taxFlatRate: number;
   cloudinaryConfig: { cloudName: string; uploadPreset: string };
+  /** Drives terminology + which feature set is shown across the app. */
+  institutionType: 'secondary' | 'college' | 'online';
   // School branding
   schoolName: string;
   logoUrl: string;
@@ -120,6 +122,7 @@ const SchoolContext = createContext<SchoolContextValue>({
   taxModel: 'none',
   taxFlatRate: 0,
   cloudinaryConfig: { cloudName: '', uploadPreset: '' },
+  institutionType: 'secondary',
   schoolName: 'Avenir SIS',
   logoUrl: '',
   faviconUrl: '',
@@ -174,6 +177,7 @@ export function SchoolProvider({ children }: { children: React.ReactNode }) {
   const [taxModel, setTaxModel] = useState<'nigeria_paye' | 'flat_rate' | 'none'>('none');
   const [taxFlatRate, setTaxFlatRate] = useState(0);
   const [cloudinaryConfig, setCloudinaryConfig] = useState({ cloudName: '', uploadPreset: '' });
+  const [institutionType, setInstitutionType] = useState<'secondary' | 'college' | 'online'>('secondary');
 
   // Subject definitions from Firestore subjects collection
   const [subjectDefinitions, setSubjectDefinitions] = useState<SubjectDefinition[]>([]);
@@ -257,6 +261,7 @@ export function SchoolProvider({ children }: { children: React.ReactNode }) {
       setTaxModel('none');
       setTaxFlatRate(0);
       setCloudinaryConfig({ cloudName: '', uploadPreset: '' });
+      setInstitutionType('secondary');
       setSchoolName('Avenir SIS');
       setLogoUrl('');
       setFaviconUrl('');
@@ -308,6 +313,7 @@ export function SchoolProvider({ children }: { children: React.ReactNode }) {
           setLevelGradingOverrides(data.levelGradingOverrides || {});
           setTaxModel(data.taxModel || 'none');
           setTaxFlatRate(data.taxFlatRate || 0);
+          setInstitutionType(data.institutionType || 'secondary');
           setCloudinaryConfig({
             cloudName: data.cloudinaryCloudName || '',
             uploadPreset: data.cloudinaryUploadPreset || '',
@@ -434,6 +440,7 @@ export function SchoolProvider({ children }: { children: React.ReactNode }) {
       taxModel,
       taxFlatRate,
       cloudinaryConfig,
+      institutionType,
       schoolName,
       logoUrl,
       faviconUrl,

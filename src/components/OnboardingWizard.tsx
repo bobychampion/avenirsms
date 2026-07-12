@@ -10,7 +10,7 @@ import React, { useState, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { db } from '../firebase';
 import {
-  collection, addDoc, getDocs, query, where, serverTimestamp, writeBatch, doc,
+  collection, addDoc, getDocs, query, where, serverTimestamp, writeBatch, doc, setDoc,
 } from 'firebase/firestore';
 import Papa from 'papaparse';
 import * as XLSX from 'xlsx';
@@ -152,6 +152,7 @@ export default function OnboardingWizard({
           >
             {currentStep === 'settings' && (
               <SettingsStep
+                schoolId={schoolId}
                 onDone={onMarkSettingsDone}
                 onNavigate={() => navigate('/admin/settings')}
               />
@@ -175,8 +176,10 @@ export default function OnboardingWizard({
 
 // ─── Step 1: Settings ─────────────────────────────────────────────────────────
 
-function SettingsStep({ onDone, onNavigate }: { onDone: () => Promise<void>; onNavigate: () => void }) {
+function SettingsStep({ schoolId, onDone, onNavigate }: { schoolId: string; onDone: () => Promise<void>; onNavigate: () => void }) {
   const [confirming, setConfirming] = useState(false);
+  const [institutionType, setInstitutionType] = useState<'secondary' | 'college' | 'online' | null>(null);
+  const [savingType, setSavingType] = useState(false);
 
   const handleGoToSettings = () => {
     onNavigate();
@@ -186,6 +189,18 @@ function SettingsStep({ onDone, onNavigate }: { onDone: () => Promise<void>; onN
     setConfirming(true);
     await onDone();
     setConfirming(false);
+  };
+
+  const handleSelectInstitutionType = async (value: 'secondary' | 'college' | 'online') => {
+    setInstitutionType(value);
+    setSavingType(true);
+    try {
+      await setDoc(doc(db, 'school_settings', schoolId), { institutionType: value }, { merge: true });
+    } catch {
+      toast.error('Failed to save institution type — you can set it later in School Settings.');
+    } finally {
+      setSavingType(false);
+    }
   };
 
   return (
@@ -200,6 +215,30 @@ function SettingsStep({ onDone, onNavigate }: { onDone: () => Promise<void>; onN
             Set your school name, logo, academic session, grading system, and other preferences.
             This takes about 5 minutes.
           </p>
+        </div>
+      </div>
+
+      <div className="bg-white border border-slate-200 rounded-xl p-4 mb-6">
+        <p className="text-sm font-semibold text-slate-800 mb-1">What type of institution is this?</p>
+        <p className="text-xs text-slate-500 mb-3">This shapes terminology and which features appear. You can change it later in Settings.</p>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+          {([
+            { value: 'secondary' as const, label: 'Secondary / Primary School' },
+            { value: 'college' as const, label: 'College (Health, Technical, Nursing…)' },
+            { value: 'online' as const, label: 'Online Training Provider' },
+          ]).map(opt => (
+            <button
+              key={opt.value}
+              type="button"
+              disabled={savingType}
+              onClick={() => handleSelectInstitutionType(opt.value)}
+              className={`text-left px-3 py-2.5 rounded-lg border-2 text-sm font-medium transition-colors disabled:opacity-50 ${
+                institutionType === opt.value ? 'border-indigo-500 bg-indigo-50 text-indigo-700' : 'border-slate-200 text-slate-600 hover:border-slate-300'
+              }`}
+            >
+              {opt.label}
+            </button>
+          ))}
         </div>
       </div>
 

@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { db, handleFirestoreError, OperationType } from '../firebase';
 import { collection, query, onSnapshot, doc, setDoc, serverTimestamp, where } from 'firebase/firestore';
-import { Timetable, TimetablePeriod, DAYS_OF_WEEK, UserProfile } from '../types';
+import { Timetable, TimetablePeriod, UserProfile } from '../types';
 import { AnimatePresence, motion } from 'motion/react';
 import { Clock, X, Save, AlertTriangle, CheckCircle, Coffee, Settings } from 'lucide-react';
 import { useClassSelectOptions, useSchool } from '../components/SchoolContext';
@@ -17,7 +17,7 @@ import {
 export default function TimetableManagement() {
   const schoolId = useSchoolId();
   const classSelectOptions = useClassSelectOptions();
-  const { subjects, timetablePeriods, currentSession, terms, getSubjectsForClass } = useSchool();
+  const { subjects, timetablePeriods, currentSession, terms, getSubjectsForClass, schoolDays } = useSchool();
 
   const columns = useMemo(() => slotColumnHeaders(timetablePeriods), [timetablePeriods]);
 
@@ -84,9 +84,9 @@ export default function TimetableManagement() {
 
   useEffect(() => {
     if (timetable) {
-      setConflicts(detectTimetableConflicts(timetable.schedule, DAYS_OF_WEEK));
+      setConflicts(detectTimetableConflicts(timetable.schedule, schoolDays));
     }
-  }, [timetable]);
+  }, [timetable, schoolDays]);
 
   const openEditModal = (day: string, slotId: string) => {
     const slot = columns.find(s => s.id === slotId);
@@ -166,8 +166,8 @@ export default function TimetableManagement() {
   ];
   const subjectColorMap: Record<string, string> = {};
   let colorIdx = 0;
-  timetable && DAYS_OF_WEEK.forEach(day =>
-    (timetable.schedule[day] || []).forEach(p => {
+  timetable && schoolDays.forEach(day =>
+    (timetable.schedule[day as keyof Timetable['schedule']] || []).forEach(p => {
       if (!subjectColorMap[p.subject]) subjectColorMap[p.subject] = SUBJECT_COLORS[colorIdx++ % SUBJECT_COLORS.length];
     })
   );
@@ -257,8 +257,8 @@ export default function TimetableManagement() {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {timetable && DAYS_OF_WEEK.map(day => {
-                const dayPeriods = timetable.schedule[day] || [];
+              {timetable && schoolDays.map(day => {
+                const dayPeriods = timetable.schedule[day as keyof Timetable['schedule']] || [];
                 return (
                   <tr key={day} className="hover:bg-slate-50 transition-colors">
                     <td className="px-5 py-3 sticky left-0 bg-white z-10">

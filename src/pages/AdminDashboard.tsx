@@ -8,7 +8,7 @@ import {
   showBrowserNotification, showFcmPushNotification,
 } from '../services/notificationService';
 import StorageSetupBanner from '../components/StorageSetupBanner';
-import { Application, ApplicationStatus, GeoFence, TeacherCheckIn, Timetable, DAYS_OF_WEEK } from '../types';
+import { Application, ApplicationStatus, GeoFence, TeacherCheckIn, Timetable } from '../types';
 import { useSchool } from '../components/SchoolContext';
 import { useSchoolId } from '../hooks/useSchoolId';
 import { formatCurrency } from '../utils/formatCurrency';
@@ -128,8 +128,9 @@ function computeLiveClasses(
   timetables: Timetable[],
   checkins: TeacherCheckIn[],
   now: Date,
+  activeDays: readonly string[],
 ): LiveClassRow[] {
-  const dayName = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][now.getDay()] as typeof DAYS_OF_WEEK[number];
+  const dayName = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][now.getDay()];
   const timeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
 
   const checkinMap: Record<string, TeacherCheckIn> = {};
@@ -139,10 +140,6 @@ function computeLiveClasses(
     if (c.type === 'check_out') checkoutMap[c.teacherName] = true;
   });
 
-  const schoolDays: Record<string, boolean> = {
-    Monday: true, Tuesday: true, Wednesday: true, Thursday: true, Friday: true,
-  };
-
   return timetables.map(tt => {
     const base: LiveClassRow = {
       className: tt.class,
@@ -151,11 +148,11 @@ function computeLiveClasses(
       outOfFence: false,
     };
 
-    if (!schoolDays[dayName]) {
+    if (!activeDays.includes(dayName)) {
       return { ...base, status: 'no_timetable' };
     }
 
-    const periods = tt.schedule[dayName as typeof DAYS_OF_WEEK[number]] || [];
+    const periods = tt.schedule[dayName as keyof Timetable['schedule']] || [];
     if (periods.length === 0) return { ...base, status: 'no_timetable' };
 
     // Find the current or next period
@@ -204,7 +201,7 @@ function computeLiveClasses(
 
 export default function AdminDashboard() {
   const { user } = useAuth();
-  const { locale, currency } = useSchool();
+  const { locale, currency, schoolDays } = useSchool();
   const schoolId = useSchoolId();
   const fmt = (amount: number) => formatCurrency(amount, locale, currency);
 
@@ -339,7 +336,7 @@ export default function AdminDashboard() {
     // ── Idle-class alert: every 5 min check for started-but-unteachered periods ──
     const idleCheck = setInterval(() => {
       const now = new Date();
-      const liveClasses = computeLiveClasses(timetablesRef.current, checkinsRef.current, now);
+      const liveClasses = computeLiveClasses(timetablesRef.current, checkinsRef.current, now, schoolDays);
       liveClasses.forEach(cls => {
         if (cls.status !== 'scheduled') return;           // only "due but no check-in"
         if (!cls.periodStart) return;
@@ -742,7 +739,7 @@ export default function AdminDashboard() {
 
           {/* Live sections moved to the Today tab */}
           {false && geofenceEnabled && timetables.length > 0 && (() => {
-            const liveClasses = computeLiveClasses(timetables, liveCheckins, liveNow);
+            const liveClasses = computeLiveClasses(timetables, liveCheckins, liveNow, schoolDays);
             const activeCount = liveClasses.filter(c => c.status === 'active').length;
             const scheduledCount = liveClasses.filter(c => c.status === 'scheduled').length;
             const idleCount = liveClasses.filter(c => c.status === 'idle' || c.status === 'no_timetable').length;
@@ -1010,7 +1007,7 @@ export default function AdminDashboard() {
             : null;
 
         // ── Live class helpers ──────────────────────────────────────────────────
-        const liveClasses = computeLiveClasses(timetables, liveCheckins, liveNow);
+        const liveClasses = computeLiveClasses(timetables, liveCheckins, liveNow, schoolDays);
         const activeCount    = liveClasses.filter(c => c.status === 'active').length;
         const scheduledCount = liveClasses.filter(c => c.status === 'scheduled').length;
 

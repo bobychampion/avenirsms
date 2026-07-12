@@ -15,7 +15,7 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { db } from '../firebase';
 import { collection, onSnapshot, orderBy, query, doc, where } from 'firebase/firestore';
-import { SchoolClass, SCHOOL_CLASSES, SUBJECTS, CURRENT_SESSION, TERMS, GradingSystem, CustomGradeScale, LevelGradingOverride, resolveGradingForLevel, SubjectDefinition, TimetablePeriodSlot } from '../types';
+import { SchoolClass, SCHOOL_CLASSES, SUBJECTS, CURRENT_SESSION, TERMS, GradingSystem, CustomGradeScale, LevelGradingOverride, resolveGradingForLevel, SubjectDefinition, TimetablePeriodSlot, DAYS_OF_WEEK, WeekendDay } from '../types';
 import {
   DEFAULT_TIMETABLE_PERIODS,
   resolveTimetablePeriodSlots,
@@ -44,6 +44,8 @@ interface SchoolContextValue {
   classNames: string[];            // derived string list for selects
   subjects: string[];              // merged: built-in SUBJECTS + school customSubjects
   schoolLevels: string[];          // from school_settings (dynamic, fallback SCHOOL_CLASSES)
+  weekendDays: WeekendDay[];       // opt-in weekend class days from school_settings
+  schoolDays: string[];            // DAYS_OF_WEEK + any enabled weekendDays, in calendar order
   periodTimes: string[];           // legacy start times — derived from timetablePeriods
   timetablePeriods: TimetablePeriodSlot[]; // school bell schedule for timetable columns
   currentSession: string;          // from school_settings (dynamic, fallback CURRENT_SESSION)
@@ -98,6 +100,8 @@ const SchoolContext = createContext<SchoolContextValue>({
   classNames: SCHOOL_CLASSES,
   subjects: SUBJECTS,
   schoolLevels: SCHOOL_CLASSES,
+  weekendDays: [],
+  schoolDays: [...DAYS_OF_WEEK],
   periodTimes: DEFAULT_PERIOD_TIMES,
   timetablePeriods: [...DEFAULT_TIMETABLE_PERIODS],
   currentSession: CURRENT_SESSION,
@@ -157,6 +161,7 @@ export function SchoolProvider({ children }: { children: React.ReactNode }) {
 
   // Dynamic settings from school_settings/{schoolId}
   const [schoolLevels, setSchoolLevels] = useState<string[]>([...SCHOOL_CLASSES]);
+  const [weekendDays, setWeekendDays] = useState<WeekendDay[]>([]);
   const [periodTimes, setPeriodTimes] = useState<string[]>([...DEFAULT_PERIOD_TIMES]);
   const [timetablePeriods, setTimetablePeriods] = useState<TimetablePeriodSlot[]>([...DEFAULT_TIMETABLE_PERIODS]);
   const [customSubjects, setCustomSubjects] = useState<string[]>([]);
@@ -244,6 +249,7 @@ export function SchoolProvider({ children }: { children: React.ReactNode }) {
     if (!schoolId) {
       // super_admin returning to platform dashboard — reset everything to defaults
       setSchoolLevels([...SCHOOL_CLASSES]);
+      setWeekendDays([]);
       setPeriodTimes([...DEFAULT_PERIOD_TIMES]);
       setCustomSubjects([]);
       setCurrentSession(CURRENT_SESSION);
@@ -290,6 +296,7 @@ export function SchoolProvider({ children }: { children: React.ReactNode }) {
         if (snap.exists()) {
           const data = { ...defaultSettings, ...snap.data() } as SchoolSettings;
           if (data.schoolLevels?.length) setSchoolLevels(data.schoolLevels);
+          setWeekendDays(data.weekendDays || []);
           const resolvedSlots = resolveTimetablePeriodSlots({
             timetablePeriods: data.timetablePeriods,
             periodTimes: data.periodTimes,
@@ -395,6 +402,9 @@ export function SchoolProvider({ children }: { children: React.ReactNode }) {
   // Dynamic term labels derived from termStructure
   const terms = getTermLabels(termStructure);
 
+  // Mon–Fri plus any weekend days this school has opted into, in calendar order
+  const schoolDays = [...DAYS_OF_WEEK, ...weekendDays];
+
   // Helper: resolve the effective grading system/scale for a class, honouring per-level overrides
   const getGradingForClass = (className: string) => {
     const level = classes.find(c => c.name === className)?.level;
@@ -416,6 +426,8 @@ export function SchoolProvider({ children }: { children: React.ReactNode }) {
       classNames,
       subjects: mergedSubjects,
       schoolLevels,
+      weekendDays,
+      schoolDays,
       periodTimes,
       timetablePeriods,
       currentSession,

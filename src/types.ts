@@ -300,13 +300,23 @@ export interface Timetable {
   class: string;
   term: '1st Term' | '2nd Term' | '3rd Term';
   session: string;
+  /**
+   * Keyed by weekday name. Saturday/Sunday keys are only populated when the
+   * school has opted into weekend classes (school_settings.weekendDays) —
+   * the key union is a fixed superset so indexing with any weekday is always
+   * type-safe regardless of which days a given school actually uses.
+   */
   schedule: {
-    [key in 'Monday' | 'Tuesday' | 'Wednesday' | 'Thursday' | 'Friday']: TimetablePeriod[];
+    [key in 'Monday' | 'Tuesday' | 'Wednesday' | 'Thursday' | 'Friday' | 'Saturday' | 'Sunday']: TimetablePeriod[];
   };
   updatedAt: any;
 }
 
+/** Base weekday set — always available regardless of school settings. */
 export const DAYS_OF_WEEK = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'] as const;
+/** Opt-in weekend days a school can enable via school_settings.weekendDays. */
+export const WEEKEND_DAYS = ['Saturday', 'Sunday'] as const;
+export type WeekendDay = typeof WEEKEND_DAYS[number];
 
 export interface Attendance {
   id?: string;

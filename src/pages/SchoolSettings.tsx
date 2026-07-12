@@ -22,7 +22,7 @@ import {
 } from '../utils/timetablePeriods';
 import { GeoFence } from '../types';
 import { haversineDistance } from '../services/geofenceService';
-import { SCHOOL_CLASSES, SUBJECTS, TERMS, GradingSystem, CustomGradeScale, LevelGradingOverride, GRADING_SYSTEM_OPTIONS, SubjectDefinition, UserProfile, FeeCategory } from '../types';
+import { SCHOOL_CLASSES, SUBJECTS, TERMS, GradingSystem, CustomGradeScale, LevelGradingOverride, GRADING_SYSTEM_OPTIONS, SubjectDefinition, UserProfile, FeeCategory, WeekendDay } from '../types';
 import { useUnsavedChanges } from '../hooks/useUnsavedChanges';
 import UnsavedChangesDialog from '../components/UnsavedChangesDialog';
 import StorageSettingsPanel from '../components/StorageSettingsPanel';
@@ -91,6 +91,8 @@ export interface SchoolSettings {
   periodTimes: string[];
   /** School bell schedule — drives dynamic timetable columns */
   timetablePeriods: TimetablePeriodSlot[];
+  /** Opt-in weekend class days (e.g. ['Saturday'] for weekend lessons/exam prep). Empty = Mon–Fri only. */
+  weekendDays: WeekendDay[];
   // Internationalisation
   country: string;           // ISO 3166-1 alpha-2, e.g. 'NG', 'SI', 'US'
   timezone: string;          // IANA tz string, e.g. 'Africa/Lagos', 'Europe/Ljubljana'
@@ -257,6 +259,7 @@ export const defaultSettings: SchoolSettings = {
   customSubjects: [],
   periodTimes: periodTimesFromSlots(DEFAULT_TIMETABLE_PERIODS),
   timetablePeriods: [...DEFAULT_TIMETABLE_PERIODS],
+  weekendDays: [],
   // Internationalisation
   country: '',
   timezone: '',
@@ -1656,6 +1659,39 @@ export default function SchoolSettingsPage() {
           TAB: TIMETABLE
       ══════════════════════════════════════════════════════════════ */}
       {activeTab === 'timetable' && (
+        <div className="space-y-6">
+        <section className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
+          <h2 className="font-bold text-slate-800 text-sm flex items-center gap-2 mb-1">
+            <Calendar className="w-4 h-4 text-indigo-600" /> Class Days
+          </h2>
+          <p className="text-xs text-slate-500 mb-5">
+            Monday–Friday classes are always on. Opt in below if this school also runs weekend
+            classes (e.g. Saturday lessons, exam prep, or extra tutorials).
+          </p>
+          <div className="flex flex-wrap gap-3">
+            {(['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'] as const).map(day => (
+              <div key={day} className="px-4 py-2 rounded-xl border border-slate-200 bg-slate-50 text-sm font-medium text-slate-500">
+                {day}
+              </div>
+            ))}
+            {(['Saturday', 'Sunday'] as const).map(day => {
+              const enabled = form.weekendDays.includes(day);
+              return (
+                <button
+                  key={day}
+                  type="button"
+                  onClick={() => field('weekendDays', enabled ? form.weekendDays.filter(d => d !== day) : [...form.weekendDays, day])}
+                  className={`px-4 py-2 rounded-xl border-2 text-sm font-bold transition-colors ${
+                    enabled ? 'border-indigo-500 bg-indigo-50 text-indigo-700' : 'border-dashed border-slate-300 text-slate-400 hover:border-slate-400'
+                  }`}
+                >
+                  {day} {enabled ? '✓' : '+'}
+                </button>
+              );
+            })}
+          </div>
+        </section>
+
         <section className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
           <h2 className="font-bold text-slate-800 text-sm flex items-center gap-2 mb-1">
             <Clock className="w-4 h-4 text-indigo-600" /> Period Management
@@ -1672,6 +1708,7 @@ export default function SchoolSettingsPage() {
             }}
           />
         </section>
+        </div>
       )}
 
       {/* ══════════════════════════════════════════════════════════════

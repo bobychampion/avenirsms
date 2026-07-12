@@ -22,7 +22,7 @@ import {
 } from 'firebase/firestore';
 import { db } from '../firebase';
 import { useSchool } from '../components/SchoolContext';
-import { Timetable, DAYS_OF_WEEK } from '../types';
+import { Timetable } from '../types';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   UserX, UserCheck, Users, Calendar, Clock, Plus,
@@ -62,7 +62,7 @@ const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Frid
 const todayStr = () => new Date().toISOString().split('T')[0];
 
 export default function CoverManager() {
-  const { schoolId } = useSchool();
+  const { schoolId, schoolDays } = useSchool();
 
   const [date, setDate] = useState(todayStr());
   const [timetables, setTimetables] = useState<Timetable[]>([]);
@@ -105,16 +105,16 @@ export default function CoverManager() {
 
   const loadCoverSheet = useCallback(() => {
     const dayIndex = new Date(date + 'T12:00:00').getDay();
-    const dayName = DAY_NAMES[dayIndex] as typeof DAYS_OF_WEEK[number];
-    if (!DAYS_OF_WEEK.includes(dayName as any)) {
-      toast.error('Cover sheets are for Mon–Fri only.');
+    const dayName = DAY_NAMES[dayIndex];
+    if (!schoolDays.includes(dayName)) {
+      toast.error(`Cover sheets are for ${schoolDays.join(', ')} only.`);
       setPeriods([]);
       return;
     }
 
     const flat: CoverPeriod[] = [];
     for (const tt of timetables) {
-      const dayPeriods = tt.schedule[dayName] ?? [];
+      const dayPeriods = tt.schedule[dayName as keyof Timetable['schedule']] ?? [];
       for (const p of dayPeriods) {
         if (!p.teacher) continue;
         flat.push({
@@ -132,7 +132,7 @@ export default function CoverManager() {
     setSelectedPeriods(new Set());
     setCoverMap({});
     if (flat.length === 0) toast('No timetabled periods with teachers found for this day.', { icon: 'ℹ️' });
-  }, [date, timetables]);
+  }, [date, timetables, schoolDays]);
 
   const periodKey = (p: CoverPeriod) => `${p.className}|${p.subject}|${p.startTime}`;
 

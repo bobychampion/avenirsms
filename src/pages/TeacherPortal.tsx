@@ -6,7 +6,7 @@ import {
   collection, query, onSnapshot, where, addDoc, serverTimestamp,
   orderBy, updateDoc, doc, deleteDoc, getDocs, writeBatch, getDoc,
 } from 'firebase/firestore';
-import { Student, Assignment, AssignmentSubmission, Message, SUBJECTS, TERMS, Grade, calculateGrade, StudentSkills, SKILL_LABELS, SkillRating, StudentSkillRecord, Timetable, DAYS_OF_WEEK, GeoFence, TeacherCheckIn, CurriculumDocument, ClassSubject, SchoolClass } from '../types';
+import { Student, Assignment, AssignmentSubmission, Message, SUBJECTS, TERMS, Grade, calculateGrade, StudentSkills, SKILL_LABELS, SkillRating, StudentSkillRecord, Timetable, GeoFence, TeacherCheckIn, CurriculumDocument, ClassSubject, SchoolClass } from '../types';
 import { getCurrentPosition, isWithinFence, isAccuracyAcceptable, isSpoofedVelocity } from '../services/geofenceService';
 import { batchUpsertAttendance } from '../services/firestoreService';
 import { generateLessonNotes, generateExamQuestions, generateQuestionsFromCurriculum } from '../services/geminiService';
@@ -44,7 +44,7 @@ interface AttendanceRow {
 export default function TeacherPortal() {
   const { user, profile } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
-  const { classNames, subjects, currentSession, currentTerm, getGradingForClass, terms, schoolName } = useSchool();
+  const { classNames, subjects, currentSession, currentTerm, getGradingForClass, terms, schoolName, schoolDays } = useSchool();
   const schoolId = useSchoolId();
 
   // Derived helpers (safe fallbacks)
@@ -389,8 +389,8 @@ export default function TeacherPortal() {
       const matched = snap.docs
         .map(d => ({ id: d.id, ...d.data() } as Timetable))
         .filter(tt =>
-          DAYS_OF_WEEK.some(day =>
-            (tt.schedule[day] || []).some(p => p.teacher === teacherName)
+          schoolDays.some(day =>
+            (tt.schedule[day as keyof Timetable['schedule']] || []).some(p => p.teacher === teacherName)
           )
         );
       setMyTimetables(matched);
@@ -2119,8 +2119,8 @@ export default function TeacherPortal() {
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100">
-                        {DAYS_OF_WEEK.map(day => {
-                          const myPeriods = (tt.schedule[day] || []).filter(p => p.teacher === teacherName);
+                        {schoolDays.map(day => {
+                          const myPeriods = (tt.schedule[day as keyof Timetable['schedule']] || []).filter(p => p.teacher === teacherName);
                           if (myPeriods.length === 0) return null;
                           return (
                             <tr key={day} className="hover:bg-slate-50 transition-colors">

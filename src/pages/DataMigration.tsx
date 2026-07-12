@@ -177,7 +177,16 @@ export default function DataMigration() {
     setCollections(prev => prev.map(c => c.name === name ? { ...c, ...patch } : c));
   };
 
+  // This tool backfills schoolId onto any document that doesn't have one yet.
+  // That's only safe when exactly one school exists in the whole system — the
+  // moment a second school is created, "missing schoolId" stops meaning
+  // "belongs to the school I'm migrating" and starts meaning "could belong to
+  // ANY school," so running it again silently reassigns other schools' stray
+  // records to whichever school is selected here. Hard-block it once unsafe.
+  const migrationUnsafe = schools.length > 1;
+
   const runMigration = async () => {
+    if (migrationUnsafe) return;
     setRunning(true);
     setDone(false);
 
@@ -249,6 +258,26 @@ export default function DataMigration() {
           </p>
         </div>
       </div>
+
+      {migrationUnsafe && (
+        <div className="bg-red-50 border-2 border-red-300 rounded-xl p-5 flex gap-3">
+          <AlertCircle className="w-6 h-6 text-red-600 shrink-0 mt-0.5" />
+          <div>
+            <p className="font-bold text-red-800">This tool is now disabled — {schools.length} schools exist</p>
+            <p className="text-sm text-red-700 mt-1">
+              This migration backfills <code className="bg-red-100 px-1 rounded">schoolId</code> onto ANY document
+              that doesn't already have one — across the <strong>entire database, not just one school</strong>.
+              That was only safe back when there was a single school in the whole system. With multiple schools
+              now live, running it again would silently reassign other schools' stray records (any document that
+              happens to be missing a schoolId for any reason) to whichever school you pick below.
+            </p>
+            <p className="text-sm text-red-700 mt-2 font-semibold">
+              If a school is missing schoolId data, fix it by hand (identify the specific documents and update
+              them directly) — do not use this tool. Contact engineering before re-enabling it.
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* ── School selector ── */}
       <div className="bg-white border border-slate-200 rounded-xl p-5 space-y-4">
@@ -422,7 +451,7 @@ export default function DataMigration() {
           )}
           <button
             onClick={runMigration}
-            disabled={running || !schoolId}
+            disabled={running || !schoolId || migrationUnsafe}
             className="w-full flex items-center justify-center gap-2 bg-purple-600 hover:bg-purple-700 disabled:opacity-40 disabled:cursor-not-allowed text-white font-bold py-3 px-6 rounded-xl transition-colors shadow-lg shadow-purple-200"
           >
             {running ? (

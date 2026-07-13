@@ -15,8 +15,8 @@
 import { useEffect, useState } from 'react';
 import { collection, getDocs, query, where } from 'firebase/firestore';
 import { db } from '../firebase';
-import { useAuth } from '../components/FirebaseProvider';
 import { useSchoolId } from './useSchoolId';
+import { useEffectiveUid } from './useEffectiveUid';
 import { ClassSubject } from '../types';
 
 export interface TeacherAssignments {
@@ -38,7 +38,7 @@ export interface TeacherAssignments {
 }
 
 export function useTeacherAssignments(): TeacherAssignments {
-  const { user } = useAuth();
+  const uid = useEffectiveUid();
   const schoolId = useSchoolId();
   const [loading, setLoading] = useState(true);
   const [assignedClassNames, setAssignedClassNames] = useState<string[]>([]);
@@ -48,15 +48,15 @@ export function useTeacherAssignments(): TeacherAssignments {
   const [reloadToken, setReloadToken] = useState(0);
 
   useEffect(() => {
-    if (!user || !schoolId) return;
+    if (!uid || !schoolId) return;
     let cancelled = false;
     setLoading(true);
 
     (async () => {
       try {
         const [subjectSnap, tutorSnap, classSnap] = await Promise.all([
-          getDocs(query(collection(db, 'class_subjects'), where('schoolId', '==', schoolId), where('teacherId', '==', user.uid))),
-          getDocs(query(collection(db, 'classes'), where('schoolId', '==', schoolId), where('formTutorId', '==', user.uid))),
+          getDocs(query(collection(db, 'class_subjects'), where('schoolId', '==', schoolId), where('teacherId', '==', uid))),
+          getDocs(query(collection(db, 'classes'), where('schoolId', '==', schoolId), where('formTutorId', '==', uid))),
           getDocs(query(collection(db, 'classes'), where('schoolId', '==', schoolId))),
         ]);
         if (cancelled) return;
@@ -99,7 +99,7 @@ export function useTeacherAssignments(): TeacherAssignments {
     })();
 
     return () => { cancelled = true; };
-  }, [user?.uid, schoolId, reloadToken]);
+  }, [uid, schoolId, reloadToken]);
 
   const isFormTutor = (className: string) => (subjectsByClass[className] || []).includes('__all__');
   const canAccessClass = (className: string) => !!subjectsByClass[className]?.length;

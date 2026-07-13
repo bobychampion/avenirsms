@@ -364,6 +364,52 @@ service cloud.firestore {
       allow update: if isSuperAdmin() || (isAdmin() && docBelongsToCallerSchool());
     }
 
+    // ─── Subject Attendance (per-lesson exceptions — independent of daily `attendance`) ──
+    // Tighter than the `attendance` rule above: a teacher may only create/update a record
+    // they are attributed on (request.resource.data.recordedBy == their own uid), not just
+    // any record in their school. recordedBy is always set to the acting user by the client
+    // on both create and update (see batchUpsertSubjectAttendance), so this is a reliable check.
+
+    match /subjectAttendance/{docId} {
+      allow read: if isSuperAdmin() ||
+                    ((isAdmin() || isTeacher()) && docBelongsToCallerSchool()) ||
+                    isGuardianOfStudent(resource.data.studentId);
+      allow create: if isSuperAdmin() ||
+                    (isAdmin() && newDocBelongsToCallerSchool()) ||
+                    (isTeacher() && newDocBelongsToCallerSchool() &&
+                     request.resource.data.get('recordedBy', '') == request.auth.uid);
+      allow update: if isSuperAdmin() ||
+                    (isAdmin() && docBelongsToCallerSchool()) ||
+                    (isTeacher() && docBelongsToCallerSchool() &&
+                     request.resource.data.get('recordedBy', '') == request.auth.uid);
+      allow delete: if isSuperAdmin() || (isAdmin() && docBelongsToCallerSchool());
+    }
+
+    // ─── Special Lessons (coaching/clubs/remedial — outside the normal class timetable) ──
+    // Enrollment (enrolledStudentIds) is admin-managed only, per the product spec — teachers
+    // get read access (to see their roster) but never write access to the lesson doc itself.
+
+    match /special_lessons/{lessonId} {
+      allow read: if isSuperAdmin() ||
+                    ((isAdmin() || isTeacher()) && docBelongsToCallerSchool());
+      allow write: if isSuperAdmin() || (isAdmin() && newDocBelongsToCallerSchool());
+    }
+
+    match /specialLessonAttendance/{docId} {
+      allow read: if isSuperAdmin() ||
+                    ((isAdmin() || isTeacher()) && docBelongsToCallerSchool()) ||
+                    isGuardianOfStudent(resource.data.studentId);
+      allow create: if isSuperAdmin() ||
+                    (isAdmin() && newDocBelongsToCallerSchool()) ||
+                    (isTeacher() && newDocBelongsToCallerSchool() &&
+                     request.resource.data.get('recordedBy', '') == request.auth.uid);
+      allow update: if isSuperAdmin() ||
+                    (isAdmin() && docBelongsToCallerSchool()) ||
+                    (isTeacher() && docBelongsToCallerSchool() &&
+                     request.resource.data.get('recordedBy', '') == request.auth.uid);
+      allow delete: if isSuperAdmin() || (isAdmin() && docBelongsToCallerSchool());
+    }
+
     // ─── Timetables ───────────────────────────────────────────────────────────
 
     match /timetables/{timetableId} {

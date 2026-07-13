@@ -722,6 +722,103 @@
         { "fieldPath": "schoolId", "order": "ASCENDING" },
         { "fieldPath": "tripId",   "order": "ASCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "subjectAttendance",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "schoolId",     "order": "ASCENDING" },
+        { "fieldPath": "classId",      "order": "ASCENDING" },
+        { "fieldPath": "subjectName",  "order": "ASCENDING" },
+        { "fieldPath": "attendanceDate", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "subjectAttendance",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "schoolId",     "order": "ASCENDING" },
+        { "fieldPath": "classId",      "order": "ASCENDING" },
+        { "fieldPath": "subjectName",  "order": "ASCENDING" },
+        { "fieldPath": "attendanceDate", "order": "ASCENDING" },
+        { "fieldPath": "timetablePeriodId", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "subjectAttendance",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "schoolId",     "order": "ASCENDING" },
+        { "fieldPath": "studentId",    "order": "ASCENDING" },
+        { "fieldPath": "attendanceDate", "order": "ASCENDING" },
+        { "fieldPath": "classId",      "order": "ASCENDING" },
+        { "fieldPath": "subjectName",  "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "subjectAttendance",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "schoolId",     "order": "ASCENDING" },
+        { "fieldPath": "studentId",    "order": "ASCENDING" },
+        { "fieldPath": "attendanceDate", "order": "ASCENDING" },
+        { "fieldPath": "classId",      "order": "ASCENDING" },
+        { "fieldPath": "subjectName",  "order": "ASCENDING" },
+        { "fieldPath": "timetablePeriodId", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "subjectAttendance",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "schoolId",     "order": "ASCENDING" },
+        { "fieldPath": "studentId",    "order": "ASCENDING" },
+        { "fieldPath": "attendanceDate", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "specialLessonAttendance",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "schoolId",        "order": "ASCENDING" },
+        { "fieldPath": "specialLessonId", "order": "ASCENDING" },
+        { "fieldPath": "studentId",       "order": "ASCENDING" },
+        { "fieldPath": "attendanceDate",  "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "specialLessonAttendance",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "schoolId",        "order": "ASCENDING" },
+        { "fieldPath": "specialLessonId", "order": "ASCENDING" },
+        { "fieldPath": "attendanceDate",  "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "specialLessonAttendance",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "schoolId",       "order": "ASCENDING" },
+        { "fieldPath": "studentId",      "order": "ASCENDING" },
+        { "fieldPath": "attendanceDate", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "special_lessons",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "schoolId",   "order": "ASCENDING" },
+        { "fieldPath": "teacherIds", "arrayConfig": "CONTAINS" }
+      ]
+    },
+    {
+      "collectionGroup": "special_lessons",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "schoolId",           "order": "ASCENDING" },
+        { "fieldPath": "enrolledStudentIds", "arrayConfig": "CONTAINS" }
+      ]
     }
   ],
   "fieldOverrides": []

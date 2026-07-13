@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { db, handleFirestoreError, OperationType } from '../firebase';
 import { useAuth } from '../components/FirebaseProvider';
@@ -6,15 +6,16 @@ import {
   collection, query, onSnapshot, where, addDoc, serverTimestamp,
   orderBy, updateDoc, doc, deleteDoc, getDocs, writeBatch, getDoc,
 } from 'firebase/firestore';
-import { Student, Assignment, AssignmentSubmission, Message, SUBJECTS, TERMS, Grade, calculateGrade, StudentSkills, SKILL_LABELS, SkillRating, StudentSkillRecord, Timetable, GeoFence, TeacherCheckIn, CurriculumDocument, ClassSubject, SchoolClass } from '../types';
+import { Student, Assignment, AssignmentSubmission, Message, SUBJECTS, TERMS, Grade, calculateGrade, StudentSkills, SKILL_LABELS, SkillRating, StudentSkillRecord, Timetable, GeoFence, TeacherCheckIn, CurriculumDocument, SubjectAttendance, SpecialLesson } from '../types';
 import { getCurrentPosition, isWithinFence, isAccuracyAcceptable, isSpoofedVelocity } from '../services/geofenceService';
-import { batchUpsertAttendance } from '../services/firestoreService';
+import { batchUpsertAttendance, fetchDailyAttendanceMap, batchUpsertSubjectAttendance, batchUpsertSpecialLessonAttendance } from '../services/firestoreService';
 import { generateLessonNotes, generateExamQuestions, generateQuestionsFromCurriculum } from '../services/geminiService';
 import { motion, AnimatePresence } from 'motion/react';
 import ReactMarkdown from 'react-markdown';
 import toast from 'react-hot-toast';
 import { useSchool } from '../components/SchoolContext';
 import { useSchoolId } from '../hooks/useSchoolId';
+import { useTeacherAssignments } from '../hooks/useTeacherAssignments';
 import Avatar from '../components/Avatar';
 import {
   BookOpen, Users, MessageSquare, Plus, Send, Loader2,
@@ -28,10 +29,11 @@ import { initFCMForUser, onForegroundMessage, showFcmPushNotification } from '..
 import ProfileHeader from './TeacherPortal/ProfileHeader';
 import ClockInHero from './TeacherPortal/ClockInHero';
 import TeacherOverview from './TeacherPortal/TeacherOverview';
+import TodayPanel from './TeacherPortal/TodayPanel';
 import CurriculumPage from './TeacherPortal/CurriculumPage';
 import MyLeaveRequests from '../components/MyLeaveRequests';
 
-type TabType = 'home' | 'students' | 'attendance' | 'assignments' | 'grades' | 'skills' | 'messages' | 'ai_tools' | 'timetable' | 'absences' | 'curriculum' | 'leave';
+type TabType = 'home' | 'students' | 'attendance' | 'subject_attendance' | 'special_lessons' | 'assignments' | 'grades' | 'skills' | 'messages' | 'ai_tools' | 'timetable' | 'absences' | 'curriculum' | 'leave';
 
 interface AttendanceRow {
   studentId: string;
@@ -44,7 +46,7 @@ interface AttendanceRow {
 export default function TeacherPortal() {
   const { user, profile } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
-  const { classNames, subjects, currentSession, currentTerm, getGradingForClass, terms, schoolName, schoolDays } = useSchool();
+  const { classNames, subjects, currentSession, currentTerm, getGradingForClass, terms, schoolName, schoolDays, attendanceMode } = useSchool();
   const schoolId = useSchoolId();
 
   // Derived helpers (safe fallbacks)
@@ -52,11 +54,14 @@ export default function TeacherPortal() {
   const allSubjects = subjects.length > 0 ? subjects : SUBJECTS;
 
   // ── Teacher assignment state ─────────────────────────────────────────────────
-  // myAssignedClasses: classes this teacher is assigned to (as form tutor OR subject teacher)
-  // myAssignedSubjectsByClass: for each class, which subjects this teacher can grade
-  const [myAssignedClasses, setMyAssignedClasses] = useState<string[]>([]);
-  const [myAssignedSubjectsByClass, setMyAssignedSubjectsByClass] = useState<Record<string, string[]>>({});
-  const [assignmentLoading, setAssignmentLoading] = useState(true);
+  // Single source of truth for "what can this teacher access" — shared with the mobile
+  // portal (and, going forward, Lesson Notes/Exams/Assignments/Timetable) via useTeacherAssignments.
+  const {
+    assignedClassNames: myAssignedClasses,
+    subjectsByClass: myAssignedSubjectsByClass,
+    classNameToId: myClassNameToId,
+    loading: assignmentLoading,
+  } = useTeacherAssignments();
 
   const [students, setStudents] = useState<Student[]>([]);
   const [assignments, setAssignments] = useState<Assignment[]>([]);
@@ -79,6 +84,17 @@ export default function TeacherPortal() {
     setSearchParams(tab === 'home' ? {} : { tab });
   };
 
+  // Jump straight into a marking screen with the right class/subject/lesson pre-selected —
+  // teachers should never have to manually browse for the right class first (Home tab quick actions).
+  const openDailyAttendanceFor = (className: string) => { setSelectedClass(className); navigateTab('attendance'); };
+  const openSubjectAttendanceFor = (className: string, subject: string, timetablePeriodId?: string) => {
+    setSelectedClass(className);
+    setSubjectAttendanceSubject(subject);
+    setSubjectAttendanceTimetablePeriodId(timetablePeriodId);
+    navigateTab('subject_attendance');
+  };
+  const openSpecialLessonFor = (lessonId: string) => { setSelectedSpecialLessonId(lessonId); navigateTab('special_lessons'); };
+
   const [selectedClass, setSelectedClass] = useState('');
   const [assignmentSearch, setAssignmentSearch] = useState('');
   const [editingAssignment, setEditingAssignment] = useState<Assignment | null>(null);
@@ -93,9 +109,38 @@ export default function TeacherPortal() {
 
   // Attendance state
   const [attendanceDate, setAttendanceDate] = useState(new Date().toISOString().split('T')[0]);
-  const [attendanceRows, setAttendanceRows] = useState<AttendanceRow[]>([]);
+  // Status as last read from Firestore for the current class+date (re-fetched only when class/date changes).
+  const [savedAttendance, setSavedAttendance] = useState<Record<string, 'present' | 'absent' | 'late'>>({});
+  // Status the teacher has clicked locally but not yet saved. Never touched by snapshot churn —
+  // only cleared when the class or date selection itself changes.
+  const [localAttendanceEdits, setLocalAttendanceEdits] = useState<Record<string, 'present' | 'absent' | 'late'>>({});
   const [savingAttendance, setSavingAttendance] = useState(false);
   const [attendanceSaved, setAttendanceSaved] = useState(false);
+
+  // Subject Attendance state (only relevant when school's attendanceMode !== 'daily_only')
+  const [subjectAttendanceSubject, setSubjectAttendanceSubject] = useState('');
+  // Set when opened from a specific timetable period (Today Panel / Timetable tab quick action).
+  // Disambiguates a subject taught twice in one day to the same class (e.g. a double period) —
+  // cleared whenever the teacher manually changes the class/subject dropdowns instead.
+  const [subjectAttendanceTimetablePeriodId, setSubjectAttendanceTimetablePeriodId] = useState<string | undefined>(undefined);
+  // Daily attendance status for the same class+date — used to preload/inherit defaults.
+  const [dailyInheritMap, setDailyInheritMap] = useState<Record<string, 'present' | 'absent' | 'late'>>({});
+  // Subject attendance as last read from Firestore for the current class+subject+date.
+  const [savedSubjectAttendance, setSavedSubjectAttendance] = useState<Record<string, { status: 'present' | 'absent' | 'late'; inheritedFromDaily: boolean }>>({});
+  // Subject attendance edits the teacher has made locally but not yet saved.
+  const [localSubjectAttendanceEdits, setLocalSubjectAttendanceEdits] = useState<Record<string, 'present' | 'absent' | 'late'>>({});
+  const [savingSubjectAttendance, setSavingSubjectAttendance] = useState(false);
+  const [subjectAttendanceSaved, setSubjectAttendanceSaved] = useState(false);
+
+  // Special Lessons state — independent from Daily/Subject Attendance, scoped to enrolled students only.
+  const [mySpecialLessons, setMySpecialLessons] = useState<SpecialLesson[]>([]);
+  const [selectedSpecialLessonId, setSelectedSpecialLessonId] = useState('');
+  const [specialLessonDate, setSpecialLessonDate] = useState(new Date().toISOString().split('T')[0]);
+  const [specialLessonRoster, setSpecialLessonRoster] = useState<Student[]>([]);
+  const [savedSpecialLessonAttendance, setSavedSpecialLessonAttendance] = useState<Record<string, 'present' | 'absent' | 'late'>>({});
+  const [localSpecialLessonEdits, setLocalSpecialLessonEdits] = useState<Record<string, 'present' | 'absent' | 'late'>>({});
+  const [savingSpecialLessonAttendance, setSavingSpecialLessonAttendance] = useState(false);
+  const [specialLessonAttendanceSaved, setSpecialLessonAttendanceSaved] = useState(false);
 
   // Absence requests for this teacher's classes
   const [absenceRequests, setAbsenceRequests] = useState<any[]>([]);
@@ -224,58 +269,41 @@ export default function TeacherPortal() {
   useEffect(() => { geofenceRef.current = geofence; }, [geofence]);
   useEffect(() => { lastEventRef.current = todayEvents[todayEvents.length - 1] ?? null; }, [todayEvents]);
 
-  // ── Load teacher's assigned classes from Firestore ───────────────────────────
-  // A teacher is assigned to a class if:
-  //   A) They appear as teacherId in any class_subjects document for that class
-  //   B) They are the formTutorId of that class
+  // Keep selectedClass valid as the teacher's assignment list loads/changes.
+  useEffect(() => {
+    if (assignmentLoading) return;
+    setSelectedClass(prev => myAssignedClasses.includes(prev) ? prev : (myAssignedClasses[0] ?? ''));
+  }, [assignmentLoading, myAssignedClasses]);
+
+  // Special Lessons this teacher is assigned to (independent of class_subjects/formTutorId).
   useEffect(() => {
     if (!user || !schoolId) return;
-    setAssignmentLoading(true);
+    const q = query(collection(db, 'special_lessons'), where('schoolId', '==', schoolId), where('teacherIds', 'array-contains', user.uid));
+    const unsub = onSnapshot(q, snap => {
+      setMySpecialLessons(snap.docs.map(d => ({ id: d.id, ...d.data() } as SpecialLesson)));
+    }, e => console.error('[TeacherPortal] special_lessons query failed:', e));
+    return () => unsub();
+  }, [user, schoolId]);
 
-    const loadAssignments = async () => {
-      try {
-        const [subjectSnap, tutorSnap, classSnap] = await Promise.all([
-          getDocs(query(collection(db, 'class_subjects'), where('schoolId', '==', schoolId), where('teacherId', '==', user.uid))),
-          getDocs(query(collection(db, 'classes'), where('schoolId', '==', schoolId), where('formTutorId', '==', user.uid))),
-          getDocs(query(collection(db, 'classes'), where('schoolId', '==', schoolId))),
-        ]);
+  // Keep selectedSpecialLessonId valid as the assigned-lessons list loads/changes.
+  useEffect(() => {
+    setSelectedSpecialLessonId(prev =>
+      mySpecialLessons.some(l => l.id === prev) ? prev : (mySpecialLessons[0]?.id ?? '')
+    );
+  }, [mySpecialLessons]);
 
-        const idToName: Record<string, string> = {};
-        classSnap.docs.forEach(d => { idToName[d.id] = (d.data().name as string) || ''; });
-
-        // className -> subjects this teacher can grade
-        // '__all__' means form tutor (access to all subjects)
-        const finalByName: Record<string, string[]> = {};
-
-        subjectSnap.docs.forEach(d => {
-          const sa = d.data() as ClassSubject;
-          const name = idToName[sa.classId];
-          if (!name) return;
-          if (!finalByName[name]) finalByName[name] = [];
-          if (sa.subjectName && !finalByName[name].includes(sa.subjectName)) {
-            finalByName[name].push(sa.subjectName);
-          }
-        });
-
-        tutorSnap.docs.forEach(d => {
-          const name = (d.data().name as string) || '';
-          if (name) finalByName[name] = ['__all__'];
-        });
-
-        const allAssigned = Object.keys(finalByName).sort();
-        setMyAssignedClasses(allAssigned);
-        setMyAssignedSubjectsByClass(finalByName);
-        setSelectedClass(prev => allAssigned.includes(prev) ? prev : (allAssigned[0] ?? ''));
-      } catch (e) {
-        console.warn('Failed to load teacher assignments:', e);
-      } finally {
-        setAssignmentLoading(false);
-      }
-    };
-
-    loadAssignments();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user?.uid, schoolId]);
+  // Which classes already have today's daily attendance recorded — powers the "Pending
+  // Attendance" list on the Home tab. Single listener scoped to schoolId+today (not a full scan).
+  const [todaysMarkedClasses, setTodaysMarkedClasses] = useState<Set<string>>(new Set());
+  useEffect(() => {
+    if (!schoolId) return;
+    const today = new Date().toISOString().split('T')[0];
+    const q = query(collection(db, 'attendance'), where('schoolId', '==', schoolId), where('date', '==', today));
+    const unsub = onSnapshot(q, snap => {
+      setTodaysMarkedClasses(new Set(snap.docs.map(d => d.data().class as string)));
+    }, e => console.error('[TeacherPortal] today attendance query failed:', e));
+    return () => unsub();
+  }, [schoolId]);
 
   // ── Absence requests for this teacher's classes ───────────────────────────
   useEffect(() => {
@@ -556,14 +584,17 @@ export default function TeacherPortal() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.uid, profile?.displayName]);
 
-  // Load existing attendance when class or date changes (in attendance tab)
+  // Load existing attendance ONLY when class or date actually changes — deliberately excludes
+  // `students`/`myAbsenceRequests` from deps, since those are live-listener-derived and re-emit
+  // on unrelated writes, which previously reset any in-progress local edits back to defaults.
   useEffect(() => {
-    if (activeTab !== 'attendance' || students.length === 0) return;
+    if (activeTab !== 'attendance' || !selectedClass || !schoolId) return;
+    let cancelled = false;
 
     const fetchExisting = async () => {
       const q = query(
         collection(db, 'attendance'),
-        where('schoolId', '==', schoolId!),
+        where('schoolId', '==', schoolId),
         where('class', '==', selectedClass),
         where('date', '==', attendanceDate)
       );
@@ -573,32 +604,37 @@ export default function TeacherPortal() {
         const data = d.data();
         existingMap[data.studentId] = data.status;
       });
-
-      setAttendanceRows(students.map(s => ({
-        studentId: s.id!,
-        studentName: s.studentName,
-        studentIdCode: s.studentId,
-        photoUrl: s.photoUrl,
-        status: existingMap[s.id!] || (isOnApprovedLeave(s.id!, attendanceDate) ? 'absent' : 'present')
-      })));
+      if (cancelled) return;
+      setSavedAttendance(existingMap);
+      setLocalAttendanceEdits({}); // fresh class/date selection — discard any stale local edits
     };
 
     fetchExisting();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTab, students, selectedClass, attendanceDate, myAbsenceRequests]);
+    return () => { cancelled = true; };
+  }, [activeTab, selectedClass, attendanceDate, schoolId]);
+
+  // Effective attendance rows: local (unsaved) edit wins, else the last value read from Firestore,
+  // else the default (absent if on approved leave, present otherwise). Recomputing this from the
+  // current `students` roster is safe — it never re-touches localAttendanceEdits/savedAttendance.
+  const attendanceRows: AttendanceRow[] = useMemo(() => students.map(s => ({
+    studentId: s.id!,
+    studentName: s.studentName,
+    studentIdCode: s.studentId,
+    photoUrl: s.photoUrl,
+    status: localAttendanceEdits[s.id!] ?? savedAttendance[s.id!] ?? (isOnApprovedLeave(s.id!, attendanceDate) ? 'absent' : 'present'),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  })), [students, localAttendanceEdits, savedAttendance, attendanceDate, myAbsenceRequests]);
 
   const cycleStatus = (studentId: string) => {
-    setAttendanceRows(prev => prev.map(r => {
-      if (r.studentId !== studentId) return r;
-      const next: Record<string, 'present' | 'absent' | 'late'> = {
-        present: 'absent', absent: 'late', late: 'present'
-      };
-      return { ...r, status: next[r.status] };
-    }));
+    const current = attendanceRows.find(r => r.studentId === studentId)?.status ?? 'present';
+    const next: Record<string, 'present' | 'absent' | 'late'> = {
+      present: 'absent', absent: 'late', late: 'present'
+    };
+    setLocalAttendanceEdits(prev => ({ ...prev, [studentId]: next[current] }));
   };
 
   const setAllStatus = (status: 'present' | 'absent') => {
-    setAttendanceRows(prev => prev.map(r => ({ ...r, status })));
+    setLocalAttendanceEdits(() => Object.fromEntries(attendanceRows.map(r => [r.studentId, status])));
   };
 
   const handleSaveAttendance = async () => {
@@ -614,6 +650,14 @@ export default function TeacherPortal() {
     const tid = toast.loading('Saving attendance…');
     try {
       await batchUpsertAttendance(records, schoolId);
+      // Fold the just-saved values into "saved" state and clear local edits so
+      // subsequent renders read from a single consistent source again.
+      setSavedAttendance(prev => {
+        const next = { ...prev };
+        records.forEach(r => { next[r.studentId] = r.status; });
+        return next;
+      });
+      setLocalAttendanceEdits({});
       toast.success('Attendance saved!', { id: tid });
       setAttendanceSaved(true);
       setTimeout(() => setAttendanceSaved(false), 3000);
@@ -621,6 +665,199 @@ export default function TeacherPortal() {
       toast.error('Failed to save attendance', { id: tid });
     } finally {
       setSavingAttendance(false);
+    }
+  };
+
+  // ── Subject Attendance (only relevant when attendanceMode !== 'daily_only') ──────────
+  // Subjects this teacher can mark subject attendance for in the selected class.
+  const mySubjectOptionsForSelectedClass: string[] = (() => {
+    const subs = myAssignedSubjectsByClass[selectedClass] ?? [];
+    return subs.includes('__all__') ? allSubjects : subs;
+  })();
+
+  // Keep the selected subject valid as the class or assignment list changes.
+  useEffect(() => {
+    setSubjectAttendanceSubject(prev =>
+      mySubjectOptionsForSelectedClass.includes(prev) ? prev : (mySubjectOptionsForSelectedClass[0] ?? '')
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedClass, myAssignedSubjectsByClass]);
+
+  // Load daily attendance (to inherit from) + any existing subject-attendance overrides,
+  // ONLY when class/subject/date actually change — same discipline as the daily-attendance
+  // fix above, so in-progress subject marking is never clobbered by unrelated re-renders.
+  useEffect(() => {
+    if (activeTab !== 'subject_attendance' || !selectedClass || !subjectAttendanceSubject || !schoolId) return;
+    const classId = myClassNameToId[selectedClass];
+    if (!classId) return;
+    let cancelled = false;
+
+    (async () => {
+      const subjectConstraints = [
+        where('schoolId', '==', schoolId),
+        where('classId', '==', classId),
+        where('subjectName', '==', subjectAttendanceSubject),
+        where('attendanceDate', '==', attendanceDate),
+        ...(subjectAttendanceTimetablePeriodId ? [where('timetablePeriodId', '==', subjectAttendanceTimetablePeriodId)] : []),
+      ];
+      const [dailyMap, subjectSnap] = await Promise.all([
+        fetchDailyAttendanceMap(selectedClass, attendanceDate, schoolId),
+        getDocs(query(collection(db, 'subjectAttendance'), ...subjectConstraints)),
+      ]);
+      if (cancelled) return;
+      const existing: Record<string, { status: 'present' | 'absent' | 'late'; inheritedFromDaily: boolean }> = {};
+      subjectSnap.docs.forEach(d => {
+        const data = d.data() as SubjectAttendance;
+        existing[data.studentId] = { status: data.status, inheritedFromDaily: data.inheritedFromDaily };
+      });
+      setDailyInheritMap(dailyMap);
+      setSavedSubjectAttendance(existing);
+      setLocalSubjectAttendanceEdits({});
+    })();
+
+    return () => { cancelled = true; };
+  }, [activeTab, selectedClass, subjectAttendanceSubject, subjectAttendanceTimetablePeriodId, attendanceDate, schoolId, myClassNameToId]);
+
+  // Effective subject-attendance rows: local edit wins, else an existing saved override,
+  // else inherited from the day's daily attendance, else default present.
+  const subjectAttendanceRows: (AttendanceRow & { inherited: boolean })[] = useMemo(() => students.map(s => {
+    const local = localSubjectAttendanceEdits[s.id!];
+    const saved = savedSubjectAttendance[s.id!];
+    const status = local ?? saved?.status ?? dailyInheritMap[s.id!] ?? 'present';
+    const inherited = local === undefined && (saved ? saved.inheritedFromDaily : true);
+    return {
+      studentId: s.id!,
+      studentName: s.studentName,
+      studentIdCode: s.studentId,
+      photoUrl: s.photoUrl,
+      status,
+      inherited,
+    };
+  }), [students, localSubjectAttendanceEdits, savedSubjectAttendance, dailyInheritMap]);
+
+  const cycleSubjectAttendanceStatus = (studentId: string) => {
+    const current = subjectAttendanceRows.find(r => r.studentId === studentId)?.status ?? 'present';
+    const next: Record<string, 'present' | 'absent' | 'late'> = { present: 'absent', absent: 'late', late: 'present' };
+    setLocalSubjectAttendanceEdits(prev => ({ ...prev, [studentId]: next[current] }));
+  };
+
+  const handleSaveSubjectAttendance = async () => {
+    if (!user || subjectAttendanceRows.length === 0) return;
+    const classId = myClassNameToId[selectedClass];
+    if (!classId) return;
+    setSavingSubjectAttendance(true);
+    const records = subjectAttendanceRows.map(r => ({
+      studentId: r.studentId,
+      classId,
+      className: selectedClass,
+      subjectName: subjectAttendanceSubject,
+      teacherId: user.uid,
+      timetablePeriodId: subjectAttendanceTimetablePeriodId,
+      academicSession: currentSession,
+      term: currentTerm,
+      attendanceDate,
+      status: r.status,
+      inheritedFromDaily: r.inherited,
+      recordedBy: user.uid,
+    }));
+    const tid = toast.loading('Saving subject attendance…');
+    try {
+      await batchUpsertSubjectAttendance(records, schoolId);
+      setSavedSubjectAttendance(prev => {
+        const next = { ...prev };
+        records.forEach(r => { next[r.studentId] = { status: r.status, inheritedFromDaily: r.inheritedFromDaily }; });
+        return next;
+      });
+      setLocalSubjectAttendanceEdits({});
+      toast.success('Subject attendance saved!', { id: tid });
+      setSubjectAttendanceSaved(true);
+      setTimeout(() => setSubjectAttendanceSaved(false), 3000);
+    } catch (e: any) {
+      toast.error('Failed to save subject attendance', { id: tid });
+    } finally {
+      setSavingSubjectAttendance(false);
+    }
+  };
+
+  // Load the selected Special Lesson's roster (fetched fresh from the lesson doc, not from
+  // the possibly-stale mySpecialLessons snapshot list) + any existing attendance for the date.
+  useEffect(() => {
+    if (activeTab !== 'special_lessons' || !selectedSpecialLessonId || !schoolId) return;
+    let cancelled = false;
+
+    (async () => {
+      const lessonSnap = await getDoc(doc(db, 'special_lessons', selectedSpecialLessonId));
+      if (!lessonSnap.exists()) return;
+      const enrolledIds = (lessonSnap.data().enrolledStudentIds as string[]) || [];
+
+      const chunks: string[][] = [];
+      for (let i = 0; i < enrolledIds.length; i += 10) chunks.push(enrolledIds.slice(i, i + 10));
+      const studentSnaps = await Promise.all(
+        chunks.map(c => getDocs(query(collection(db, 'students'), where('__name__', 'in', c))))
+      );
+      const roster = studentSnaps.flatMap(snap => snap.docs.map(d => ({ id: d.id, ...d.data() } as Student)));
+
+      const attSnap = await getDocs(query(
+        collection(db, 'specialLessonAttendance'),
+        where('schoolId', '==', schoolId),
+        where('specialLessonId', '==', selectedSpecialLessonId),
+        where('attendanceDate', '==', specialLessonDate),
+      ));
+      const existing: Record<string, 'present' | 'absent' | 'late'> = {};
+      attSnap.docs.forEach(d => {
+        const data = d.data();
+        existing[data.studentId] = data.status;
+      });
+
+      if (cancelled) return;
+      setSpecialLessonRoster(roster);
+      setSavedSpecialLessonAttendance(existing);
+      setLocalSpecialLessonEdits({});
+    })();
+
+    return () => { cancelled = true; };
+  }, [activeTab, selectedSpecialLessonId, specialLessonDate, schoolId]);
+
+  const specialLessonRows: AttendanceRow[] = useMemo(() => specialLessonRoster.map(s => ({
+    studentId: s.id!,
+    studentName: s.studentName,
+    studentIdCode: s.studentId,
+    photoUrl: s.photoUrl,
+    status: localSpecialLessonEdits[s.id!] ?? savedSpecialLessonAttendance[s.id!] ?? 'present',
+  })), [specialLessonRoster, localSpecialLessonEdits, savedSpecialLessonAttendance]);
+
+  const cycleSpecialLessonStatus = (studentId: string) => {
+    const current = specialLessonRows.find(r => r.studentId === studentId)?.status ?? 'present';
+    const next: Record<string, 'present' | 'absent' | 'late'> = { present: 'absent', absent: 'late', late: 'present' };
+    setLocalSpecialLessonEdits(prev => ({ ...prev, [studentId]: next[current] }));
+  };
+
+  const handleSaveSpecialLessonAttendance = async () => {
+    if (!user || !selectedSpecialLessonId || specialLessonRows.length === 0) return;
+    setSavingSpecialLessonAttendance(true);
+    const records = specialLessonRows.map(r => ({
+      specialLessonId: selectedSpecialLessonId,
+      studentId: r.studentId,
+      attendanceDate: specialLessonDate,
+      status: r.status,
+      recordedBy: user.uid,
+    }));
+    const tid = toast.loading('Saving attendance…');
+    try {
+      await batchUpsertSpecialLessonAttendance(records, schoolId);
+      setSavedSpecialLessonAttendance(prev => {
+        const next = { ...prev };
+        records.forEach(r => { next[r.studentId] = r.status; });
+        return next;
+      });
+      setLocalSpecialLessonEdits({});
+      toast.success('Attendance saved!', { id: tid });
+      setSpecialLessonAttendanceSaved(true);
+      setTimeout(() => setSpecialLessonAttendanceSaved(false), 3000);
+    } catch (e: any) {
+      toast.error('Failed to save attendance', { id: tid });
+    } finally {
+      setSavingSpecialLessonAttendance(false);
     }
   };
 
@@ -1000,6 +1237,8 @@ export default function TeacherPortal() {
     { id: 'students', label: 'My Students', Icon: Users },
     { id: 'timetable', label: 'My Timetable', Icon: Clock },
     { id: 'attendance', label: 'Attendance', Icon: ClipboardList },
+    ...(attendanceMode !== 'daily_only' ? [{ id: 'subject_attendance' as TabType, label: 'Subject Attendance', Icon: CheckSquare }] : []),
+    ...(mySpecialLessons.length > 0 ? [{ id: 'special_lessons' as TabType, label: 'Special Lessons', Icon: Sparkles }] : []),
     { id: 'absences', label: 'Absence Requests', Icon: AlertCircle, badge: myPendingAbsences.length || undefined },
     { id: 'grades', label: 'Gradebook', Icon: Award },
     { id: 'skills', label: 'Behaviour', Icon: Star },
@@ -1076,6 +1315,17 @@ export default function TeacherPortal() {
 
       {/* ── HOME / OVERVIEW TAB ── */}
       {activeTab === 'home' && (
+        <>
+        <TodayPanel
+          myTimetables={myTimetables}
+          mySpecialLessons={mySpecialLessons}
+          myAssignedClasses={myAssignedClasses}
+          todaysMarkedClasses={todaysMarkedClasses}
+          teacherName={profile?.displayName}
+          onOpenDailyAttendance={openDailyAttendanceFor}
+          onOpenSubjectAttendance={openSubjectAttendanceFor}
+          onOpenSpecialLesson={openSpecialLessonFor}
+        />
         <TeacherOverview
           schoolId={schoolId}
           selectedClass={selectedClass}
@@ -1088,6 +1338,7 @@ export default function TeacherPortal() {
           currentSession={currentSession}
           navigateTab={navigateTab}
         />
+        </>
       )}
 
       {/* ── CURRICULUM TAB ── */}
@@ -1298,6 +1549,241 @@ export default function TeacherPortal() {
                   >
                     {savingAttendance ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
                     Save Attendance for {new Date(attendanceDate + 'T12:00:00').toLocaleDateString('en-GB')}
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+          )}
+        </div>
+      )}
+
+      {/* ── SUBJECT ATTENDANCE TAB (only when attendanceMode !== 'daily_only') ── */}
+      {activeTab === 'subject_attendance' && (
+        <div className="space-y-6">
+          {myAssignedClasses.length === 0 || mySubjectOptionsForSelectedClass.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-20 bg-amber-50 rounded-2xl border border-amber-200">
+              <Lock className="w-12 h-12 text-amber-400 mx-auto mb-3" />
+              <h3 className="font-bold text-slate-900 mb-1">No Subjects Assigned</h3>
+              <p className="text-slate-500 text-sm text-center max-w-sm">You can only mark subject attendance for classes/subjects you're assigned to teach. Contact your admin.</p>
+            </div>
+          ) : (
+          <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-6">
+              <div>
+                <h3 className="font-bold text-slate-900 text-lg flex items-center gap-2">
+                  <CheckSquare className="w-5 h-5 text-indigo-600" />
+                  Subject Attendance
+                </h3>
+                <p className="text-sm text-slate-500 mt-0.5">
+                  Pre-filled from today's Daily Attendance — only click to change a student who differs for this lesson.
+                </p>
+              </div>
+              <div className="flex flex-wrap items-center gap-3">
+                <div className="flex items-center gap-2">
+                  <Filter className="w-4 h-4 text-slate-400" />
+                  <select
+                    value={selectedClass}
+                    onChange={e => { setSelectedClass(e.target.value); setSubjectAttendanceTimetablePeriodId(undefined); }}
+                    className="px-3 py-2 rounded-xl border border-slate-200 text-sm font-medium outline-none focus:ring-2 focus:ring-indigo-500"
+                  >
+                    {myAssignedClasses.map(c => <option key={c} value={c}>{c}</option>)}
+                  </select>
+                </div>
+                <select
+                  value={subjectAttendanceSubject}
+                  onChange={e => { setSubjectAttendanceSubject(e.target.value); setSubjectAttendanceTimetablePeriodId(undefined); }}
+                  className="px-3 py-2 rounded-xl border border-slate-200 text-sm font-medium outline-none focus:ring-2 focus:ring-indigo-500"
+                >
+                  {mySubjectOptionsForSelectedClass.map(s => <option key={s} value={s}>{s}</option>)}
+                </select>
+                {subjectAttendanceTimetablePeriodId && (
+                  <span className="px-3 py-2 rounded-xl bg-indigo-50 text-indigo-700 text-xs font-bold border border-indigo-200">
+                    From Timetable
+                  </span>
+                )}
+                <input
+                  type="date"
+                  value={attendanceDate}
+                  onChange={e => setAttendanceDate(e.target.value)}
+                  className="px-3 py-2 rounded-xl border border-slate-200 text-sm font-medium outline-none focus:ring-2 focus:ring-indigo-500"
+                />
+              </div>
+            </div>
+
+            {subjectAttendanceSaved && (
+              <span className="inline-flex px-4 py-1.5 mb-4 bg-emerald-50 text-emerald-700 text-xs font-bold rounded-xl border border-emerald-200 items-center gap-1.5">
+                <CheckCircle2 className="w-3.5 h-3.5" /> Saved!
+              </span>
+            )}
+
+            {subjectAttendanceRows.length === 0 ? (
+              <div className="text-center py-12 bg-slate-50 rounded-2xl border-2 border-dashed border-slate-200">
+                <Users className="w-10 h-10 text-slate-200 mx-auto mb-3" />
+                <p className="text-slate-500 text-sm">No students found in {selectedClass}.</p>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                <div className="flex gap-4 text-xs font-bold mb-3">
+                  <span className="text-emerald-600">{subjectAttendanceRows.filter(r => r.status === 'present').length} Present</span>
+                  <span className="text-rose-600">{subjectAttendanceRows.filter(r => r.status === 'absent').length} Absent</span>
+                  <span className="text-amber-600">{subjectAttendanceRows.filter(r => r.status === 'late').length} Late</span>
+                  <span className="text-slate-400">/ {subjectAttendanceRows.length} Total</span>
+                </div>
+
+                <div className="overflow-x-auto rounded-xl border border-slate-100">
+                  <table className="w-full text-left">
+                    <thead className="bg-slate-50">
+                      <tr>
+                        <th className="px-5 py-3 text-xs font-bold text-slate-400 uppercase">#</th>
+                        <th className="px-5 py-3 text-xs font-bold text-slate-400 uppercase">Student</th>
+                        <th className="px-5 py-3 text-xs font-bold text-slate-400 uppercase">Status</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-50">
+                      {subjectAttendanceRows.map((row, i) => (
+                        <tr key={row.studentId} className="hover:bg-slate-50/50 transition-colors">
+                          <td className="px-5 py-3 text-sm text-slate-400 font-medium">{i + 1}</td>
+                          <td className="px-5 py-3">
+                            <div className="flex items-center gap-3">
+                              <div className="w-8 h-8 rounded-lg overflow-hidden flex items-center justify-center text-indigo-700 font-bold text-sm bg-indigo-50 flex-shrink-0">
+                                {row.photoUrl ? (
+                                  <img src={row.photoUrl} alt={row.studentName} className="w-full h-full object-cover" />
+                                ) : (
+                                  row.studentName.charAt(0)
+                                )}
+                              </div>
+                              <span className="text-sm font-medium text-slate-900">{row.studentName}</span>
+                              {row.inherited && (
+                                <span title="Inherited from Daily Attendance — click status to override" className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase border bg-slate-50 text-slate-500 border-slate-200">
+                                  Inherited
+                                </span>
+                              )}
+                            </div>
+                          </td>
+                          <td className="px-5 py-3">
+                            <button
+                              onClick={() => cycleSubjectAttendanceStatus(row.studentId)}
+                              className={`px-3 py-1.5 rounded-xl text-xs font-bold uppercase border cursor-pointer transition-all hover:scale-105 ${statusColor(row.status)}`}
+                            >
+                              {row.status}
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                <div className="pt-4">
+                  <button
+                    onClick={handleSaveSubjectAttendance}
+                    disabled={savingSubjectAttendance}
+                    className="px-6 py-3 bg-indigo-600 text-white font-bold rounded-xl hover:bg-indigo-700 transition-all disabled:opacity-50 flex items-center gap-2 shadow-lg shadow-indigo-200"
+                  >
+                    {savingSubjectAttendance ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
+                    Save {subjectAttendanceSubject} Attendance for {new Date(attendanceDate + 'T12:00:00').toLocaleDateString('en-GB')}
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+          )}
+        </div>
+      )}
+
+      {/* ── SPECIAL LESSONS TAB (coaching/clubs/remedial — independent of daily/subject attendance) ── */}
+      {activeTab === 'special_lessons' && (
+        <div className="space-y-6">
+          {mySpecialLessons.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-20 bg-amber-50 rounded-2xl border border-amber-200">
+              <Lock className="w-12 h-12 text-amber-400 mx-auto mb-3" />
+              <h3 className="font-bold text-slate-900 mb-1">No Special Lessons Assigned</h3>
+              <p className="text-slate-500 text-sm text-center max-w-sm">You'll see this once an admin assigns you to a special lesson (coaching, club, remedial class, etc.).</p>
+            </div>
+          ) : (
+          <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-6">
+              <div>
+                <h3 className="font-bold text-slate-900 text-lg flex items-center gap-2">
+                  <Sparkles className="w-5 h-5 text-indigo-600" />
+                  Special Lesson Attendance
+                </h3>
+                <p className="text-sm text-slate-500 mt-0.5">Only enrolled students appear here — independent of daily/subject attendance.</p>
+              </div>
+              <div className="flex flex-wrap items-center gap-3">
+                <select
+                  value={selectedSpecialLessonId}
+                  onChange={e => setSelectedSpecialLessonId(e.target.value)}
+                  className="px-3 py-2 rounded-xl border border-slate-200 text-sm font-medium outline-none focus:ring-2 focus:ring-indigo-500"
+                >
+                  {mySpecialLessons.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
+                </select>
+                <input
+                  type="date"
+                  value={specialLessonDate}
+                  onChange={e => setSpecialLessonDate(e.target.value)}
+                  className="px-3 py-2 rounded-xl border border-slate-200 text-sm font-medium outline-none focus:ring-2 focus:ring-indigo-500"
+                />
+              </div>
+            </div>
+
+            {specialLessonAttendanceSaved && (
+              <span className="inline-flex px-4 py-1.5 mb-4 bg-emerald-50 text-emerald-700 text-xs font-bold rounded-xl border border-emerald-200 items-center gap-1.5">
+                <CheckCircle2 className="w-3.5 h-3.5" /> Saved!
+              </span>
+            )}
+
+            {specialLessonRows.length === 0 ? (
+              <div className="text-center py-12 bg-slate-50 rounded-2xl border-2 border-dashed border-slate-200">
+                <Users className="w-10 h-10 text-slate-200 mx-auto mb-3" />
+                <p className="text-slate-500 text-sm">No students enrolled in this lesson yet. Contact your admin.</p>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                <div className="flex gap-4 text-xs font-bold mb-3">
+                  <span className="text-emerald-600">{specialLessonRows.filter(r => r.status === 'present').length} Present</span>
+                  <span className="text-rose-600">{specialLessonRows.filter(r => r.status === 'absent').length} Absent</span>
+                  <span className="text-amber-600">{specialLessonRows.filter(r => r.status === 'late').length} Late</span>
+                  <span className="text-slate-400">/ {specialLessonRows.length} Total</span>
+                </div>
+
+                <div className="overflow-x-auto rounded-xl border border-slate-100">
+                  <table className="w-full text-left">
+                    <thead className="bg-slate-50">
+                      <tr>
+                        <th className="px-5 py-3 text-xs font-bold text-slate-400 uppercase">#</th>
+                        <th className="px-5 py-3 text-xs font-bold text-slate-400 uppercase">Student</th>
+                        <th className="px-5 py-3 text-xs font-bold text-slate-400 uppercase">Status</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-50">
+                      {specialLessonRows.map((row, i) => (
+                        <tr key={row.studentId} className="hover:bg-slate-50/50 transition-colors">
+                          <td className="px-5 py-3 text-sm text-slate-400 font-medium">{i + 1}</td>
+                          <td className="px-5 py-3 text-sm font-medium text-slate-900">{row.studentName}</td>
+                          <td className="px-5 py-3">
+                            <button
+                              onClick={() => cycleSpecialLessonStatus(row.studentId)}
+                              className={`px-3 py-1.5 rounded-xl text-xs font-bold uppercase border cursor-pointer transition-all hover:scale-105 ${statusColor(row.status)}`}
+                            >
+                              {row.status}
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                <div className="pt-4">
+                  <button
+                    onClick={handleSaveSpecialLessonAttendance}
+                    disabled={savingSpecialLessonAttendance}
+                    className="px-6 py-3 bg-indigo-600 text-white font-bold rounded-xl hover:bg-indigo-700 transition-all disabled:opacity-50 flex items-center gap-2 shadow-lg shadow-indigo-200"
+                  >
+                    {savingSpecialLessonAttendance ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
+                    Save Attendance for {new Date(specialLessonDate + 'T12:00:00').toLocaleDateString('en-GB')}
                   </button>
                 </div>
               </div>
@@ -2128,11 +2614,24 @@ export default function TeacherPortal() {
                               <td className="px-4 py-3">
                                 <div className="flex flex-wrap gap-2">
                                   {myPeriods.map((p, i) => (
-                                    <div key={i} className="flex items-center gap-2 bg-indigo-50 text-indigo-700 border border-indigo-200 rounded-xl px-3 py-1.5 text-xs">
-                                      <span className="font-bold">{p.subject}</span>
-                                      <span className="text-indigo-400">·</span>
-                                      <span>{p.startTime}–{p.endTime}</span>
-                                    </div>
+                                    attendanceMode !== 'daily_only' ? (
+                                      <button
+                                        key={i}
+                                        onClick={() => openSubjectAttendanceFor(tt.class, p.subject, p.slotId)}
+                                        title="Open Subject Attendance for this period"
+                                        className="flex items-center gap-2 bg-indigo-50 text-indigo-700 border border-indigo-200 rounded-xl px-3 py-1.5 text-xs hover:bg-indigo-100 transition-colors"
+                                      >
+                                        <span className="font-bold">{p.subject}</span>
+                                        <span className="text-indigo-400">·</span>
+                                        <span>{p.startTime}–{p.endTime}</span>
+                                      </button>
+                                    ) : (
+                                      <div key={i} className="flex items-center gap-2 bg-indigo-50 text-indigo-700 border border-indigo-200 rounded-xl px-3 py-1.5 text-xs">
+                                        <span className="font-bold">{p.subject}</span>
+                                        <span className="text-indigo-400">·</span>
+                                        <span>{p.startTime}–{p.endTime}</span>
+                                      </div>
+                                    )
                                   ))}
                                 </div>
                               </td>

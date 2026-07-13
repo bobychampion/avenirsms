@@ -153,6 +153,130 @@ export async function batchUpsertAttendance(
   await batch.commit();
 }
 
+/**
+ * Fetch daily attendance for a class+date as a studentId -> status map.
+ * Used to preload/inherit Subject Attendance defaults from the official daily record.
+ */
+export async function fetchDailyAttendanceMap(
+  className: string,
+  date: string,
+  schoolId?: string | null
+): Promise<Record<string, 'present' | 'absent' | 'late'>> {
+  const constraints: QueryConstraint[] = [
+    where('class', '==', className),
+    where('date', '==', date),
+  ];
+  if (schoolId) constraints.push(where('schoolId', '==', schoolId));
+  const snap = await getDocs(query(collection(db, 'attendance'), ...constraints));
+  const map: Record<string, 'present' | 'absent' | 'late'> = {};
+  snap.docs.forEach(d => {
+    const data = d.data();
+    map[data.studentId] = data.status;
+  });
+  return map;
+}
+
+/**
+ * Bulk upsert Subject Attendance records (one doc per student per class+subject+date).
+ * Independent of `attendance` — never touches the daily record. Matches the upsert
+ * pattern used by batchUpsertAttendance for consistency.
+ */
+export async function batchUpsertSubjectAttendance(
+  records: {
+    studentId: string;
+    classId: string;
+    className: string;
+    subjectName: string;
+    teacherId: string;
+    timetablePeriodId?: string;
+    academicSession: string;
+    term: string;
+    attendanceDate: string;
+    status: 'present' | 'absent' | 'late';
+    inheritedFromDaily: boolean;
+    recordedBy: string;
+  }[],
+  schoolId?: string | null
+): Promise<void> {
+  assertNotImpersonating();
+  const batch = writeBatch(db);
+  for (const record of records) {
+    const constraints: QueryConstraint[] = [
+      where('studentId', '==', record.studentId),
+      where('attendanceDate', '==', record.attendanceDate),
+      where('classId', '==', record.classId),
+      where('subjectName', '==', record.subjectName),
+    ];
+    // When the record is tied to a specific timetable period, match on it too — otherwise a
+    // subject taught twice in one day to the same class (e.g. a double period) would collide
+    // into a single doc. Omitted when the caller doesn't know the period, for backward
+    // compatibility with the plain class+subject+date matching used before timetable integration.
+    if (record.timetablePeriodId) constraints.push(where('timetablePeriodId', '==', record.timetablePeriodId));
+    if (schoolId) constraints.push(where('schoolId', '==', schoolId));
+    const q = query(collection(db, 'subjectAttendance'), ...constraints);
+    const existing = await getDocs(q);
+    if (!existing.empty) {
+      existing.docs.forEach(d => batch.update(d.ref, {
+        status: record.status,
+        inheritedFromDaily: record.inheritedFromDaily,
+        recordedBy: record.recordedBy,
+        recordedAt: serverTimestamp(),
+      }));
+    } else {
+      const newRef = doc(collection(db, 'subjectAttendance'));
+      batch.set(newRef, {
+        ...record,
+        ...(schoolId ? { schoolId } : {}),
+        recordedAt: serverTimestamp(),
+      });
+    }
+  }
+  await batch.commit();
+}
+
+/**
+ * Bulk upsert Special Lesson attendance (one doc per student per lesson per date).
+ * Fully independent of `attendance`/`subjectAttendance` — same upsert pattern for consistency.
+ */
+export async function batchUpsertSpecialLessonAttendance(
+  records: {
+    specialLessonId: string;
+    studentId: string;
+    attendanceDate: string;
+    status: 'present' | 'absent' | 'late';
+    recordedBy: string;
+  }[],
+  schoolId?: string | null
+): Promise<void> {
+  assertNotImpersonating();
+  const batch = writeBatch(db);
+  for (const record of records) {
+    const constraints: QueryConstraint[] = [
+      where('specialLessonId', '==', record.specialLessonId),
+      where('studentId', '==', record.studentId),
+      where('attendanceDate', '==', record.attendanceDate),
+    ];
+    if (schoolId) constraints.push(where('schoolId', '==', schoolId));
+    const q = query(collection(db, 'specialLessonAttendance'), ...constraints);
+    const existing = await getDocs(q);
+    if (!existing.empty) {
+      existing.docs.forEach(d => batch.update(d.ref, {
+        status: record.status,
+        recordedBy: record.recordedBy,
+        recordedAt: serverTimestamp(),
+      }));
+    } else {
+      const newRef = doc(collection(db, 'specialLessonAttendance'));
+      batch.set(newRef, {
+        ...record,
+        ...(schoolId ? { schoolId } : {}),
+        recordedAt: serverTimestamp(),
+      });
+    }
+  }
+  await batch.commit();
+}
+
 /** Get students in a class, optionally scoped to a school */
 export async function getStudentsByClass(className: string, schoolId?: string | null) {
   const constraints: QueryConstraint[] = [

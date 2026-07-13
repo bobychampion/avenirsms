@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import {
   collection, query, where, onSnapshot, getDocs
 } from 'firebase/firestore';
@@ -11,6 +11,7 @@ import { CheckCircle2, XCircle, Clock, Save, Users, ChevronDown, Lock } from 'lu
 import { cn } from '../../lib/utils';
 import toast from 'react-hot-toast';
 import { useSchoolId } from '../../hooks/useSchoolId';
+import { useTeacherAssignments } from '../../hooks/useTeacherAssignments';
 
 type AttStatus = 'present' | 'absent' | 'late';
 
@@ -33,47 +34,21 @@ export default function TeacherMobileAttendance() {
   const today = new Date().toISOString().split('T')[0];
 
   const [students, setStudents] = useState<(Student & { id: string })[]>([]);
-  const [rows, setRows] = useState<AttendanceRow[]>([]);
-  const [assignedClasses, setAssignedClasses] = useState<string[]>([]);
-  const [assignmentLoading, setAssignmentLoading] = useState(true);
+  const { assignedClassNames: assignedClasses, loading: assignmentLoading } = useTeacherAssignments();
   const [selectedClass, setSelectedClass] = useState('');
   const [date, setDate] = useState(today);
   const [saving, setSaving] = useState(false);
-  const [existingRecords, setExistingRecords] = useState<Record<string, AttStatus>>({});
+  // Status as last read from Firestore for the current class+date.
+  const [savedRecords, setSavedRecords] = useState<Record<string, AttStatus>>({});
+  // Status tapped locally but not yet saved — never touched by listener churn,
+  // only cleared when the class or date selection changes.
+  const [localEdits, setLocalEdits] = useState<Record<string, AttStatus>>({});
 
-  // Load teacher's assigned classes from class_subjects + classes (formTutor)
+  // Keep selectedClass valid as the teacher's assignment list loads/changes.
   useEffect(() => {
-    if (!user || !schoolId) return;
-    setAssignmentLoading(true);
-    const load = async () => {
-      try {
-        const [subjectSnap, tutorSnap, classSnap] = await Promise.all([
-          getDocs(query(collection(db, 'class_subjects'), where('schoolId', '==', schoolId), where('teacherId', '==', user.uid))),
-          getDocs(query(collection(db, 'classes'), where('schoolId', '==', schoolId), where('formTutorId', '==', user.uid))),
-          getDocs(query(collection(db, 'classes'), where('schoolId', '==', schoolId))),
-        ]);
-        const idToName: Record<string, string> = {};
-        classSnap.docs.forEach(d => { idToName[d.id] = (d.data().name as string) || ''; });
-        const assigned = new Set<string>();
-        subjectSnap.docs.forEach(d => {
-          const name = idToName[(d.data() as { classId: string }).classId];
-          if (name) assigned.add(name);
-        });
-        tutorSnap.docs.forEach(d => {
-          const name = (d.data().name as string) || '';
-          if (name) assigned.add(name);
-        });
-        const sorted = [...assigned].sort();
-        setAssignedClasses(sorted);
-        setSelectedClass(prev => sorted.includes(prev) ? prev : (sorted[0] ?? ''));
-      } catch (e) {
-        console.warn('Failed to load teacher assignments:', e);
-      } finally {
-        setAssignmentLoading(false);
-      }
-    };
-    load();
-  }, [user?.uid, schoolId]);
+    if (assignmentLoading) return;
+    setSelectedClass(prev => assignedClasses.includes(prev) ? prev : (assignedClasses[0] ?? ''));
+  }, [assignmentLoading, assignedClasses]);
 
   // Load all students once
   useEffect(() => {
@@ -88,42 +63,41 @@ export default function TeacherMobileAttendance() {
     return () => unsub();
   }, [schoolId]);
 
-  // Filter students by selected class
+  // Load existing attendance ONLY when class or date actually changes — a one-shot fetch
+  // (not a live listener) so marking in progress is never clobbered by unrelated writes.
   useEffect(() => {
-    if (!selectedClass) return;
-    const filtered = students.filter(s => s.currentClass === selectedClass);
-    setRows(filtered.map(s => ({
+    if (!selectedClass || !date || !schoolId) return;
+    let cancelled = false;
+    getDocs(
+      query(collection(db, 'attendance'), where('schoolId', '==', schoolId), where('class', '==', selectedClass), where('date', '==', date))
+    ).then(snap => {
+      if (cancelled) return;
+      const map: Record<string, AttStatus> = {};
+      snap.docs.forEach(d => {
+        const data = d.data() as Attendance;
+        map[data.studentId] = data.status;
+      });
+      setSavedRecords(map);
+      setLocalEdits({}); // fresh class/date selection — discard any stale local taps
+    });
+    return () => { cancelled = true; };
+  }, [selectedClass, date, schoolId]);
+
+  // Effective rows: local (unsaved) tap wins, else the last value read from Firestore, else unmarked.
+  const rows: AttendanceRow[] = useMemo(() =>
+    students.filter(s => s.currentClass === selectedClass).map(s => ({
       studentId: s.studentId || s.id,
       studentName: s.studentName,
       currentClass: s.currentClass,
-      status: existingRecords[s.studentId || s.id] ?? null,
-    })));
-  }, [selectedClass, students, existingRecords]);
-
-  // Load existing attendance for selected class + date
-  useEffect(() => {
-    if (!selectedClass || !date) return;
-    if (!schoolId) return;
-    const unsub = onSnapshot(
-      query(collection(db, 'attendance'), where('schoolId', '==', schoolId!), where('class', '==', selectedClass), where('date', '==', date)),
-      snap => {
-        const map: Record<string, AttStatus> = {};
-        snap.docs.forEach(d => {
-          const data = d.data() as Attendance;
-          map[data.studentId] = data.status;
-        });
-        setExistingRecords(map);
-      }
-    );
-    return () => unsub();
-  }, [selectedClass, date]);
+      status: localEdits[s.studentId || s.id] ?? savedRecords[s.studentId || s.id] ?? null,
+    })), [students, selectedClass, localEdits, savedRecords]);
 
   const mark = useCallback((studentId: string, status: AttStatus) => {
-    setRows(prev => prev.map(r => r.studentId === studentId ? { ...r, status } : r));
+    setLocalEdits(prev => ({ ...prev, [studentId]: status }));
   }, []);
 
   const markAll = (status: AttStatus) => {
-    setRows(prev => prev.map(r => ({ ...r, status })));
+    setLocalEdits(() => Object.fromEntries(rows.map(r => [r.studentId, status])));
   };
 
   const markedCount = rows.filter(r => r.status !== null).length;
@@ -141,6 +115,12 @@ export default function TeacherMobileAttendance() {
         class: selectedClass,
         recordedBy: user?.uid ?? profile?.displayName ?? 'teacher',
       })));
+      setSavedRecords(prev => {
+        const next = { ...prev };
+        toSave.forEach(r => { next[r.studentId] = r.status!; });
+        return next;
+      });
+      setLocalEdits({});
       toast.success(`Saved ${toSave.length} records`);
     } catch (e) {
       console.error(e);

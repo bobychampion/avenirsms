@@ -31,6 +31,7 @@ import UserManagement from './pages/UserManagement';
 import Login from './pages/Login';
 import ChangePassword from './pages/ChangePassword';
 import AttendancePage from './pages/AttendancePage';
+import SpecialLessons from './pages/SpecialLessons';
 import StaffManagement from './pages/StaffManagement';
 import PayrollManagement from './pages/PayrollManagement';
 import AnalyticsDashboard from './pages/AnalyticsDashboard';
@@ -297,6 +298,7 @@ function AppContent() {
           <Route path="/admin/finance" element={<Layout><ProtectedRoute allowFinanceRoles><FinancialManagement /></ProtectedRoute></Layout>} />
           <Route path="/admin/classes" element={<Layout><ProtectedRoute role="admin"><ClassManagement /></ProtectedRoute></Layout>} />
           <Route path="/admin/attendance" element={<Layout><ProtectedRoute role="admin"><AttendancePage /></ProtectedRoute></Layout>} />
+          <Route path="/admin/special-lessons" element={<Layout><ProtectedRoute role="admin"><SpecialLessons /></ProtectedRoute></Layout>} />
           <Route path="/admin/staff" element={<Layout><ProtectedRoute role="admin"><StaffManagement /></ProtectedRoute></Layout>} />
           <Route path="/admin/payroll" element={<Layout><ProtectedRoute allowFinanceRoles><PayrollManagement /></ProtectedRoute></Layout>} />
           <Route path="/admin/analytics" element={<Layout><ProtectedRoute allowFinanceRoles><AnalyticsDashboard /></ProtectedRoute></Layout>} />

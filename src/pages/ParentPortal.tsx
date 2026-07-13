@@ -4,15 +4,15 @@ import { db, handleFirestoreError, OperationType } from '../firebase';
 import { useAuth } from '../components/FirebaseProvider';
 import {
   collection, query, onSnapshot, where, addDoc, serverTimestamp,
-  orderBy, updateDoc, doc, getDoc, getDocs
+  orderBy, updateDoc, doc, getDoc, getDocs, limit
 } from 'firebase/firestore';
-import { Student, Assignment, AssignmentSubmission, Message, Grade, Attendance, SchoolEvent, Invoice, Notification, TERMS, CURRENT_SESSION, calculateGrade, SKILL_LABELS, SKILL_RATING_LABELS, SkillRating } from '../types';
+import { Student, Assignment, AssignmentSubmission, Message, Grade, Attendance, SchoolEvent, Invoice, Notification, TERMS, CURRENT_SESSION, calculateGrade, SKILL_LABELS, SKILL_RATING_LABELS, SkillRating, SubjectAttendance, SpecialLesson, SpecialLessonAttendance } from '../types';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   BookOpen, Calendar, MessageSquare, Loader2, CheckCircle2, Clock,
   Bell, TrendingUp, AlertCircle, DollarSign, Receipt, Plus, Send,
   User, Award, Activity, X, BarChart2, FileText, Printer, CreditCard,
-  Upload, ExternalLink, GraduationCap, CalendarOff,
+  Upload, ExternalLink, GraduationCap, CalendarOff, Sparkles, ChevronDown,
 } from 'lucide-react';
 import PaymentMethodModal from '../components/PaymentMethodModal';
 import { initFCMForUser, onForegroundMessage, showFcmPushNotification } from '../services/notificationService';
@@ -31,13 +31,13 @@ const GRADE_COLORS: Record<string, string> = {
   F9: 'text-rose-700 bg-rose-50',
 };
 
-type TabType = 'progress' | 'attendance' | 'assignments' | 'absences' | 'finance' | 'messages' | 'notifications' | 'report_card';
+type TabType = 'progress' | 'attendance' | 'special_lessons' | 'assignments' | 'absences' | 'finance' | 'messages' | 'notifications' | 'report_card';
 
 export default function ParentPortal() {
   const { user, profile } = useAuth();
   const navigate = useNavigate();
   const schoolId = useSchoolId();
-  const { getGradingForClass, locale, currency, schoolName, logoUrl, reportShowLogo, reportFooterText } = useSchool();
+  const { getGradingForClass, locale, currency, schoolName, logoUrl, reportShowLogo, reportFooterText, attendanceMode } = useSchool();
   const [children, setChildren] = useState<Student[]>([]);
   const [selectedChild, setSelectedChild] = useState<Student | null>(null);
   const [grades, setGrades] = useState<Grade[]>([]);
@@ -50,6 +50,13 @@ export default function ParentPortal() {
   const [activeTab, setActiveTab] = useState<TabType>('progress');
   const [filterTerm, setFilterTerm] = useState<string>(TERMS[0]);
   const [attendanceMonth, setAttendanceMonth] = useState<string>(''); // '' = all months
+  // Subject-attendance breakdown for a single expanded day (only used when attendanceMode !== 'daily_only')
+  const [expandedDay, setExpandedDay] = useState<string | null>(null);
+  const [dayBreakdown, setDayBreakdown] = useState<SubjectAttendance[]>([]);
+  const [loadingBreakdown, setLoadingBreakdown] = useState(false);
+  // Special Lessons tab — independent of daily/subject attendance and official attendance rate
+  const [mySpecialLessons, setMySpecialLessons] = useState<SpecialLesson[]>([]);
+  const [specialLessonAttendanceHistory, setSpecialLessonAttendanceHistory] = useState<SpecialLessonAttendance[]>([]);
   const [newMessage, setNewMessage] = useState({ receiverId: '', content: '' });
   const [reportCardTerm, setReportCardTerm] = useState<string>(TERMS[0]);
   const [reportCardSkills, setReportCardSkills] = useState<any>(null);
@@ -325,6 +332,9 @@ export default function ParentPortal() {
     setInvoices([]);
     setMySubmissions([]);
     setMyAbsenceRequests([]);
+    setExpandedDay(null);
+    setMySpecialLessons([]);
+    setSpecialLessonAttendanceHistory([]);
 
     const qGrades = query(collection(db, 'grades'), where('schoolId', '==', schoolId!), where('studentId', '==', selectedChild.id));
     const unsubGrades = onSnapshot(
@@ -378,8 +388,54 @@ export default function ParentPortal() {
       err => console.error('[ParentPortal] absence_requests query failed:', err.code, err.message)
     );
 
-    return () => { unsubGrades(); unsubAtt(); unsubAssign(); unsubSubs(); unsubInv(); unsubAbsence(); };
+    // Special Lessons this student is enrolled in + their attendance history — separate from
+    // daily/subject attendance and does not feed into attendanceRate below.
+    const qSpecialLessons = query(
+      collection(db, 'special_lessons'),
+      where('schoolId', '==', schoolId!),
+      where('enrolledStudentIds', 'array-contains', selectedChild.id),
+    );
+    const unsubSpecialLessons = onSnapshot(qSpecialLessons,
+      snap => setMySpecialLessons(snap.docs.map(d => ({ id: d.id, ...d.data() } as SpecialLesson))),
+      err => console.error('[ParentPortal] special_lessons query failed:', err.code, err.message)
+    );
+
+    // Bounded — a dot-history strip only ever shows the most recent ~12 records per lesson
+    // (see the Activities tab render below), so there's no reason to stream full history.
+    const qSpecialLessonAttendance = query(
+      collection(db, 'specialLessonAttendance'),
+      where('schoolId', '==', schoolId!),
+      where('studentId', '==', selectedChild.id),
+      orderBy('attendanceDate', 'desc'),
+      limit(200),
+    );
+    const unsubSpecialLessonAttendance = onSnapshot(qSpecialLessonAttendance,
+      snap => setSpecialLessonAttendanceHistory(snap.docs.map(d => ({ id: d.id, ...d.data() } as SpecialLessonAttendance))),
+      err => console.error('[ParentPortal] specialLessonAttendance query failed:', err.code, err.message)
+    );
+
+    return () => {
+      unsubGrades(); unsubAtt(); unsubAssign(); unsubSubs(); unsubInv(); unsubAbsence();
+      unsubSpecialLessons(); unsubSpecialLessonAttendance();
+    };
   }, [selectedChild, schoolId]);
+
+  // Fetch subject-attendance breakdown only when a specific day is expanded — one-shot, not a listener.
+  useEffect(() => {
+    if (!expandedDay || !selectedChild?.id || !schoolId) { setDayBreakdown([]); return; }
+    let cancelled = false;
+    setLoadingBreakdown(true);
+    getDocs(query(
+      collection(db, 'subjectAttendance'),
+      where('schoolId', '==', schoolId),
+      where('studentId', '==', selectedChild.id),
+      where('attendanceDate', '==', expandedDay),
+    )).then(snap => {
+      if (cancelled) return;
+      setDayBreakdown(snap.docs.map(d => ({ id: d.id, ...d.data() } as SubjectAttendance)));
+    }).finally(() => { if (!cancelled) setLoadingBreakdown(false); });
+    return () => { cancelled = true; };
+  }, [expandedDay, selectedChild?.id, schoolId]);
 
   const handleSubmitAbsence = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -532,6 +588,7 @@ export default function ParentPortal() {
     { id: 'progress', label: 'Academic', Icon: TrendingUp },
     { id: 'report_card', label: 'Report Card', Icon: FileText },
     { id: 'attendance', label: 'Attendance', Icon: CheckCircle2 },
+    ...(mySpecialLessons.length > 0 ? [{ id: 'special_lessons' as TabType, label: 'Activities', Icon: Sparkles }] : []),
     { id: 'assignments', label: 'Assignments', Icon: BookOpen },
     { id: 'absences', label: 'Absence Requests', Icon: CalendarOff },
     { id: 'finance', label: 'Fees', Icon: DollarSign },
@@ -908,11 +965,13 @@ export default function ParentPortal() {
                         {days.map(d => {
                           const ds = dateStr(d);
                           const st = dateMap[ds];
+                          const expandable = attendanceMode !== 'daily_only' && !!st;
                           return (
                             <td
                               key={d}
-                              title={st ? `${ds}: ${st}` : `${ds}: no record`}
-                              className={`py-3 text-center ${isWeekend(d) ? 'bg-slate-50' : ''}`}
+                              title={st ? `${ds}: ${st}${expandable ? ' — click for subject breakdown' : ''}` : `${ds}: no record`}
+                              onClick={expandable ? () => setExpandedDay(prev => prev === ds ? null : ds) : undefined}
+                              className={`py-3 text-center ${isWeekend(d) ? 'bg-slate-50' : ''} ${expandable ? 'cursor-pointer hover:bg-indigo-50' : ''} ${expandedDay === ds ? 'bg-indigo-50 ring-2 ring-inset ring-indigo-300' : ''}`}
                             >
                               <span className={`inline-block w-4 h-4 rounded-full ${dotClass(st)}`} />
                             </td>
@@ -945,6 +1004,37 @@ export default function ParentPortal() {
                 </div>
               )}
             </div>
+
+            {/* ── Expanded day: subject attendance breakdown (only when the school has it enabled) ── */}
+            {expandedDay && attendanceMode !== 'daily_only' && (
+              <div className="bg-white rounded-2xl border border-indigo-200 shadow-sm p-5">
+                <div className="flex items-center justify-between mb-3">
+                  <p className="text-sm font-bold text-slate-800">
+                    Subjects — {new Date(expandedDay + 'T12:00:00').toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}
+                  </p>
+                  <button onClick={() => setExpandedDay(null)} className="text-slate-400 hover:text-slate-600">
+                    <ChevronDown className="w-4 h-4 rotate-180" />
+                  </button>
+                </div>
+                {loadingBreakdown ? (
+                  <p className="text-xs text-slate-400 py-4 text-center">Loading…</p>
+                ) : dayBreakdown.length === 0 ? (
+                  <p className="text-xs text-slate-400 py-4 text-center">No per-subject records for this day — daily attendance only.</p>
+                ) : (
+                  <div className="space-y-1.5">
+                    {dayBreakdown.map(sa => (
+                      <div key={sa.id} className="flex items-center justify-between px-3 py-2 rounded-xl bg-slate-50">
+                        <span className="text-sm font-medium text-slate-700">{sa.subjectName}</span>
+                        <span className={`text-xs font-bold uppercase px-2 py-0.5 rounded-full ${
+                          sa.status === 'present' ? 'bg-emerald-100 text-emerald-700' :
+                          sa.status === 'absent' ? 'bg-rose-100 text-rose-700' : 'bg-amber-100 text-amber-700'
+                        }`}>{sa.status}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* ── Summary stat cards ── */}
             {recordedDays > 0 && (
@@ -980,6 +1070,53 @@ export default function ParentPortal() {
           </div>
         );
       })()}
+
+      {/* ── SPECIAL LESSONS / ACTIVITIES (independent of daily/subject attendance) ── */}
+      {activeTab === 'special_lessons' && (
+        <div className="space-y-4">
+          {mySpecialLessons.length === 0 ? (
+            <div className="bg-white rounded-2xl border-2 border-dashed border-slate-200 py-16 text-center">
+              <Sparkles className="w-10 h-10 text-slate-200 mx-auto mb-3" />
+              <p className="text-slate-500 text-sm">Not enrolled in any special lessons or clubs yet.</p>
+            </div>
+          ) : (
+            mySpecialLessons.map(lesson => {
+              const history = specialLessonAttendanceHistory
+                .filter(a => a.specialLessonId === lesson.id)
+                .sort((a, b) => b.attendanceDate.localeCompare(a.attendanceDate));
+              const present = history.filter(a => a.status === 'present').length;
+              const rate = history.length > 0 ? Math.round((present / history.length) * 100) : 0;
+              return (
+                <div key={lesson.id} className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5">
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <p className="font-bold text-slate-900">{lesson.name}</p>
+                      {lesson.description && <p className="text-xs text-slate-500 mt-0.5">{lesson.description}</p>}
+                      <p className="text-xs text-slate-400 mt-1">{lesson.days.join(', ')}{lesson.time ? ` · ${lesson.time}` : ''}</p>
+                    </div>
+                    {history.length > 0 && (
+                      <span className={`text-xs font-bold px-2 py-1 rounded-full shrink-0 ${rate >= 75 ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>
+                        {rate}% attendance
+                      </span>
+                    )}
+                  </div>
+                  {history.length > 0 && (
+                    <div className="flex flex-wrap gap-1.5 mt-3">
+                      {history.slice(0, 12).map(a => (
+                        <span key={a.id} title={`${a.attendanceDate}: ${a.status}`}
+                          className={`w-3 h-3 rounded-full ${a.status === 'present' ? 'bg-emerald-400' : a.status === 'absent' ? 'bg-rose-300' : 'bg-amber-300'}`} />
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })
+          )}
+          <p className="text-[11px] text-slate-400 px-1">
+            Special lesson attendance is separate from the official Daily Attendance record above.
+          </p>
+        </div>
+      )}
 
       {/* ── ASSIGNMENTS ── */}
       {activeTab === 'assignments' && (

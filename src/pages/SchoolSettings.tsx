@@ -93,6 +93,15 @@ export interface SchoolSettings {
   timetablePeriods: TimetablePeriodSlot[];
   /** Opt-in weekend class days (e.g. ['Saturday'] for weekend lessons/exam prep). Empty = Mon–Fri only. */
   weekendDays: WeekendDay[];
+  /**
+   * Controls which attendance workflows are shown across the app.
+   * 'daily_only': the existing whole-class daily attendance (unchanged default behaviour).
+   * 'daily_and_subject': daily attendance remains official; subject teachers can additionally
+   *   mark per-lesson exceptions, which auto-inherit from the day's daily record.
+   * 'subject_only': subject-level marking is the primary/official record; no separate daily-only screen.
+   * Defaults to 'daily_only' for all existing schools — nothing changes until an admin opts in.
+   */
+  attendanceMode: 'daily_only' | 'daily_and_subject' | 'subject_only';
   // Internationalisation
   country: string;           // ISO 3166-1 alpha-2, e.g. 'NG', 'SI', 'US'
   timezone: string;          // IANA tz string, e.g. 'Africa/Lagos', 'Europe/Ljubljana'
@@ -260,6 +269,7 @@ export const defaultSettings: SchoolSettings = {
   periodTimes: periodTimesFromSlots(DEFAULT_TIMETABLE_PERIODS),
   timetablePeriods: [...DEFAULT_TIMETABLE_PERIODS],
   weekendDays: [],
+  attendanceMode: 'daily_only',
   // Internationalisation
   country: '',
   timezone: '',
@@ -1477,6 +1487,38 @@ export default function SchoolSettingsPage() {
                   }`}
                 >
                   <opt.Icon className={`w-5 h-5 mb-2 ${(form.institutionType || 'secondary') === opt.value ? 'text-indigo-600' : 'text-slate-400'}`} />
+                  <p className="text-sm font-bold text-slate-800">{opt.label}</p>
+                  <p className="text-xs text-slate-500 mt-0.5">{opt.hint}</p>
+                </button>
+              ))}
+            </div>
+          </section>
+
+          {/* Attendance Mode */}
+          <section className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
+            <h2 className="font-bold text-slate-800 text-sm flex items-center gap-2 mb-1">
+              <ClipboardCheck className="w-4 h-4 text-indigo-600" /> Attendance Mode
+            </h2>
+            <p className="text-xs text-slate-500 mb-5">
+              Controls which attendance workflows teachers see. Daily attendance always remains
+              the official record unless you choose Subject Attendance Only.
+            </p>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              {([
+                { value: 'daily_only', label: 'Daily Attendance Only', hint: 'One record per student per day (default) — best for primary/nursery' },
+                { value: 'daily_and_subject', label: 'Daily + Subject Attendance', hint: 'Subject teachers mark exceptions per lesson, inherited from the daily record' },
+                { value: 'subject_only', label: 'Subject Attendance Only', hint: 'Per-lesson marking is the official record — best for secondary/college' },
+              ] as const).map(opt => (
+                <button
+                  key={opt.value}
+                  type="button"
+                  onClick={() => field('attendanceMode', opt.value)}
+                  className={`text-left px-4 py-3 rounded-xl border-2 transition-colors ${
+                    (form.attendanceMode || 'daily_only') === opt.value
+                      ? 'border-indigo-500 bg-indigo-50'
+                      : 'border-slate-200 hover:border-slate-300'
+                  }`}
+                >
                   <p className="text-sm font-bold text-slate-800">{opt.label}</p>
                   <p className="text-xs text-slate-500 mt-0.5">{opt.hint}</p>
                 </button>

@@ -134,6 +134,12 @@ export interface ClassSubject {
   subjectName: string;
   teacherId?: string;
   teacherName?: string;
+  // Session/term scoping + lifecycle status. Optional for backward compatibility with
+  // pre-existing docs (created before this sprint) — absence is treated as "active" for
+  // the currently active session/term everywhere this field is read.
+  academicSession?: string;
+  term?: string;
+  status?: 'active' | 'inactive';
 }
 
 export interface Student {
@@ -325,6 +331,76 @@ export interface Attendance {
   status: 'present' | 'absent' | 'late';
   class: string;
   recordedBy: string;
+}
+
+/**
+ * Per-lesson attendance exception. Independent of `Attendance` (the official daily record) —
+ * only written when a school's attendanceMode is 'daily_and_subject' or 'subject_only'.
+ * One doc per student per class per subject per date. `inheritedFromDaily: true` marks rows
+ * a teacher hasn't explicitly overridden (their status mirrors the day's `Attendance` doc).
+ */
+export interface SubjectAttendance {
+  id?: string;
+  schoolId: string;
+  studentId: string;
+  classId: string;
+  /** Denormalized class name, matching Student.currentClass / Attendance.class conventions. */
+  className: string;
+  /** Matches ClassSubject.subjectName — this codebase keys subjects by name, not a subjects collection FK. */
+  subjectName: string;
+  teacherId: string;
+  timetablePeriodId?: string;
+  academicSession: string;
+  term: string;
+  attendanceDate: string;
+  status: 'present' | 'absent' | 'late';
+  inheritedFromDaily: boolean;
+  recordedBy: string;
+  recordedAt?: any;
+}
+
+/**
+ * Extra-curricular / out-of-timetable lesson (coaching, clubs, remedial classes, etc.).
+ * Independent of the normal class timetable — a student can be enrolled in any number of
+ * these regardless of which class/form they belong to (e.g. "JSS2A" + "WAEC Coaching" +
+ * "Coding Club" simultaneously). Enrollment is a plain array on the lesson doc rather than
+ * a separate join collection, matching this project's preference for simple denormalized
+ * lists over join tables where the list stays small (a lesson's roster, not a global index).
+ */
+export interface SpecialLesson {
+  id?: string;
+  schoolId: string;
+  name: string;
+  description?: string;
+  teacherIds: string[];
+  teacherNames?: string[];
+  academicSession: string;
+  term: string;
+  startDate: string;
+  endDate: string;
+  /** Weekday/weekend names this lesson runs on, e.g. ['Saturday'] or ['Monday','Wednesday']. */
+  days: string[];
+  time?: string;
+  status: 'active' | 'inactive' | 'completed';
+  enrolledStudentIds: string[];
+  createdAt?: any;
+  updatedAt?: any;
+}
+
+/**
+ * Attendance for a Special Lesson session — fully independent of `Attendance` (daily) and
+ * `SubjectAttendance`. Does not affect a student's official daily attendance percentage
+ * unless a school explicitly configures that (not implemented — flagged for a future setting).
+ */
+export interface SpecialLessonAttendance {
+  id?: string;
+  schoolId: string;
+  specialLessonId: string;
+  studentId: string;
+  attendanceDate: string;
+  status: 'present' | 'absent' | 'late';
+  recordedBy: string;
+  recordedAt?: any;
 }
 
 export interface Assignment {

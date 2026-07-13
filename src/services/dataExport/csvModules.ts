@@ -7,7 +7,7 @@ import {
   collection, query, where, getDocs, addDoc, serverTimestamp, writeBatch, doc,
 } from 'firebase/firestore';
 import { db } from '../../firebase';
-import { Student, Staff, Grade, Attendance, calculateGrade } from '../../types';
+import { Student, Staff, Grade, Attendance, SubjectAttendance, SpecialLessonAttendance, calculateGrade } from '../../types';
 import { generateStudentId } from '../firestoreService';
 
 // ─── Generic helpers ─────────────────────────────────────────────────────────
@@ -349,6 +349,35 @@ export function exportAttendanceCsv(records: (Attendance & { studentName?: strin
     `attendance_export_${new Date().toISOString().slice(0, 10)}.csv`,
     [...ATTENDANCE_CSV_HEADERS],
     records.map(attendanceToCsvRow)
+  );
+}
+
+const SUBJECT_ATTENDANCE_CSV_HEADERS = [
+  'studentId', 'studentName', 'className', 'subjectName', 'attendanceDate', 'status', 'inheritedFromDaily', 'recordedBy',
+] as const;
+
+export function exportSubjectAttendanceCsv(records: (SubjectAttendance & { studentName?: string })[]): void {
+  downloadCsv(
+    `subject_attendance_export_${new Date().toISOString().slice(0, 10)}.csv`,
+    [...SUBJECT_ATTENDANCE_CSV_HEADERS],
+    records.map(r => [
+      r.studentId, r.studentName || '', r.className, r.subjectName, r.attendanceDate,
+      r.status, String(r.inheritedFromDaily), r.recordedBy,
+    ])
+  );
+}
+
+const SPECIAL_LESSON_ATTENDANCE_CSV_HEADERS = [
+  'studentId', 'studentName', 'lessonName', 'attendanceDate', 'status', 'recordedBy',
+] as const;
+
+export function exportSpecialLessonAttendanceCsv(records: (SpecialLessonAttendance & { studentName?: string; lessonName?: string })[]): void {
+  downloadCsv(
+    `special_lesson_attendance_export_${new Date().toISOString().slice(0, 10)}.csv`,
+    [...SPECIAL_LESSON_ATTENDANCE_CSV_HEADERS],
+    records.map(r => [
+      r.studentId, r.studentName || '', r.lessonName || '', r.attendanceDate, r.status, r.recordedBy,
+    ])
   );
 }
 

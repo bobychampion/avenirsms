@@ -14,7 +14,7 @@ import {
   ClipboardList, Calendar, DollarSign, FileText, Settings, BarChart3,
   Clock, Award, Briefcase, CreditCard, Map, Menu, X, Bell,
   ArrowUpRight, Key, MessageSquare, FileSpreadsheet, Database,
-  HelpCircle, Building2, ShieldCheck, LogIn, MapPin, WifiOff, Chrome, Package,
+  HelpCircle, Building2, ShieldCheck, LogIn, MapPin, WifiOff, Chrome, Package, Sparkles,
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { db } from '../firebase';
@@ -145,6 +145,7 @@ const adminNavGroups = [
       { to: '/admin/students', label: 'Students', icon: Users },
       { to: '/admin/admissions', label: 'Admissions', icon: UserCheck },
       { to: '/admin/attendance', label: 'Attendance', icon: ClipboardList },
+      { to: '/admin/special-lessons', label: 'Special Lessons', icon: Sparkles },
     ],
   },
   {

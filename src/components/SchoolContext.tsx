@@ -46,6 +46,8 @@ interface SchoolContextValue {
   schoolLevels: string[];          // from school_settings (dynamic, fallback SCHOOL_CLASSES)
   weekendDays: WeekendDay[];       // opt-in weekend class days from school_settings
   schoolDays: string[];            // DAYS_OF_WEEK + any enabled weekendDays, in calendar order
+  /** 'daily_only' (default) | 'daily_and_subject' | 'subject_only' — from school_settings */
+  attendanceMode: 'daily_only' | 'daily_and_subject' | 'subject_only';
   periodTimes: string[];           // legacy start times — derived from timetablePeriods
   timetablePeriods: TimetablePeriodSlot[]; // school bell schedule for timetable columns
   currentSession: string;          // from school_settings (dynamic, fallback CURRENT_SESSION)
@@ -102,6 +104,7 @@ const SchoolContext = createContext<SchoolContextValue>({
   schoolLevels: SCHOOL_CLASSES,
   weekendDays: [],
   schoolDays: [...DAYS_OF_WEEK],
+  attendanceMode: 'daily_only',
   periodTimes: DEFAULT_PERIOD_TIMES,
   timetablePeriods: [...DEFAULT_TIMETABLE_PERIODS],
   currentSession: CURRENT_SESSION,
@@ -162,6 +165,7 @@ export function SchoolProvider({ children }: { children: React.ReactNode }) {
   // Dynamic settings from school_settings/{schoolId}
   const [schoolLevels, setSchoolLevels] = useState<string[]>([...SCHOOL_CLASSES]);
   const [weekendDays, setWeekendDays] = useState<WeekendDay[]>([]);
+  const [attendanceMode, setAttendanceMode] = useState<'daily_only' | 'daily_and_subject' | 'subject_only'>('daily_only');
   const [periodTimes, setPeriodTimes] = useState<string[]>([...DEFAULT_PERIOD_TIMES]);
   const [timetablePeriods, setTimetablePeriods] = useState<TimetablePeriodSlot[]>([...DEFAULT_TIMETABLE_PERIODS]);
   const [customSubjects, setCustomSubjects] = useState<string[]>([]);
@@ -250,6 +254,7 @@ export function SchoolProvider({ children }: { children: React.ReactNode }) {
       // super_admin returning to platform dashboard — reset everything to defaults
       setSchoolLevels([...SCHOOL_CLASSES]);
       setWeekendDays([]);
+      setAttendanceMode('daily_only');
       setPeriodTimes([...DEFAULT_PERIOD_TIMES]);
       setCustomSubjects([]);
       setCurrentSession(CURRENT_SESSION);
@@ -297,6 +302,7 @@ export function SchoolProvider({ children }: { children: React.ReactNode }) {
           const data = { ...defaultSettings, ...snap.data() } as SchoolSettings;
           if (data.schoolLevels?.length) setSchoolLevels(data.schoolLevels);
           setWeekendDays(data.weekendDays || []);
+          setAttendanceMode(data.attendanceMode || 'daily_only');
           const resolvedSlots = resolveTimetablePeriodSlots({
             timetablePeriods: data.timetablePeriods,
             periodTimes: data.periodTimes,
@@ -428,6 +434,7 @@ export function SchoolProvider({ children }: { children: React.ReactNode }) {
       schoolLevels,
       weekendDays,
       schoolDays,
+      attendanceMode,
       periodTimes,
       timetablePeriods,
       currentSession,

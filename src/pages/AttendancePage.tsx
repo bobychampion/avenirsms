@@ -1,10 +1,11 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { db, handleFirestoreError, OperationType } from '../firebase';
 import { collection, query, onSnapshot, orderBy, where, getDocs, addDoc, serverTimestamp } from 'firebase/firestore';
-import { Student, Attendance } from '../types';
+import { Student, Attendance, SubjectAttendance, SpecialLesson, SpecialLessonAttendance } from '../types';
 import { batchUpsertAttendance } from '../services/firestoreService';
 import { useAuth } from '../components/FirebaseProvider';
 import { useSchoolId } from '../hooks/useSchoolId';
+import { useSchool } from '../components/SchoolContext';
 import { suggestAttendanceAlert } from '../services/geminiService';
 import { motion } from 'motion/react';
 import toast from 'react-hot-toast';
@@ -12,7 +13,7 @@ import {
   ClipboardList, Search, CheckCircle, XCircle, Clock, Save,
   BarChart3, Filter, Calendar, Users, Sparkles, Bell, Download
 } from 'lucide-react';
-import { exportAttendanceCsv } from '../services/dataExport/csvModules';
+import { exportAttendanceCsv, exportSubjectAttendanceCsv, exportSpecialLessonAttendanceCsv } from '../services/dataExport/csvModules';
 
 type AttendanceStatus = 'present' | 'absent' | 'late';
 
@@ -25,18 +26,32 @@ interface AttendanceRow {
 export default function AttendancePage() {
   const { user } = useAuth();
   const schoolId = useSchoolId();
+  const { attendanceMode } = useSchool();
   const [selectedClass, setSelectedClass] = useState('');
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
   const [classRows, setClassRows] = useState<{ id: string; name: string }[]>([]);
   const [students, setStudents] = useState<Student[]>([]);
-  const [attendanceRows, setAttendanceRows] = useState<AttendanceRow[]>([]);
+  // Status as last read from Firestore for the current class+date.
+  const [savedAttendance, setSavedAttendance] = useState<Record<string, AttendanceStatus>>({});
+  // Status clicked locally but not yet saved — never touched by listener churn,
+  // only cleared when the class or date selection changes.
+  const [localAttendanceEdits, setLocalAttendanceEdits] = useState<Record<string, AttendanceStatus>>({});
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
-  const [activeTab, setActiveTab] = useState<'mark' | 'report' | 'monthly'>('mark');
+  const [activeTab, setActiveTab] = useState<'mark' | 'report' | 'monthly' | 'subject_report' | 'special_lessons_report'>('mark');
   const [reportData, setReportData] = useState<{ studentId: string; studentName: string; present: number; absent: number; late: number; rate: number }[]>([]);
   const [loadingReport, setLoadingReport] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [aiAlertLoading, setAiAlertLoading] = useState<string | null>(null);
+
+  // ── Subject Attendance report (class + subject summary) ──
+  const [subjectReportRecords, setSubjectReportRecords] = useState<(SubjectAttendance & { studentName?: string })[]>([]);
+  const [loadingSubjectReport, setLoadingSubjectReport] = useState(false);
+
+  // ── Special Lesson report (per-lesson summary) ──
+  const [specialLessons, setSpecialLessons] = useState<SpecialLesson[]>([]);
+  const [specialLessonReportRecords, setSpecialLessonReportRecords] = useState<SpecialLessonAttendance[]>([]);
+  const [loadingSpecialLessonReport, setLoadingSpecialLessonReport] = useState(false);
 
   // Monthly view state
   const [selectedMonth, setSelectedMonth] = useState(() => new Date().toISOString().slice(0, 7)); // YYYY-MM
@@ -99,41 +114,49 @@ export default function AttendancePage() {
     return () => unsub();
   }, [selectedClass, schoolId]);
 
-  // Load existing attendance for the selected class+date
+  // Load existing attendance ONLY when class or date actually changes — deliberately excludes
+  // `students`/`approvedAbsences` from deps, since those are live-listener-derived and re-emit
+  // on unrelated writes, which previously reset any in-progress local edits back to defaults.
   useEffect(() => {
     if (!schoolId) return;
-    if (!selectedClass || !selectedDate || students.length === 0) return;
+    if (!selectedClass || !selectedDate) return;
+    let cancelled = false;
     const loadExisting = async () => {
       const q = query(
         collection(db, 'attendance'),
-        where('schoolId', '==', schoolId!),
+        where('schoolId', '==', schoolId),
         where('class', '==', selectedClass),
         where('date', '==', selectedDate)
       );
       const snap = await getDocs(q);
       const existing: Record<string, AttendanceStatus> = {};
       snap.docs.forEach(d => { existing[d.data().studentId] = d.data().status; });
-      setAttendanceRows(students.map(s => ({
-        studentId: s.id!,
-        studentName: s.studentName,
-        status: existing[s.id!] || (isOnApprovedLeave(s.id!, selectedDate) ? 'absent' : 'present'),
-      })));
+      if (cancelled) return;
+      setSavedAttendance(existing);
+      setLocalAttendanceEdits({}); // fresh class/date selection — discard any stale local edits
     };
     loadExisting().catch(console.error);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [students, selectedDate, selectedClass, schoolId, approvedAbsences]);
+    return () => { cancelled = true; };
+  }, [selectedDate, selectedClass, schoolId]);
+
+  // Effective attendance rows: local (unsaved) edit wins, else the last value read from
+  // Firestore, else the default. Recomputing from `students` is safe — never touches saved state.
+  const attendanceRows: AttendanceRow[] = useMemo(() => students.map(s => ({
+    studentId: s.id!,
+    studentName: s.studentName,
+    status: localAttendanceEdits[s.id!] ?? savedAttendance[s.id!] ?? (isOnApprovedLeave(s.id!, selectedDate) ? 'absent' : 'present'),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  })), [students, localAttendanceEdits, savedAttendance, selectedDate, approvedAbsences]);
 
   const setAllStatus = (status: AttendanceStatus) => {
-    setAttendanceRows(prev => prev.map(r => ({ ...r, status })));
+    setLocalAttendanceEdits(() => Object.fromEntries(attendanceRows.map(r => [r.studentId, status])));
   };
 
   const toggleStatus = (studentId: string) => {
-    setAttendanceRows(prev => prev.map(r => {
-      if (r.studentId !== studentId) return r;
-      const cycle: AttendanceStatus[] = ['present', 'absent', 'late'];
-      const next = cycle[(cycle.indexOf(r.status) + 1) % cycle.length];
-      return { ...r, status: next };
-    }));
+    const current = attendanceRows.find(r => r.studentId === studentId)?.status ?? 'present';
+    const cycle: AttendanceStatus[] = ['present', 'absent', 'late'];
+    const next = cycle[(cycle.indexOf(current) + 1) % cycle.length];
+    setLocalAttendanceEdits(prev => ({ ...prev, [studentId]: next }));
   };
 
   const handleSave = async () => {
@@ -149,6 +172,12 @@ export default function AttendancePage() {
     const tid = toast.loading('Saving attendance…');
     try {
       await batchUpsertAttendance(records, schoolId);
+      setSavedAttendance(prev => {
+        const next = { ...prev };
+        records.forEach(r => { next[r.studentId] = r.status; });
+        return next;
+      });
+      setLocalAttendanceEdits({});
       toast.success('Attendance saved!', { id: tid });
       setSaved(true);
       setTimeout(() => setSaved(false), 3000);
@@ -182,6 +211,78 @@ export default function AttendancePage() {
     setReportData(report);
     setLoadingReport(false);
   };
+
+  // ── Subject Attendance report: per-subject and per-student breakdown for a class ──
+  const loadSubjectReport = async () => {
+    if (!selectedClass || !schoolId) return;
+    const classId = classRows.find(c => c.name === selectedClass)?.id;
+    if (!classId) { toast.error('Class not found'); return; }
+    setLoadingSubjectReport(true);
+    try {
+      const snap = await getDocs(query(
+        collection(db, 'subjectAttendance'),
+        where('schoolId', '==', schoolId),
+        where('classId', '==', classId),
+      ));
+      const nameById = Object.fromEntries(students.map(s => [s.id, s.studentName]));
+      setSubjectReportRecords(snap.docs.map(d => {
+        const data = d.data() as SubjectAttendance;
+        return { id: d.id, ...data, studentName: nameById[data.studentId] ?? data.studentId };
+      }));
+    } finally {
+      setLoadingSubjectReport(false);
+    }
+  };
+
+  // Aggregate the loaded subject-attendance records by subject, and separately by student.
+  const subjectSummary = useMemo(() => {
+    const bySubject: Record<string, { present: number; absent: number; late: number }> = {};
+    subjectReportRecords.forEach(r => {
+      if (!bySubject[r.subjectName]) bySubject[r.subjectName] = { present: 0, absent: 0, late: 0 };
+      bySubject[r.subjectName][r.status]++;
+    });
+    return Object.entries(bySubject).map(([subjectName, c]) => {
+      const total = c.present + c.absent + c.late;
+      return { subjectName, ...c, total, rate: total > 0 ? Math.round((c.present / total) * 100) : 0 };
+    }).sort((a, b) => a.subjectName.localeCompare(b.subjectName));
+  }, [subjectReportRecords]);
+
+  const studentSubjectSummary = useMemo(() => {
+    const byStudent: Record<string, { studentName: string; present: number; absent: number; late: number }> = {};
+    subjectReportRecords.forEach(r => {
+      if (!byStudent[r.studentId]) byStudent[r.studentId] = { studentName: r.studentName || r.studentId, present: 0, absent: 0, late: 0 };
+      byStudent[r.studentId][r.status]++;
+    });
+    return Object.values(byStudent).map(s => {
+      const total = s.present + s.absent + s.late;
+      return { ...s, total, rate: total > 0 ? Math.round((s.present / total) * 100) : 0 };
+    }).sort((a, b) => b.rate - a.rate);
+  }, [subjectReportRecords]);
+
+  // ── Special Lessons report: per-lesson enrollment + attendance rate ──
+  const loadSpecialLessonsReport = async () => {
+    if (!schoolId) return;
+    setLoadingSpecialLessonReport(true);
+    try {
+      const [lessonsSnap, attSnap] = await Promise.all([
+        getDocs(query(collection(db, 'special_lessons'), where('schoolId', '==', schoolId))),
+        getDocs(query(collection(db, 'specialLessonAttendance'), where('schoolId', '==', schoolId))),
+      ]);
+      setSpecialLessons(lessonsSnap.docs.map(d => ({ id: d.id, ...d.data() } as SpecialLesson)));
+      setSpecialLessonReportRecords(attSnap.docs.map(d => ({ id: d.id, ...d.data() } as SpecialLessonAttendance)));
+    } finally {
+      setLoadingSpecialLessonReport(false);
+    }
+  };
+
+  const specialLessonSummary = useMemo(() => {
+    return specialLessons.map(lesson => {
+      const records = specialLessonReportRecords.filter(r => r.specialLessonId === lesson.id);
+      const present = records.filter(r => r.status === 'present').length;
+      const rate = records.length > 0 ? Math.round((present / records.length) * 100) : 0;
+      return { lesson, enrolled: lesson.enrolledStudentIds.length, sessionsRecorded: records.length, rate };
+    });
+  }, [specialLessons, specialLessonReportRecords]);
 
   const loadMonthlyData = async () => {
     if (!selectedClass || !selectedMonth) return;
@@ -358,6 +459,22 @@ export default function AttendancePage() {
               <Calendar className="w-4 h-4 inline mr-1.5" />
               Monthly
             </button>
+            {attendanceMode !== 'daily_only' && (
+              <button
+                onClick={() => { setActiveTab('subject_report'); loadSubjectReport(); }}
+                className={`px-4 py-2.5 rounded-xl text-sm font-semibold transition-colors ${activeTab === 'subject_report' ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
+              >
+                <BarChart3 className="w-4 h-4 inline mr-1.5" />
+                Subject Report
+              </button>
+            )}
+            <button
+              onClick={() => { setActiveTab('special_lessons_report'); loadSpecialLessonsReport(); }}
+              className={`px-4 py-2.5 rounded-xl text-sm font-semibold transition-colors ${activeTab === 'special_lessons_report' ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
+            >
+              <Sparkles className="w-4 h-4 inline mr-1.5" />
+              Special Lessons
+            </button>
           </div>
         </div>
       </div>
@@ -509,6 +626,150 @@ export default function AttendancePage() {
                   ))}
                 </tbody>
               </table>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── Subject Attendance Report Tab ── */}
+      {activeTab === 'subject_report' && (
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <h2 className="font-bold text-slate-900">Subject Attendance — {selectedClass || 'Select a class'}</h2>
+            {subjectReportRecords.length > 0 && (
+              <button
+                onClick={() => {
+                  const nameById = Object.fromEntries(students.map(s => [s.id, s.studentName]));
+                  exportSubjectAttendanceCsv(subjectReportRecords.map(r => ({ ...r, studentName: nameById[r.studentId] ?? r.studentName })));
+                }}
+                className="flex items-center gap-2 px-4 py-2 rounded-xl border border-slate-200 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+              >
+                <Download className="w-4 h-4" /> Export CSV
+              </button>
+            )}
+          </div>
+
+          {loadingSubjectReport ? (
+            <div className="py-16 text-center text-slate-400">Loading…</div>
+          ) : !selectedClass ? (
+            <div className="bg-white rounded-2xl border border-slate-200 py-16 text-center text-slate-400">Select a class above, then reopen this tab.</div>
+          ) : subjectReportRecords.length === 0 ? (
+            <div className="bg-white rounded-2xl border border-slate-200 py-16 text-center text-slate-400">No subject attendance recorded for this class yet.</div>
+          ) : (
+            <>
+              {/* Subject summary */}
+              <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+                <div className="p-5 border-b border-slate-100"><h3 className="font-bold text-slate-800 text-sm">By Subject</h3></div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead className="bg-slate-50 text-xs font-bold text-slate-500 uppercase tracking-wide">
+                      <tr>
+                        <th className="text-left px-5 py-3">Subject</th>
+                        <th className="text-center px-4 py-3">Present</th>
+                        <th className="text-center px-4 py-3">Absent</th>
+                        <th className="text-center px-4 py-3">Late</th>
+                        <th className="text-center px-4 py-3">Rate</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {subjectSummary.map(s => (
+                        <tr key={s.subjectName} className="hover:bg-slate-50">
+                          <td className="px-5 py-3 font-medium text-slate-800">{s.subjectName}</td>
+                          <td className="px-4 py-3 text-center text-emerald-700 font-semibold">{s.present}</td>
+                          <td className="px-4 py-3 text-center text-rose-600 font-semibold">{s.absent}</td>
+                          <td className="px-4 py-3 text-center text-amber-600 font-semibold">{s.late}</td>
+                          <td className="px-4 py-3 text-center font-bold text-slate-700">{s.rate}%</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              {/* Per-student summary */}
+              <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+                <div className="p-5 border-b border-slate-100"><h3 className="font-bold text-slate-800 text-sm">By Student</h3></div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead className="bg-slate-50 text-xs font-bold text-slate-500 uppercase tracking-wide">
+                      <tr>
+                        <th className="text-left px-5 py-3">Student</th>
+                        <th className="text-center px-4 py-3">Present</th>
+                        <th className="text-center px-4 py-3">Absent</th>
+                        <th className="text-center px-4 py-3">Late</th>
+                        <th className="text-center px-4 py-3">Rate</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {studentSubjectSummary.map(s => (
+                        <tr key={s.studentName} className="hover:bg-slate-50">
+                          <td className="px-5 py-3 font-medium text-slate-800">{s.studentName}</td>
+                          <td className="px-4 py-3 text-center text-emerald-700 font-semibold">{s.present}</td>
+                          <td className="px-4 py-3 text-center text-rose-600 font-semibold">{s.absent}</td>
+                          <td className="px-4 py-3 text-center text-amber-600 font-semibold">{s.late}</td>
+                          <td className="px-4 py-3 text-center font-bold text-slate-700">{s.rate}%</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
+      {/* ── Special Lessons Report Tab ── */}
+      {activeTab === 'special_lessons_report' && (
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <h2 className="font-bold text-slate-900">Special Lessons Summary</h2>
+            {specialLessonReportRecords.length > 0 && (
+              <button
+                onClick={() => {
+                  const lessonNameById = Object.fromEntries(specialLessons.map(l => [l.id, l.name]));
+                  const nameById = Object.fromEntries(students.map(s => [s.id, s.studentName]));
+                  exportSpecialLessonAttendanceCsv(specialLessonReportRecords.map(r => ({
+                    ...r, lessonName: lessonNameById[r.specialLessonId], studentName: nameById[r.studentId],
+                  })));
+                }}
+                className="flex items-center gap-2 px-4 py-2 rounded-xl border border-slate-200 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+              >
+                <Download className="w-4 h-4" /> Export CSV
+              </button>
+            )}
+          </div>
+
+          {loadingSpecialLessonReport ? (
+            <div className="py-16 text-center text-slate-400">Loading…</div>
+          ) : specialLessonSummary.length === 0 ? (
+            <div className="bg-white rounded-2xl border border-slate-200 py-16 text-center text-slate-400">No special lessons found.</div>
+          ) : (
+            <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead className="bg-slate-50 text-xs font-bold text-slate-500 uppercase tracking-wide">
+                    <tr>
+                      <th className="text-left px-5 py-3">Lesson</th>
+                      <th className="text-left px-4 py-3">Teacher(s)</th>
+                      <th className="text-center px-4 py-3">Enrolled</th>
+                      <th className="text-center px-4 py-3">Sessions Recorded</th>
+                      <th className="text-center px-4 py-3">Attendance Rate</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {specialLessonSummary.map(({ lesson, enrolled, sessionsRecorded, rate }) => (
+                      <tr key={lesson.id} className="hover:bg-slate-50">
+                        <td className="px-5 py-3 font-medium text-slate-800">{lesson.name}</td>
+                        <td className="px-4 py-3 text-slate-500 text-xs">{(lesson.teacherNames || []).join(', ') || '—'}</td>
+                        <td className="px-4 py-3 text-center text-slate-700 font-semibold">{enrolled}</td>
+                        <td className="px-4 py-3 text-center text-slate-500">{sessionsRecorded}</td>
+                        <td className="px-4 py-3 text-center font-bold text-slate-700">{sessionsRecorded > 0 ? `${rate}%` : '—'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
           )}
         </div>

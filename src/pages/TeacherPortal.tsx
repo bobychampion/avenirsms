@@ -662,7 +662,8 @@ export default function TeacherPortal() {
       setAttendanceSaved(true);
       setTimeout(() => setAttendanceSaved(false), 3000);
     } catch (e: any) {
-      toast.error('Failed to save attendance', { id: tid });
+      console.error('[TeacherPortal] Failed to save daily attendance:', e?.code, e?.message, e);
+      toast.error(`Failed to save attendance: ${e?.code || e?.message || 'unknown error'}`, { id: tid });
     } finally {
       setSavingAttendance(false);
     }
@@ -773,7 +774,8 @@ export default function TeacherPortal() {
       setSubjectAttendanceSaved(true);
       setTimeout(() => setSubjectAttendanceSaved(false), 3000);
     } catch (e: any) {
-      toast.error('Failed to save subject attendance', { id: tid });
+      console.error('[TeacherPortal] Failed to save subject attendance:', e?.code, e?.message, e);
+      toast.error(`Failed to save subject attendance: ${e?.code || e?.message || 'unknown error'}`, { id: tid });
     } finally {
       setSavingSubjectAttendance(false);
     }
@@ -855,7 +857,8 @@ export default function TeacherPortal() {
       setSpecialLessonAttendanceSaved(true);
       setTimeout(() => setSpecialLessonAttendanceSaved(false), 3000);
     } catch (e: any) {
-      toast.error('Failed to save attendance', { id: tid });
+      console.error('[TeacherPortal] Failed to save special lesson attendance:', e?.code, e?.message, e);
+      toast.error(`Failed to save attendance: ${e?.code || e?.message || 'unknown error'}`, { id: tid });
     } finally {
       setSavingSpecialLessonAttendance(false);
     }

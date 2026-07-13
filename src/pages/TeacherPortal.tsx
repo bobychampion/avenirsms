@@ -369,6 +369,11 @@ export default function TeacherPortal() {
     return () => unsub?.();
   }, [user?.uid]);
 
+  // Roster for the currently selected class — the ONLY one of this group of listeners that
+  // needs to churn when selectedClass changes. Kept in its own effect (see the effect below
+  // for everything else) so switching classes doesn't tear down/recreate 6 unrelated listeners
+  // at once — rapid listener churn like that is a known trigger for the Firestore JS SDK's
+  // "INTERNAL ASSERTION FAILED: Unexpected state" watch-stream bug.
   useEffect(() => {
     if (!user) return;
     if (!schoolId) return;
@@ -383,6 +388,13 @@ export default function TeacherPortal() {
       setStudents(list);
       setLoading(false);
     });
+
+    return () => unsubStudents();
+  }, [user, selectedClass, schoolId]);
+
+  useEffect(() => {
+    if (!user) return;
+    if (!schoolId) return;
 
     const qAssignments = query(collection(db, 'assignments'), where('schoolId', '==', schoolId!), where('teacherId', '==', user.uid));
     const unsubAssign = onSnapshot(qAssignments, snap => {
@@ -454,10 +466,10 @@ export default function TeacherPortal() {
     );
 
     return () => {
-      unsubStudents(); unsubAssign(); unsubMsgs(); unsubSent();
+      unsubAssign(); unsubMsgs(); unsubSent();
       unsubTimetables(); unsubFence(); unsubCheckins();
     };
-  }, [user, selectedClass, profile?.displayName, schoolId]);
+  }, [user, profile?.displayName, schoolId]);
 
   // Load submissions for the currently-viewed assignment
   useEffect(() => {

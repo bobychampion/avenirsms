@@ -149,9 +149,8 @@ export default function MyLeaveRequests({ schoolId }: { schoolId: string | null 
               <p className="text-xs text-slate-400">{daysBetween(form.startDate, form.endDate)} day(s) requested</p>
             )}
             <div>
-              <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">Reason</label>
+              <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">Short Message</label>
               <textarea required value={form.reason} onChange={e => setForm({ ...form, reason: e.target.value })} rows={3}
-                placeholder="Briefly explain the reason for this leave..."
                 className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm resize-none" />
             </div>
             <button type="submit" disabled={submitting}

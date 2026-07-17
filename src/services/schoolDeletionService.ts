@@ -24,6 +24,7 @@ export interface DeletionResult {
     totalDocumentsDeleted: number;
     deletionsByCollection: Record<string, number>;
     preservedCollections: string[];
+    authAccountsDeleted: number;
   };
   errors: Array<{ collection: string; error: string }>;
   auditLogId: string;
@@ -163,7 +164,7 @@ export const DOCUMENT_COLLECTIONS = [
 // ─── Core Functions ──────────────────────────────────────────────────────────
 
 import { db } from '../firebase';
-import { doc, getDoc, collection, query, where, getDocs, limit, getCountFromServer, addDoc, Timestamp } from 'firebase/firestore';
+import { doc, getDoc, collection, query, where, getDocs, limit, getCountFromServer } from 'firebase/firestore';
 import type { School } from '../types';
 
 /**
@@ -277,65 +278,45 @@ export async function validateDeletion(schoolId: string): Promise<ValidationResu
 }
 
 /**
- * Creates an immutable audit log entry before school deletion begins.
- * 
- * Records:
- * - Action type: 'school.delete'
- * - Super admin UID who performed the deletion
- * - School name, schoolId, and timestamp
- * - School snapshot: status, subscriptionPlan, adminEmail, createdAt
- * - Estimated document counts per collection
- * 
- * The audit log remains in the system permanently after deletion for compliance tracking.
- * 
- * @param schoolId - The ID of the school being deleted
- * @param schoolName - The name of the school being deleted
- * @param performedBy - Super admin UID performing the deletion
- * @param estimatedCounts - Estimated document counts per collection
- * @param schoolSnapshot - Snapshot of school data at deletion time
- * @returns The audit log document ID
+ * Permanently deletes a school via the `deleteSchool` Cloud Function.
+ *
+ * Deletion runs server-side (Admin SDK) because it also removes the
+ * school's users' Firebase Auth accounts — something the client SDK can
+ * never do — and cascades across 40+ Firestore collections, which is safer
+ * done with elevated privileges than by granting the client broad delete
+ * permissions. The Cloud Function writes the single authoritative audit
+ * log entry; call validateDeletion() beforehand for the confirmation UI's
+ * document-count estimate.
  */
-export async function createAuditLog(
-  schoolId: string,
-  schoolName: string,
-  performedBy: string,
-  estimatedCounts: Record<string, number>,
-  schoolSnapshot: {
-    status: string;
-    subscriptionPlan: string;
-    adminEmail: string;
-    createdAt: any;
-  }
-): Promise<string> {
-  try {
-    const auditLogRef = collection(db, 'audit_log');
-    
-    const auditEntry = {
-      action: 'school.delete',
-      performedBy,
-      performedAt: Timestamp.now(),
-      schoolId,
-      schoolName,
-      
-      // Snapshot of school state at deletion time
-      schoolSnapshot: {
-        status: schoolSnapshot.status,
-        subscriptionPlan: schoolSnapshot.subscriptionPlan,
-        adminEmail: schoolSnapshot.adminEmail,
-        createdAt: schoolSnapshot.createdAt,
-      },
-      
-      // Deletion statistics (estimated at start)
-      summary: {
-        estimatedDocumentCounts: estimatedCounts,
-        totalEstimatedDocuments: Object.values(estimatedCounts).reduce((sum, count) => sum + count, 0),
-      },
-    };
-    
-    const docRef = await addDoc(auditLogRef, auditEntry);
-    
-    return docRef.id;
-  } catch (error) {
-    throw new Error(`Failed to create audit log: ${error instanceof Error ? error.message : String(error)}`);
-  }
+export async function deleteSchool(options: DeletionOptions): Promise<DeletionResult> {
+  const { getFunctions, httpsCallable } = await import('firebase/functions');
+  const callable = httpsCallable<
+    { schoolId: string; preserveFinancial?: boolean },
+    {
+      success: boolean;
+      deletionsByCollection: Record<string, number>;
+      authAccountsDeleted: number;
+      errors: Array<{ collection: string; error: string }>;
+      auditLogId: string;
+    }
+  >(getFunctions(), 'deleteSchool');
+
+  const response = await callable({
+    schoolId: options.schoolId,
+    preserveFinancial: options.preserveFinancial,
+  });
+
+  const { deletionsByCollection, authAccountsDeleted, errors, auditLogId } = response.data;
+
+  return {
+    success: response.data.success && errors.length === 0,
+    summary: {
+      totalDocumentsDeleted: Object.values(deletionsByCollection).reduce((sum, count) => sum + count, 0),
+      deletionsByCollection,
+      preservedCollections: options.preserveFinancial ? FINANCIAL_COLLECTIONS : [],
+      authAccountsDeleted,
+    },
+    errors,
+    auditLogId,
+  };
 }

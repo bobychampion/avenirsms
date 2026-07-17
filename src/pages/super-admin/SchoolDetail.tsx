@@ -9,15 +9,16 @@ import { doc, getDoc, updateDoc, getDocs, collection, query, where, serverTimest
 import { db } from '../../firebase';
 import { School, UserProfile } from '../../types';
 import { useSuperAdmin } from '../../components/SuperAdminContext';
+import DeleteSchoolModal from '../../components/DeleteSchoolModal';
 import {
-  Building2, ArrowLeft, Save, Loader2, LogIn, Users, GraduationCap, CheckCircle2, XCircle
+  Building2, ArrowLeft, Save, Loader2, LogIn, Users, GraduationCap, CheckCircle2, XCircle, Trash2
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 export default function SchoolDetail() {
   const { schoolId } = useParams<{ schoolId: string }>();
   const navigate = useNavigate();
-  const { enterSchool } = useSuperAdmin();
+  const { enterSchool, exitSchool } = useSuperAdmin();
 
   const [school, setSchool] = useState<School | null>(null);
   const [loading, setLoading] = useState(true);
@@ -25,6 +26,7 @@ export default function SchoolDetail() {
   const [studentCount, setStudentCount] = useState<number | null>(null);
   const [staffCount, setStaffCount] = useState<number | null>(null);
   const [userCount, setUserCount] = useState<number | null>(null);
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
 
   // Editable fields
   const [name, setName] = useState('');
@@ -105,6 +107,14 @@ export default function SchoolDetail() {
         >
           <LogIn className="w-4 h-4" /> Enter School
         </button>
+        <button
+          onClick={() => setShowDeleteModal(true)}
+          disabled={school.status === 'active'}
+          title={school.status === 'active' ? 'Suspend school before deleting' : 'Permanently delete this school'}
+          className="flex items-center gap-2 bg-rose-50 hover:bg-rose-100 disabled:opacity-40 disabled:cursor-not-allowed text-rose-600 font-semibold px-4 py-2 rounded-xl text-sm transition-colors"
+        >
+          <Trash2 className="w-4 h-4" /> Delete
+        </button>
       </div>
 
       {/* Stats */}
@@ -168,6 +178,20 @@ export default function SchoolDetail() {
           {saving ? 'Saving…' : 'Save Changes'}
         </button>
       </div>
+
+      {showDeleteModal && (
+        <DeleteSchoolModal
+          schoolId={schoolId!}
+          schoolName={school.name}
+          onClose={() => setShowDeleteModal(false)}
+          onDeleted={() => {
+            setShowDeleteModal(false);
+            exitSchool();
+            toast.success(`${school.name} was deleted`);
+            navigate('/super-admin/schools');
+          }}
+        />
+      )}
     </div>
   );
 }

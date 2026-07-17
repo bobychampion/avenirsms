@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useState, ReactNode } from 'react';
 import { onAuthStateChanged, User, signInWithPopup, GoogleAuthProvider, signOut, signInWithEmailAndPassword, createUserWithEmailAndPassword } from 'firebase/auth';
-import { doc, setDoc, onSnapshot, updateDoc } from 'firebase/firestore';
+import { doc, setDoc, onSnapshot, updateDoc, getDoc } from 'firebase/firestore';
 import { auth, db, handleFirestoreError, OperationType } from '../firebase';
 import { UserProfile } from '../types';
 import { hasPermission as checkPermission, type Permission } from '../utils/permissions';
@@ -31,6 +31,7 @@ export function FirebaseProvider({ children }: { children: ReactNode }) {
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const [authError, setAuthError] = useState<string | null>(null);
+  const [schoolSuspended, setSchoolSuspended] = useState(false);
 
   useEffect(() => {
     let unsubscribeProfile: (() => void) | null = null;
@@ -51,6 +52,7 @@ export function FirebaseProvider({ children }: { children: ReactNode }) {
       setUser(currentUser);
       setProfile(null);
       setLoading(true);
+      setSchoolSuspended(false);
 
       const profileRef = doc(db, 'users', currentUser.uid);
       let bootstrapping = false;
@@ -73,6 +75,19 @@ export function FirebaseProvider({ children }: { children: ReactNode }) {
               ) {
                 await updateDoc(profileRef, { role: 'super_admin' });
                 return;
+              }
+              // A suspended school's users are fully locked out — checked here (not just
+              // in firestore.rules) so we can sign them out and show a clear reason instead
+              // of a wall of permission-denied errors once they hit the first query.
+              if (profileData.schoolId) {
+                const schoolSnap = await getDoc(doc(db, 'schools', profileData.schoolId));
+                if (schoolSnap.exists() && schoolSnap.data().status === 'suspended') {
+                  setSchoolSuspended(true);
+                  setProfile(null);
+                  setLoading(false);
+                  await signOut(auth);
+                  return;
+                }
               }
               setProfile(profileData);
             } else if (!bootstrapping) {
@@ -118,6 +133,7 @@ export function FirebaseProvider({ children }: { children: ReactNode }) {
 
   const login = async () => {
     setAuthError(null);
+    setSchoolSuspended(false);
     const provider = new GoogleAuthProvider();
     try {
       await signInWithPopup(auth, provider);
@@ -136,6 +152,7 @@ export function FirebaseProvider({ children }: { children: ReactNode }) {
 
   const loginWithEmail = async (email: string, pass: string) => {
     setAuthError(null);
+    setSchoolSuspended(false);
     try {
       await signInWithEmailAndPassword(auth, email, pass);
     } catch (error: any) {
@@ -158,6 +175,7 @@ export function FirebaseProvider({ children }: { children: ReactNode }) {
     schoolId?: string
   ) => {
     setAuthError(null);
+    setSchoolSuspended(false);
     // Block super-admin emails from being registered as any other role
     if (isSuperAdminEmail(email) && role && role !== 'super_admin') {
       setAuthError(
@@ -212,6 +230,26 @@ export function FirebaseProvider({ children }: { children: ReactNode }) {
 
   // schoolId: from profile (undefined for super_admin)
   const schoolId = profile?.schoolId ?? null;
+
+  if (schoolSuspended) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-50 p-6">
+        <div className="max-w-md w-full bg-white border border-rose-200 rounded-2xl shadow-sm p-8 text-center space-y-3">
+          <h1 className="text-lg font-bold text-rose-600">School account suspended</h1>
+          <p className="text-sm text-slate-600">
+            Your school's account has been suspended and you no longer have access.
+            Please contact your administrator or the platform for assistance.
+          </p>
+          <button
+            onClick={() => setSchoolSuspended(false)}
+            className="mt-2 text-sm font-semibold text-indigo-600 hover:text-indigo-800"
+          >
+            Back to login
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <AuthContext.Provider value={{

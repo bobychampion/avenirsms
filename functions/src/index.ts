@@ -1234,3 +1234,246 @@ export const dailyReminders = onSchedule(
     console.log(`[dailyReminders] Complete. Fee: ${feeRemindersSent}, Absence: ${absenceAlertsSent}`);
   }
 );
+
+/**
+ * Auto-suspends demo schools once their 7-day trial (`subscriptionExpiresAt`)
+ * has passed. Runs every 6 hours — tight enough for a 7-day window without
+ * being wasteful. Only touches `status === 'demo'` docs; schools a super admin
+ * has manually put in 'trial'/'active'/'suspended' are never touched here.
+ *
+ * Once flipped to 'suspended', firestore.rules' schoolIsActive() check blocks
+ * all further data access for that school's users immediately — no separate
+ * enforcement step needed.
+ *
+ * SPARK-PLAN-TODO: same Blaze-plan requirement as dailyReminders above.
+ */
+export const expireDemoSchools = onSchedule(
+  { schedule: '0 */6 * * *', timeZone: 'UTC', region: 'us-central1' },
+  async (_event) => {
+    const db = getFirestore();
+    const now = Timestamp.now();
+
+    const expiredSnap = await db
+      .collection('schools')
+      .where('status', '==', 'demo')
+      .where('subscriptionExpiresAt', '<=', now)
+      .get();
+
+    if (expiredSnap.empty) {
+      console.log('[expireDemoSchools] No expired demo schools found.');
+      return;
+    }
+
+    const batch = db.batch();
+    for (const schoolDoc of expiredSnap.docs) {
+      batch.update(schoolDoc.ref, {
+        status: 'suspended',
+        autoSuspendedAt: now,
+        updatedAt: now,
+      });
+    }
+    await batch.commit();
+
+    console.log(`[expireDemoSchools] Auto-suspended ${expiredSnap.size} expired demo school(s).`);
+  }
+);
+
+// ─── School deletion ─────────────────────────────────────────────────────────
+
+/**
+ * School-scoped collections wiped when a school is deleted. Kept in sync by
+ * hand with SCHOOL_SCOPED_COLLECTIONS in src/services/schoolDeletionService.ts
+ * (that copy drives the pre-delete document-count estimate shown in the
+ * confirmation modal; this copy is what actually gets deleted).
+ */
+const SCHOOL_SCOPED_COLLECTIONS = [
+  'students', 'guardians', 'staff', 'users',
+  'classes', 'subjects', 'class_subjects', 'grades', 'student_skills',
+  'attendance', 'attendance_checkins', 'timetables',
+  'assignments', 'assignment_submissions',
+  'events', 'notifications', 'notification_broadcasts', 'messages',
+  'invoices', 'fee_payments', 'payments', 'expenses',
+  'exams', 'exam_seating', 'question_bank', 'cbt_exams', 'cbt_sessions',
+  'curriculum_documents', 'curriculum_items',
+  'leave_requests', 'payroll', 'hr_policies', 'onboarding_records', 'leave_entitlements',
+  'pins', 'promotions', 'whatsapp_logs', 'applications',
+  'library_books', 'library_circulation',
+  'mail', 'lifecycle_events', 'behavioral_records', 'alumni_profiles',
+  'cover_assignments', 'school_trips', 'trip_registrations', 'absence_requests',
+];
+
+/** Financial collections optionally preserved (marked deleted, not removed) for audit trails. */
+const FINANCIAL_COLLECTIONS = ['invoices', 'fee_payments', 'payments', 'expenses', 'platform_invoices'];
+
+/** Standalone documents keyed by schoolId (not collections of many docs). */
+const DOCUMENT_COLLECTIONS = ['school_settings', 'geofences'];
+
+interface DeleteSchoolPayload {
+  schoolId: string;
+  preserveFinancial?: boolean;
+}
+
+/**
+ * Permanently deletes a school: its Firestore data across 40+ collections,
+ * its users' Firebase Auth accounts, and the school document itself.
+ * Runs server-side (Admin SDK) because deleting other users' Auth accounts
+ * and cascading across every school-scoped collection both require
+ * privileges the client SDK cannot be granted safely.
+ *
+ * Guardrail: the school must already be 'suspended' (not 'active') before
+ * it can be deleted — prevents accidentally deleting a live paying school.
+ */
+export const deleteSchool = onCall<DeleteSchoolPayload>(
+  { timeoutSeconds: 540, memory: '512MiB' },
+  async (request) => {
+    const { auth, data } = request;
+    if (!auth) throw new HttpsError('unauthenticated', 'Sign-in required.');
+
+    const db = getFirestore();
+    const actorSnap = await db.doc(`users/${auth.uid}`).get();
+    const actor = actorSnap.data();
+    if (!actor || actor.role !== 'super_admin') {
+      throw new HttpsError('permission-denied', 'Only super admins may delete a school.');
+    }
+
+    const { schoolId, preserveFinancial } = data ?? ({} as DeleteSchoolPayload);
+    if (!schoolId || typeof schoolId !== 'string') {
+      throw new HttpsError('invalid-argument', 'schoolId is required.');
+    }
+
+    const schoolRef = db.doc(`schools/${schoolId}`);
+    const schoolSnap = await schoolRef.get();
+    if (!schoolSnap.exists) {
+      throw new HttpsError('not-found', 'School not found.');
+    }
+    const school = schoolSnap.data()!;
+    if (school.status === 'active') {
+      throw new HttpsError('failed-precondition', 'Suspend the school before deleting it.');
+    }
+
+    console.log(`[deleteSchool] ${auth.uid} deleting school ${schoolId} (${school.name ?? 'unnamed'})`);
+
+    // 1. Delete Firebase Auth accounts for this school's users (super_admin accounts,
+    //    which never carry a schoolId, are naturally excluded from this query).
+    const usersSnap = await db.collection('users').where('schoolId', '==', schoolId).get();
+    const uids = usersSnap.docs.map(d => d.id);
+    let authAccountsDeleted = 0;
+    for (let i = 0; i < uids.length; i += 1000) {
+      const chunk = uids.slice(i, i + 1000);
+      if (chunk.length === 0) continue;
+      try {
+        const result = await getAuth().deleteUsers(chunk);
+        authAccountsDeleted += result.successCount;
+        if (result.errors.length) {
+          console.warn(`[deleteSchool] ${result.errors.length} Auth deletions failed:`,
+            result.errors.map(e => e.error.message));
+        }
+      } catch (err: any) {
+        console.error('[deleteSchool] Auth batch deletion failed:', err.message);
+      }
+    }
+
+    // 2. Cascade-delete (or mark-preserved) every school-scoped collection.
+    const deletionsByCollection: Record<string, number> = {};
+    const collectionErrors: Array<{ collection: string; error: string }> = [];
+
+    for (const col of SCHOOL_SCOPED_COLLECTIONS) {
+      try {
+        const snap = await db.collection(col).where('schoolId', '==', schoolId).get();
+        if (snap.empty) continue;
+
+        const preserve = !!preserveFinancial && FINANCIAL_COLLECTIONS.includes(col);
+        const writer = db.bulkWriter();
+        writer.onWriteError((err) => {
+          console.error(`[deleteSchool] bulkWriter error in ${col}:`, err.message);
+          return err.failedAttempts < 3;
+        });
+        for (const docSnap of snap.docs) {
+          if (preserve) {
+            writer.update(docSnap.ref, {
+              schoolDeleted: true,
+              deletedAt: Timestamp.now(),
+              deletedBy: auth.uid,
+            });
+          } else {
+            writer.delete(docSnap.ref);
+          }
+        }
+        await writer.close();
+        deletionsByCollection[col] = snap.size;
+      } catch (err: any) {
+        console.error(`[deleteSchool] Failed to process collection ${col}:`, err.message);
+        collectionErrors.push({ collection: col, error: err.message ?? String(err) });
+      }
+    }
+
+    // 2b. fcm_tokens are keyed by uid (not schoolId) — clean up per deleted user.
+    try {
+      await Promise.all(uids.map(uid => db.doc(`fcm_tokens/${uid}`).delete()));
+    } catch (err: any) {
+      collectionErrors.push({ collection: 'fcm_tokens', error: err.message ?? String(err) });
+    }
+
+    // 3. Standalone documents keyed by schoolId.
+    for (const col of DOCUMENT_COLLECTIONS) {
+      try {
+        await db.doc(`${col}/${schoolId}`).delete();
+      } catch (err: any) {
+        collectionErrors.push({ collection: col, error: err.message ?? String(err) });
+      }
+    }
+
+    // 4. Google Workspace integration subcollection doc.
+    try {
+      await db.doc(`schools/${schoolId}/integrations/google`).delete();
+    } catch (err: any) {
+      collectionErrors.push({ collection: 'integrations/google', error: err.message ?? String(err) });
+    }
+
+    // 5. school_slugs entries pointing at this schoolId (doc id is the slug, not the schoolId).
+    try {
+      const slugSnap = await db.collection('school_slugs').where('schoolId', '==', schoolId).get();
+      await Promise.all(slugSnap.docs.map(d => d.ref.delete()));
+    } catch (err: any) {
+      collectionErrors.push({ collection: 'school_slugs', error: err.message ?? String(err) });
+    }
+
+    // 6. The school document itself, last.
+    await schoolRef.delete();
+
+    // 7. Audit log — the single authoritative record of this deletion.
+    const auditLogRef = await db.collection('audit_log').add({
+      schoolId,
+      schoolName: school.name ?? null,
+      actorId: auth.uid,
+      actorEmail: actor.email ?? null,
+      actorRole: actor.role ?? null,
+      action: 'school.delete',
+      schoolSnapshot: {
+        status: school.status ?? null,
+        subscriptionPlan: school.subscriptionPlan ?? null,
+        adminEmail: school.adminEmail ?? null,
+        createdAt: school.createdAt ?? null,
+      },
+      summary: {
+        deletionsByCollection,
+        totalDocumentsDeleted: Object.values(deletionsByCollection).reduce((a, b) => a + b, 0),
+        authAccountsDeleted,
+        preservedFinancial: !!preserveFinancial,
+        errors: collectionErrors,
+      },
+      createdAt: Timestamp.now(),
+    });
+
+    console.log(`[deleteSchool] Complete. ${authAccountsDeleted} auth accounts, ` +
+      `${Object.values(deletionsByCollection).reduce((a, b) => a + b, 0)} documents deleted.`);
+
+    return {
+      success: true,
+      deletionsByCollection,
+      authAccountsDeleted,
+      errors: collectionErrors,
+      auditLogId: auditLogRef.id,
+    };
+  }
+);

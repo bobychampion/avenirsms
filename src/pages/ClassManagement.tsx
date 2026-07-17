@@ -43,6 +43,11 @@ export default function ClassManagement() {
     teacherId: ''
   });
   const [editingSubject, setEditingSubject] = useState<ClassSubject | null>(null);
+  // Multi-select subjects for a NEW assignment — a teacher can teach several subjects
+  // in the same class, so admins pick them all at once instead of repeating this form
+  // per subject. Not used when editing an existing single assignment (subjectName is
+  // locked there, same as before).
+  const [selectedSubjects, setSelectedSubjects] = useState<string[]>([]);
 
   // Google Classroom integration status
   const [classroomStatus, setClassroomStatus] = useState<ClassroomStatus>('loading');
@@ -188,32 +193,61 @@ export default function ClassManagement() {
   const handleAddSubject = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedClass?.id) return;
-    try {
-      const teacher = teachers.find(t => t.uid === subjectFormData.teacherId);
-      const data = {
-        classId: selectedClass.id,
-        subjectName: subjectFormData.subjectName,
-        teacherId: subjectFormData.teacherId,
-        teacherName: teacher?.displayName || 'Not Assigned',
-        schoolId: schoolId ?? 'main',
-      };
+    const teacher = teachers.find(t => t.uid === subjectFormData.teacherId);
 
+    try {
       if (editingSubject?.id) {
+        // Editing a single existing assignment — unchanged, one subject, teacher only.
+        const data = {
+          classId: selectedClass.id,
+          subjectName: subjectFormData.subjectName,
+          teacherId: subjectFormData.teacherId,
+          teacherName: teacher?.displayName || 'Not Assigned',
+          schoolId: schoolId ?? 'main',
+        };
         await updateDoc(doc(db, 'class_subjects', editingSubject.id), data);
         setEditingSubject(null);
       } else {
-        const existing = classSubjects.find(s => s.classId === selectedClass.id && s.subjectName === data.subjectName);
-        if (existing) {
-          if (window.confirm(`${data.subjectName} is already assigned to this class. Do you want to update the teacher?`)) {
+        // New assignment — a teacher can teach several subjects in this class at once,
+        // so create/update one class_subjects doc per selected subject.
+        if (selectedSubjects.length === 0) {
+          toast.error('Select at least one subject.');
+          return;
+        }
+        if (!subjectFormData.teacherId) {
+          toast.error('Select a teacher.');
+          return;
+        }
+
+        const conflicts = selectedSubjects.filter(name =>
+          classSubjects.some(s => s.classId === selectedClass.id && s.subjectName === name)
+        );
+        if (conflicts.length > 0) {
+          const proceed = window.confirm(
+            `${conflicts.join(', ')} ${conflicts.length > 1 ? 'are' : 'is'} already assigned to this class. Reassign to ${teacher?.displayName || 'this teacher'}?`
+          );
+          if (!proceed) return;
+        }
+
+        await Promise.all(selectedSubjects.map(async subjectName => {
+          const data = {
+            classId: selectedClass.id!,
+            subjectName,
+            teacherId: subjectFormData.teacherId,
+            teacherName: teacher?.displayName || 'Not Assigned',
+            schoolId: schoolId ?? 'main',
+          };
+          const existing = classSubjects.find(s => s.classId === selectedClass.id && s.subjectName === subjectName);
+          if (existing) {
             await updateDoc(doc(db, 'class_subjects', existing.id!), data);
           } else {
-            return;
+            await addDoc(collection(db, 'class_subjects'), data);
           }
-        } else {
-          await addDoc(collection(db, 'class_subjects'), data);
-        }
+        }));
+        toast.success(`${selectedSubjects.length} subject${selectedSubjects.length > 1 ? 's' : ''} assigned to ${teacher?.displayName || 'teacher'}.`);
       }
       setSubjectFormData({ subjectName: schoolSubjects[0] ?? SUBJECTS[0], teacherId: '' });
+      setSelectedSubjects([]);
     } catch (error) {
       handleFirestoreError(error, OperationType.WRITE, 'class_subjects');
     }
@@ -222,8 +256,13 @@ export default function ClassManagement() {
   const handleDeleteSubject = async (id: string) => {
     try {
       await deleteDoc(doc(db, 'class_subjects', id));
+      toast.success('Subject removed.');
     } catch (error) {
-      handleFirestoreError(error, OperationType.DELETE, `class_subjects/${id}`);
+      console.error('Failed to delete class_subjects doc:', error);
+      const message = error instanceof Error && error.message.includes('permission-denied')
+        ? 'You do not have permission to remove this subject.'
+        : 'Failed to remove subject. Please try again.';
+      toast.error(message);
     }
   };
 
@@ -402,6 +441,7 @@ export default function ClassManagement() {
                   <button
                     onClick={() => {
                       setSelectedClass(cls);
+                      setSelectedSubjects([]);
                       setIsSubjectModalOpen(true);
                     }}
                     className="flex-1 px-4 py-2 bg-slate-50 text-slate-700 font-bold rounded-xl hover:bg-indigo-50 hover:text-indigo-700 transition-all text-sm flex items-center justify-center"
@@ -572,17 +612,40 @@ export default function ClassManagement() {
                     </h4>
                     <form onSubmit={handleAddSubject} className="space-y-4">
                       <div className="space-y-2">
-                        <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">Subject</label>
-                        <select
-                          disabled={!!editingSubject}
-                          value={subjectFormData.subjectName}
-                          onChange={e => setSubjectFormData({ ...subjectFormData, subjectName: e.target.value })}
-                          className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none transition-all bg-white disabled:bg-slate-50 disabled:text-slate-500"
-                        >
-                          {schoolSubjects.map(s => (
-                            <option key={s} value={s}>{s}</option>
-                          ))}
-                        </select>
+                        <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">
+                          {editingSubject ? 'Subject' : 'Subject(s)'}
+                        </label>
+                        {editingSubject ? (
+                          <select
+                            disabled
+                            value={subjectFormData.subjectName}
+                            className="w-full px-4 py-3 rounded-xl border border-slate-200 outline-none transition-all bg-slate-50 text-slate-500"
+                          >
+                            {schoolSubjects.map(s => (
+                              <option key={s} value={s}>{s}</option>
+                            ))}
+                          </select>
+                        ) : (
+                          <div className="flex flex-wrap gap-2 p-3 border border-slate-200 rounded-xl max-h-40 overflow-y-auto">
+                            {schoolSubjects.map(s => {
+                              const active = selectedSubjects.includes(s);
+                              return (
+                                <button
+                                  key={s}
+                                  type="button"
+                                  onClick={() => setSelectedSubjects(prev =>
+                                    active ? prev.filter(name => name !== s) : [...prev, s]
+                                  )}
+                                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors ${
+                                    active ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300'
+                                  }`}
+                                >
+                                  {s}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        )}
                       </div>
                       <div className="space-y-2">
                         <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">Subject Teacher</label>
@@ -604,6 +667,7 @@ export default function ClassManagement() {
                             onClick={() => {
                               setEditingSubject(null);
                               setSubjectFormData({ subjectName: schoolSubjects[0] ?? SUBJECTS[0], teacherId: '' });
+                              setSelectedSubjects([]);
                             }}
                             className="flex-1 px-6 py-3 bg-slate-100 text-slate-600 font-bold rounded-xl hover:bg-slate-200 transition-all"
                           >
@@ -614,7 +678,7 @@ export default function ClassManagement() {
                           type="submit"
                           className="flex-[2] px-6 py-3 bg-indigo-600 text-white font-bold rounded-xl hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-100"
                         >
-                          {editingSubject ? 'Update Assignment' : 'Assign Subject'}
+                          {editingSubject ? 'Update Assignment' : selectedSubjects.length > 1 ? `Assign ${selectedSubjects.length} Subjects` : 'Assign Subject'}
                         </button>
                       </div>
                     </form>

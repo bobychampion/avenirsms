@@ -17,9 +17,21 @@ service cloud.firestore {
       return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
     }
 
-    /** True unless an admin has flipped this account's disabled flag off. */
+    /**
+     * True if sid is null (super_admin has no school) or the school exists
+     * and isn't suspended. Fails closed if the school doc is missing —
+     * an orphaned schoolId (e.g. after a deletion) should deny access.
+     */
+    function schoolIsActive(sid) {
+      return sid == null ||
+        (exists(/databases/$(database)/documents/schools/$(sid)) &&
+         get(/databases/$(database)/documents/schools/$(sid)).data.get('status', 'active') != 'suspended');
+    }
+
+    /** True unless an admin has flipped this account's disabled flag off, or their school is suspended. */
     function isActiveAccount() {
-      return isAuthenticated() && !userProfile().get('disabled', false);
+      return isAuthenticated() && !userProfile().get('disabled', false) &&
+        schoolIsActive(userProfile().get('schoolId', null));
     }
 
     /** Super admin: manages all schools, no schoolId of their own. */
@@ -120,7 +132,9 @@ service cloud.firestore {
     // ─── Platform-level: schools collection ───────────────────────────────────
 
     match /schools/{schoolId} {
-      allow read: if isSuperAdmin() || (isAdmin() && belongsToSchool(schoolId));
+      // Deliberately not gated on isAdmin()/isActiveAccount() — a suspended school's own
+      // users must still be able to read their school's status to see the suspended screen.
+      allow read: if isSuperAdmin() || belongsToSchool(schoolId);
       // Any authenticated user may self-provision a demo school, but only if:
       //  - status is 'demo' (not 'active'/'trial'/etc.)
       //  - the adminEmail on the doc matches their Firebase Auth email
@@ -302,7 +316,13 @@ service cloud.firestore {
       allow read: if isSuperAdmin() ||
                     ((isAdmin() || isTeacher()) && docBelongsToCallerSchool()) ||
                     (isActiveAccount() && resource.data.get('userId', '') == request.auth.uid);
-      allow write: if isSuperAdmin() || (isAdmin() && newDocBelongsToCallerSchool());
+      // Split from a single `allow write` because request.resource.data is null on delete —
+      // newDocBelongsToCallerSchool() (which reads request.resource.data.schoolId) silently
+      // fails every admin-initiated delete on this collection, causing Firestore's optimistic
+      // local-cache removal to roll back and the deleted doc to visibly "rebound" in onSnapshot
+      // listeners. delete uses docBelongsToCallerSchool() (reads the EXISTING resource) instead.
+      allow create, update: if isSuperAdmin() || (isAdmin() && newDocBelongsToCallerSchool());
+      allow delete: if isSuperAdmin() || (isAdmin() && docBelongsToCallerSchool());
     }
 
     // ─── Classes & class subjects ──────────────────────────────────────────────
@@ -311,17 +331,35 @@ service cloud.firestore {
       // Public read: unauthenticated applicants need to see the class list on the Apply page.
       // Authenticated users are restricted to their own school.
       allow read: if !isAuthenticated() || isSuperAdmin() || docBelongsToCallerSchool();
-      allow write: if isSuperAdmin() || (isAdmin() && newDocBelongsToCallerSchool());
+      // Split from a single `allow write` because request.resource.data is null on delete —
+      // newDocBelongsToCallerSchool() (which reads request.resource.data.schoolId) silently
+      // fails every admin-initiated delete on this collection, causing Firestore's optimistic
+      // local-cache removal to roll back and the deleted doc to visibly "rebound" in onSnapshot
+      // listeners. delete uses docBelongsToCallerSchool() (reads the EXISTING resource) instead.
+      allow create, update: if isSuperAdmin() || (isAdmin() && newDocBelongsToCallerSchool());
+      allow delete: if isSuperAdmin() || (isAdmin() && docBelongsToCallerSchool());
     }
 
     match /class_subjects/{subjectId} {
       allow read: if isAuthenticated() && (isSuperAdmin() || docBelongsToCallerSchool());
-      allow write: if isSuperAdmin() || (isAdmin() && newDocBelongsToCallerSchool());
+      // Split from a single `allow write` because request.resource.data is null on delete —
+      // newDocBelongsToCallerSchool() (which reads request.resource.data.schoolId) silently
+      // fails every admin-initiated delete on this collection, causing Firestore's optimistic
+      // local-cache removal to roll back and the deleted doc to visibly "rebound" in onSnapshot
+      // listeners. delete uses docBelongsToCallerSchool() (reads the EXISTING resource) instead.
+      allow create, update: if isSuperAdmin() || (isAdmin() && newDocBelongsToCallerSchool());
+      allow delete: if isSuperAdmin() || (isAdmin() && docBelongsToCallerSchool());
     }
 
     match /subjects/{subjectId} {
       allow read: if isAuthenticated() && (isSuperAdmin() || docBelongsToCallerSchool());
-      allow write: if isSuperAdmin() || (isAdmin() && newDocBelongsToCallerSchool());
+      // Split from a single `allow write` because request.resource.data is null on delete —
+      // newDocBelongsToCallerSchool() (which reads request.resource.data.schoolId) silently
+      // fails every admin-initiated delete on this collection, causing Firestore's optimistic
+      // local-cache removal to roll back and the deleted doc to visibly "rebound" in onSnapshot
+      // listeners. delete uses docBelongsToCallerSchool() (reads the EXISTING resource) instead.
+      allow create, update: if isSuperAdmin() || (isAdmin() && newDocBelongsToCallerSchool());
+      allow delete: if isSuperAdmin() || (isAdmin() && docBelongsToCallerSchool());
     }
 
     // ─── Grades & assessments ─────────────────────────────────────────────────
@@ -392,7 +430,13 @@ service cloud.firestore {
     match /special_lessons/{lessonId} {
       allow read: if isSuperAdmin() ||
                     ((isAdmin() || isTeacher()) && docBelongsToCallerSchool());
-      allow write: if isSuperAdmin() || (isAdmin() && newDocBelongsToCallerSchool());
+      // Split from a single `allow write` because request.resource.data is null on delete —
+      // newDocBelongsToCallerSchool() (which reads request.resource.data.schoolId) silently
+      // fails every admin-initiated delete on this collection, causing Firestore's optimistic
+      // local-cache removal to roll back and the deleted doc to visibly "rebound" in onSnapshot
+      // listeners. delete uses docBelongsToCallerSchool() (reads the EXISTING resource) instead.
+      allow create, update: if isSuperAdmin() || (isAdmin() && newDocBelongsToCallerSchool());
+      allow delete: if isSuperAdmin() || (isAdmin() && docBelongsToCallerSchool());
     }
 
     match /specialLessonAttendance/{docId} {
@@ -414,7 +458,13 @@ service cloud.firestore {
 
     match /timetables/{timetableId} {
       allow read: if isAuthenticated() && (isSuperAdmin() || docBelongsToCallerSchool());
-      allow write: if isSuperAdmin() || (isAdmin() && newDocBelongsToCallerSchool());
+      // Split from a single `allow write` because request.resource.data is null on delete —
+      // newDocBelongsToCallerSchool() (which reads request.resource.data.schoolId) silently
+      // fails every admin-initiated delete on this collection, causing Firestore's optimistic
+      // local-cache removal to roll back and the deleted doc to visibly "rebound" in onSnapshot
+      // listeners. delete uses docBelongsToCallerSchool() (reads the EXISTING resource) instead.
+      allow create, update: if isSuperAdmin() || (isAdmin() && newDocBelongsToCallerSchool());
+      allow delete: if isSuperAdmin() || (isAdmin() && docBelongsToCallerSchool());
     }
 
     // ─── Assignments ──────────────────────────────────────────────────────────
@@ -455,7 +505,13 @@ service cloud.firestore {
 
     match /events/{eventId} {
       allow read: if isAuthenticated() && (isSuperAdmin() || docBelongsToCallerSchool());
-      allow write: if isSuperAdmin() || (isAdmin() && newDocBelongsToCallerSchool());
+      // Split from a single `allow write` because request.resource.data is null on delete —
+      // newDocBelongsToCallerSchool() (which reads request.resource.data.schoolId) silently
+      // fails every admin-initiated delete on this collection, causing Firestore's optimistic
+      // local-cache removal to roll back and the deleted doc to visibly "rebound" in onSnapshot
+      // listeners. delete uses docBelongsToCallerSchool() (reads the EXISTING resource) instead.
+      allow create, update: if isSuperAdmin() || (isAdmin() && newDocBelongsToCallerSchool());
+      allow delete: if isSuperAdmin() || (isAdmin() && docBelongsToCallerSchool());
     }
 
     // ─── Finance ──────────────────────────────────────────────────────────────
@@ -516,19 +572,37 @@ service cloud.firestore {
 
     match /fee_categories/{categoryId} {
       allow read: if isSuperAdmin() || (isAdmin() && docBelongsToCallerSchool());
-      allow write: if isSuperAdmin() || (isAdmin() && newDocBelongsToCallerSchool());
+      // Split from a single `allow write` because request.resource.data is null on delete —
+      // newDocBelongsToCallerSchool() (which reads request.resource.data.schoolId) silently
+      // fails every admin-initiated delete on this collection, causing Firestore's optimistic
+      // local-cache removal to roll back and the deleted doc to visibly "rebound" in onSnapshot
+      // listeners. delete uses docBelongsToCallerSchool() (reads the EXISTING resource) instead.
+      allow create, update: if isSuperAdmin() || (isAdmin() && newDocBelongsToCallerSchool());
+      allow delete: if isSuperAdmin() || (isAdmin() && docBelongsToCallerSchool());
     }
 
     match /fee_templates/{templateId} {
       allow read: if isSuperAdmin() || (isAdmin() && docBelongsToCallerSchool());
-      allow write: if isSuperAdmin() || (isAdmin() && newDocBelongsToCallerSchool());
+      // Split from a single `allow write` because request.resource.data is null on delete —
+      // newDocBelongsToCallerSchool() (which reads request.resource.data.schoolId) silently
+      // fails every admin-initiated delete on this collection, causing Firestore's optimistic
+      // local-cache removal to roll back and the deleted doc to visibly "rebound" in onSnapshot
+      // listeners. delete uses docBelongsToCallerSchool() (reads the EXISTING resource) instead.
+      allow create, update: if isSuperAdmin() || (isAdmin() && newDocBelongsToCallerSchool());
+      allow delete: if isSuperAdmin() || (isAdmin() && docBelongsToCallerSchool());
     }
 
     // ─── Staff, leave & payroll ───────────────────────────────────────────────
 
     match /staff/{staffId} {
       allow read: if isAuthenticated() && (isSuperAdmin() || (isAdmin() && docBelongsToCallerSchool()));
-      allow write: if isSuperAdmin() || (isAdmin() && newDocBelongsToCallerSchool());
+      // Split from a single `allow write` because request.resource.data is null on delete —
+      // newDocBelongsToCallerSchool() (which reads request.resource.data.schoolId) silently
+      // fails every admin-initiated delete on this collection, causing Firestore's optimistic
+      // local-cache removal to roll back and the deleted doc to visibly "rebound" in onSnapshot
+      // listeners. delete uses docBelongsToCallerSchool() (reads the EXISTING resource) instead.
+      allow create, update: if isSuperAdmin() || (isAdmin() && newDocBelongsToCallerSchool());
+      allow delete: if isSuperAdmin() || (isAdmin() && docBelongsToCallerSchool());
     }
 
     match /leave_requests/{leaveId} {
@@ -610,14 +684,26 @@ service cloud.firestore {
     match /notification_broadcasts/{broadcastId} {
       // Any authenticated member of the school can read school broadcasts
       allow read: if isAuthenticated() && (isSuperAdmin() || docBelongsToCallerSchool());
-      allow write: if isSuperAdmin() || (isAdmin() && newDocBelongsToCallerSchool());
+      // Split from a single `allow write` because request.resource.data is null on delete —
+      // newDocBelongsToCallerSchool() (which reads request.resource.data.schoolId) silently
+      // fails every admin-initiated delete on this collection, causing Firestore's optimistic
+      // local-cache removal to roll back and the deleted doc to visibly "rebound" in onSnapshot
+      // listeners. delete uses docBelongsToCallerSchool() (reads the EXISTING resource) instead.
+      allow create, update: if isSuperAdmin() || (isAdmin() && newDocBelongsToCallerSchool());
+      allow delete: if isSuperAdmin() || (isAdmin() && docBelongsToCallerSchool());
     }
 
     // ─── Exams & CBT ──────────────────────────────────────────────────────────
 
     match /exams/{examId} {
       allow read: if isAuthenticated() && (isSuperAdmin() || docBelongsToCallerSchool());
-      allow write: if isSuperAdmin() || (isAdmin() && newDocBelongsToCallerSchool());
+      // Split from a single `allow write` because request.resource.data is null on delete —
+      // newDocBelongsToCallerSchool() (which reads request.resource.data.schoolId) silently
+      // fails every admin-initiated delete on this collection, causing Firestore's optimistic
+      // local-cache removal to roll back and the deleted doc to visibly "rebound" in onSnapshot
+      // listeners. delete uses docBelongsToCallerSchool() (reads the EXISTING resource) instead.
+      allow create, update: if isSuperAdmin() || (isAdmin() && newDocBelongsToCallerSchool());
+      allow delete: if isSuperAdmin() || (isAdmin() && docBelongsToCallerSchool());
     }
 
     match /exam_seating/{seatingId} {
@@ -626,17 +712,32 @@ service cloud.firestore {
         ((isAdmin() || isTeacher()) && docBelongsToCallerSchool()) ||
         isGuardianOfStudent(resource.data.studentId)
       );
-      allow write: if isSuperAdmin() || (isAdmin() && newDocBelongsToCallerSchool());
+      // Split from a single `allow write` because request.resource.data is null on delete —
+      // newDocBelongsToCallerSchool() (which reads request.resource.data.schoolId) silently
+      // fails every admin-initiated delete on this collection, causing Firestore's optimistic
+      // local-cache removal to roll back and the deleted doc to visibly "rebound" in onSnapshot
+      // listeners. delete uses docBelongsToCallerSchool() (reads the EXISTING resource) instead.
+      allow create, update: if isSuperAdmin() || (isAdmin() && newDocBelongsToCallerSchool());
+      allow delete: if isSuperAdmin() || (isAdmin() && docBelongsToCallerSchool());
     }
 
     match /question_bank/{questionId} {
       allow read: if isAuthenticated() && (isSuperAdmin() || docBelongsToCallerSchool());
-      allow write: if isSuperAdmin() || ((isAdmin() || isTeacher()) && newDocBelongsToCallerSchool());
+      // Same split as above — request.resource.data is null on delete, so
+      // newDocBelongsToCallerSchool() cannot be used there.
+      allow create, update: if isSuperAdmin() || ((isAdmin() || isTeacher()) && newDocBelongsToCallerSchool());
+      allow delete: if isSuperAdmin() || ((isAdmin() || isTeacher()) && docBelongsToCallerSchool());
     }
 
     match /cbt_exams/{examId} {
       allow read: if isAuthenticated() && (isSuperAdmin() || docBelongsToCallerSchool());
-      allow write: if isSuperAdmin() || (isAdmin() && newDocBelongsToCallerSchool());
+      // Split from a single `allow write` because request.resource.data is null on delete —
+      // newDocBelongsToCallerSchool() (which reads request.resource.data.schoolId) silently
+      // fails every admin-initiated delete on this collection, causing Firestore's optimistic
+      // local-cache removal to roll back and the deleted doc to visibly "rebound" in onSnapshot
+      // listeners. delete uses docBelongsToCallerSchool() (reads the EXISTING resource) instead.
+      allow create, update: if isSuperAdmin() || (isAdmin() && newDocBelongsToCallerSchool());
+      allow delete: if isSuperAdmin() || (isAdmin() && docBelongsToCallerSchool());
     }
 
     match /cbt_sessions/{sessionId} {
@@ -657,26 +758,44 @@ service cloud.firestore {
 
     match /curriculum_documents/{docId} {
       allow read: if isAuthenticated() && (isSuperAdmin() || docBelongsToCallerSchool());
-      allow write: if isSuperAdmin() || ((isAdmin() || isTeacher()) && newDocBelongsToCallerSchool());
+      // Same split as above — request.resource.data is null on delete, so
+      // newDocBelongsToCallerSchool() cannot be used there.
+      allow create, update: if isSuperAdmin() || ((isAdmin() || isTeacher()) && newDocBelongsToCallerSchool());
+      allow delete: if isSuperAdmin() || ((isAdmin() || isTeacher()) && docBelongsToCallerSchool());
     }
 
     match /curriculum_items/{itemId} {
       allow read: if isAuthenticated() && (isSuperAdmin() || docBelongsToCallerSchool());
-      allow write: if isSuperAdmin() || ((isAdmin() || isTeacher()) && newDocBelongsToCallerSchool());
+      // Same split as above — request.resource.data is null on delete, so
+      // newDocBelongsToCallerSchool() cannot be used there.
+      allow create, update: if isSuperAdmin() || ((isAdmin() || isTeacher()) && newDocBelongsToCallerSchool());
+      allow delete: if isSuperAdmin() || ((isAdmin() || isTeacher()) && docBelongsToCallerSchool());
     }
 
     // ─── Pins ─────────────────────────────────────────────────────────────────
 
     match /pins/{pinId} {
       allow read: if isAuthenticated() && (isSuperAdmin() || (isAdmin() && docBelongsToCallerSchool()));
-      allow write: if isSuperAdmin() || (isAdmin() && newDocBelongsToCallerSchool());
+      // Split from a single `allow write` because request.resource.data is null on delete —
+      // newDocBelongsToCallerSchool() (which reads request.resource.data.schoolId) silently
+      // fails every admin-initiated delete on this collection, causing Firestore's optimistic
+      // local-cache removal to roll back and the deleted doc to visibly "rebound" in onSnapshot
+      // listeners. delete uses docBelongsToCallerSchool() (reads the EXISTING resource) instead.
+      allow create, update: if isSuperAdmin() || (isAdmin() && newDocBelongsToCallerSchool());
+      allow delete: if isSuperAdmin() || (isAdmin() && docBelongsToCallerSchool());
     }
 
     // ─── Promotions ───────────────────────────────────────────────────────────
 
     match /promotions/{promoId} {
       allow read: if isAuthenticated() && (isSuperAdmin() || (isAdmin() && docBelongsToCallerSchool()));
-      allow write: if isSuperAdmin() || (isAdmin() && newDocBelongsToCallerSchool());
+      // Split from a single `allow write` because request.resource.data is null on delete —
+      // newDocBelongsToCallerSchool() (which reads request.resource.data.schoolId) silently
+      // fails every admin-initiated delete on this collection, causing Firestore's optimistic
+      // local-cache removal to roll back and the deleted doc to visibly "rebound" in onSnapshot
+      // listeners. delete uses docBelongsToCallerSchool() (reads the EXISTING resource) instead.
+      allow create, update: if isSuperAdmin() || (isAdmin() && newDocBelongsToCallerSchool());
+      allow delete: if isSuperAdmin() || (isAdmin() && docBelongsToCallerSchool());
     }
 
     // ─── Library (Phase 3 — librarian portal) ─────────────────────────────────
@@ -707,28 +826,52 @@ service cloud.firestore {
 
     match /whatsapp_logs/{logId} {
       allow read: if isAuthenticated() && (isSuperAdmin() || (isAdmin() && docBelongsToCallerSchool()));
-      allow write: if isSuperAdmin() || (isAdmin() && newDocBelongsToCallerSchool());
+      // Split from a single `allow write` because request.resource.data is null on delete —
+      // newDocBelongsToCallerSchool() (which reads request.resource.data.schoolId) silently
+      // fails every admin-initiated delete on this collection, causing Firestore's optimistic
+      // local-cache removal to roll back and the deleted doc to visibly "rebound" in onSnapshot
+      // listeners. delete uses docBelongsToCallerSchool() (reads the EXISTING resource) instead.
+      allow create, update: if isSuperAdmin() || (isAdmin() && newDocBelongsToCallerSchool());
+      allow delete: if isSuperAdmin() || (isAdmin() && docBelongsToCallerSchool());
     }
 
     // ─── Student Lifecycle Events ─────────────────────────────────────────────
 
     match /lifecycle_events/{eventId} {
       allow read: if isAuthenticated() && (isSuperAdmin() || docBelongsToCallerSchool());
-      allow write: if isSuperAdmin() || (isAdmin() && newDocBelongsToCallerSchool());
+      // Split from a single `allow write` because request.resource.data is null on delete —
+      // newDocBelongsToCallerSchool() (which reads request.resource.data.schoolId) silently
+      // fails every admin-initiated delete on this collection, causing Firestore's optimistic
+      // local-cache removal to roll back and the deleted doc to visibly "rebound" in onSnapshot
+      // listeners. delete uses docBelongsToCallerSchool() (reads the EXISTING resource) instead.
+      allow create, update: if isSuperAdmin() || (isAdmin() && newDocBelongsToCallerSchool());
+      allow delete: if isSuperAdmin() || (isAdmin() && docBelongsToCallerSchool());
     }
 
     // ─── Behavioral Records ───────────────────────────────────────────────────
 
     match /behavioral_records/{recordId} {
       allow read: if isAuthenticated() && (isSuperAdmin() || docBelongsToCallerSchool());
-      allow write: if isSuperAdmin() || (isAdmin() && newDocBelongsToCallerSchool());
+      // Split from a single `allow write` because request.resource.data is null on delete —
+      // newDocBelongsToCallerSchool() (which reads request.resource.data.schoolId) silently
+      // fails every admin-initiated delete on this collection, causing Firestore's optimistic
+      // local-cache removal to roll back and the deleted doc to visibly "rebound" in onSnapshot
+      // listeners. delete uses docBelongsToCallerSchool() (reads the EXISTING resource) instead.
+      allow create, update: if isSuperAdmin() || (isAdmin() && newDocBelongsToCallerSchool());
+      allow delete: if isSuperAdmin() || (isAdmin() && docBelongsToCallerSchool());
     }
 
     // ─── Alumni Profiles ──────────────────────────────────────────────────────
 
     match /alumni_profiles/{profileId} {
       allow read: if isAuthenticated() && (isSuperAdmin() || docBelongsToCallerSchool());
-      allow write: if isSuperAdmin() || (isAdmin() && newDocBelongsToCallerSchool());
+      // Split from a single `allow write` because request.resource.data is null on delete —
+      // newDocBelongsToCallerSchool() (which reads request.resource.data.schoolId) silently
+      // fails every admin-initiated delete on this collection, causing Firestore's optimistic
+      // local-cache removal to roll back and the deleted doc to visibly "rebound" in onSnapshot
+      // listeners. delete uses docBelongsToCallerSchool() (reads the EXISTING resource) instead.
+      allow create, update: if isSuperAdmin() || (isAdmin() && newDocBelongsToCallerSchool());
+      allow delete: if isSuperAdmin() || (isAdmin() && docBelongsToCallerSchool());
     }
 
     // ─── Demo requests (public) ───────────────────────────────────────────────
@@ -775,7 +918,13 @@ service cloud.firestore {
 
     match /cover_assignments/{coverId} {
       allow read: if isAuthenticated() && (isSuperAdmin() || docBelongsToCallerSchool());
-      allow write: if isSuperAdmin() || (isAdmin() && newDocBelongsToCallerSchool());
+      // Split from a single `allow write` because request.resource.data is null on delete —
+      // newDocBelongsToCallerSchool() (which reads request.resource.data.schoolId) silently
+      // fails every admin-initiated delete on this collection, causing Firestore's optimistic
+      // local-cache removal to roll back and the deleted doc to visibly "rebound" in onSnapshot
+      // listeners. delete uses docBelongsToCallerSchool() (reads the EXISTING resource) instead.
+      allow create, update: if isSuperAdmin() || (isAdmin() && newDocBelongsToCallerSchool());
+      allow delete: if isSuperAdmin() || (isAdmin() && docBelongsToCallerSchool());
     }
 
     // ─── School Trips & Registrations ────────────────────────────────────────
@@ -783,7 +932,13 @@ service cloud.firestore {
     match /school_trips/{tripId} {
       // Admins manage trips; teachers and parents can read
       allow read: if isAuthenticated() && (isSuperAdmin() || docBelongsToCallerSchool());
-      allow write: if isSuperAdmin() || (isAdmin() && newDocBelongsToCallerSchool());
+      // Split from a single `allow write` because request.resource.data is null on delete —
+      // newDocBelongsToCallerSchool() (which reads request.resource.data.schoolId) silently
+      // fails every admin-initiated delete on this collection, causing Firestore's optimistic
+      // local-cache removal to roll back and the deleted doc to visibly "rebound" in onSnapshot
+      // listeners. delete uses docBelongsToCallerSchool() (reads the EXISTING resource) instead.
+      allow create, update: if isSuperAdmin() || (isAdmin() && newDocBelongsToCallerSchool());
+      allow delete: if isSuperAdmin() || (isAdmin() && docBelongsToCallerSchool());
     }
 
     match /trip_registrations/{regId} {

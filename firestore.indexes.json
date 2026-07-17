@@ -819,6 +819,14 @@
         { "fieldPath": "schoolId",           "order": "ASCENDING" },
         { "fieldPath": "enrolledStudentIds", "arrayConfig": "CONTAINS" }
       ]
+    },
+    {
+      "collectionGroup": "schools",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status",               "order": "ASCENDING" },
+        { "fieldPath": "subscriptionExpiresAt", "order": "ASCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []

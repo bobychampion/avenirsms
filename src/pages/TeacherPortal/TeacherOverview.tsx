@@ -1,5 +1,5 @@
 import React from 'react';
-import { Users, BookOpen, MessageSquare, CheckSquare } from 'lucide-react';
+import { BookOpen, MessageSquare, CheckSquare, CalendarOff } from 'lucide-react';
 import { Student, Assignment, Message } from '../../types';
 import { useTeacherOverviewData } from './hooks/useTeacherOverviewData';
 import { useSchoolEvents } from './hooks/useSchoolEvents';
@@ -13,7 +13,7 @@ import ProductivityCards from './ProductivityCards';
 import UpcomingEventsCard from './UpcomingEventsCard';
 import MiniCalendarCard from './MiniCalendarCard';
 
-type TabType = 'home' | 'students' | 'attendance' | 'assignments' | 'grades' | 'skills' | 'messages' | 'ai_tools' | 'timetable' | 'absences' | 'curriculum';
+type TabType = 'home' | 'students' | 'attendance' | 'assignments' | 'grades' | 'skills' | 'messages' | 'ai_tools' | 'timetable' | 'absences' | 'curriculum' | 'leave';
 
 interface TeacherOverviewProps {
   schoolId: string | null | undefined;
@@ -36,7 +36,7 @@ export default function TeacherOverview({
   const { events, upcoming } = useSchoolEvents(schoolId);
 
   const quickCards = [
-    { label: 'My Students', value: students.length, color: 'indigo', Icon: Users, tab: 'students' as TabType },
+    { label: 'Leave Request', value: '→', color: 'indigo', Icon: CalendarOff, tab: 'leave' as TabType },
     { label: 'Assignments', value: assignments.length, color: 'emerald', Icon: BookOpen, tab: 'assignments' as TabType },
     { label: 'Unread Messages', value: messages.filter(m => m.senderId !== currentUserId && !m.read).length, color: 'violet', Icon: MessageSquare, tab: 'messages' as TabType },
     { label: 'Take Attendance', value: '→', color: 'amber', Icon: CheckSquare, tab: 'attendance' as TabType },

@@ -11,8 +11,9 @@ import {
 import { db } from '../../firebase';
 import { School } from '../../types';
 import { useSuperAdmin } from '../../components/SuperAdminContext';
+import DeleteSchoolModal from '../../components/DeleteSchoolModal';
 import {
-  Building2, Plus, LogIn, Pencil, CheckCircle2, XCircle, Search
+  Building2, Plus, LogIn, Pencil, CheckCircle2, XCircle, Search, Trash2
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
@@ -20,6 +21,7 @@ export default function SchoolList() {
   const [schools, setSchools] = useState<School[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
+  const [deletingSchool, setDeletingSchool] = useState<School | null>(null);
   const { enterSchool } = useSuperAdmin();
   const navigate = useNavigate();
 
@@ -167,6 +169,14 @@ export default function SchoolList() {
                         >
                           {school.status === 'active' ? <XCircle className="w-3.5 h-3.5" /> : <CheckCircle2 className="w-3.5 h-3.5" />}
                         </button>
+                        <button
+                          onClick={() => setDeletingSchool(school)}
+                          disabled={school.status === 'active'}
+                          title={school.status === 'active' ? 'Suspend school before deleting' : 'Permanently delete school'}
+                          className="p-1.5 rounded-lg text-slate-300 hover:text-rose-600 hover:bg-rose-50 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent transition-colors"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
                       </div>
                     </td>
                   </tr>
@@ -176,6 +186,18 @@ export default function SchoolList() {
           </div>
         )}
       </div>
+
+      {deletingSchool && (
+        <DeleteSchoolModal
+          schoolId={deletingSchool.id!}
+          schoolName={deletingSchool.name}
+          onClose={() => setDeletingSchool(null)}
+          onDeleted={() => {
+            setSchools(prev => prev.filter(s => s.id !== deletingSchool.id));
+            setDeletingSchool(null);
+          }}
+        />
+      )}
     </div>
   );
 }

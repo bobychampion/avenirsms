@@ -1,12 +1,12 @@
 import React from 'react';
-import { Users, BookMarked, Award } from 'lucide-react';
+import { BookMarked, Award, CalendarOff } from 'lucide-react';
 
 interface MetricsGridProps {
-  totalStudents: number;
   attendanceRate: number;
   classAverage: number;
   schoolAverage: number | null;
   curriculumCoverage: number;
+  onRequestLeave: () => void;
 }
 
 function Ring({ percent, color }: { percent: number; color: string }) {
@@ -40,11 +40,25 @@ function MetricCard({
 }
 
 export default function MetricsGrid({
-  totalStudents, attendanceRate, classAverage, schoolAverage, curriculumCoverage,
+  attendanceRate, classAverage, schoolAverage, curriculumCoverage, onRequestLeave,
 }: MetricsGridProps) {
   return (
     <div className="grid grid-cols-2 gap-4 h-full">
-      <MetricCard icon={Users} color="indigo" label="Students" value={totalStudents} />
+      <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5 hover:shadow-md transition-shadow flex flex-col justify-between">
+        <div>
+          <div className="w-10 h-10 rounded-xl bg-indigo-50 flex items-center justify-center mb-3">
+            <CalendarOff className="w-5 h-5 text-indigo-600" />
+          </div>
+          <p className="text-xs text-slate-500 font-medium">Need time off?</p>
+        </div>
+        <button
+          type="button"
+          onClick={onRequestLeave}
+          className="mt-3 text-sm font-bold text-indigo-600 hover:text-indigo-800 text-left"
+        >
+          Request Leave &rarr;
+        </button>
+      </div>
 
       <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5 hover:shadow-md transition-shadow flex items-center gap-3">
         <div className="relative shrink-0">

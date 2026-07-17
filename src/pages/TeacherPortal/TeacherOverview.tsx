@@ -77,11 +77,11 @@ export default function TeacherOverview({
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
             <div className="lg:col-span-2">
               <MetricsGrid
-                totalStudents={students.length}
                 attendanceRate={data.attendance.rate}
                 classAverage={data.classAverage}
                 schoolAverage={data.schoolAverage}
                 curriculumCoverage={data.curriculumCoverage}
+                onRequestLeave={() => navigateTab('leave')}
               />
             </div>
             <UpcomingEventsCard events={upcoming} />

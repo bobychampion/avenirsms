@@ -119,6 +119,7 @@ export default function BulkStudentImport() {
           <p className="text-sm text-indigo-700 mb-3">
             Fill in student data using the exact column headers. Required columns: <strong>studentName, gender, currentClass</strong>.
             Class must be one of: Primary 1–6, JSS 1–3, SSS 1–3.
+            The <strong>studentId</strong> column is optional — leave it blank to auto-generate an ID, or fill it in to set your own (e.g. an existing admission/application number).
           </p>
           <button
             onClick={downloadTemplate}
@@ -190,7 +191,7 @@ export default function BulkStudentImport() {
             <table className="w-full text-sm">
               <thead className="bg-slate-50">
                 <tr>
-                  {['#', 'Name', 'Class', 'Gender', 'DOB', 'Email', 'Guardian'].map(h => (
+                  {['#', 'Student ID', 'Name', 'Class', 'Gender', 'DOB', 'Email', 'Guardian'].map(h => (
                     <th key={h} className="px-4 py-2.5 text-left text-xs font-semibold text-slate-500 uppercase tracking-wide">{h}</th>
                   ))}
                 </tr>
@@ -199,6 +200,7 @@ export default function BulkStudentImport() {
                 {preview.slice(0, 20).map((row, i) => (
                   <tr key={i} className="hover:bg-slate-50">
                     <td className="px-4 py-2.5 text-slate-400">{i + 1}</td>
+                    <td className="px-4 py-2.5 text-slate-500 font-mono text-xs">{row.studentId?.trim() || 'auto'}</td>
                     <td className="px-4 py-2.5 font-medium text-slate-900">{row.studentName}</td>
                     <td className="px-4 py-2.5 text-slate-600">{row.currentClass}</td>
                     <td className="px-4 py-2.5 text-slate-600 capitalize">{row.gender}</td>

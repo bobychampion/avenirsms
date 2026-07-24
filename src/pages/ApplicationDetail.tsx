@@ -359,6 +359,8 @@ export default function ApplicationDetail() {
   const [examVerified, setExamVerified] = useState(false);
   const [showGuardianPanel, setShowGuardianPanel] = useState(false);
   const [admissionResult, setAdmissionResult] = useState<AdmissionResult | null>(null);
+  const [studentIdMode, setStudentIdMode] = useState<'auto' | 'manual'>('auto');
+  const [customStudentId, setCustomStudentId] = useState('');
 
   // Guardian / sibling / class state
   const [guardianForm, setGuardianForm] = useState<GuardianForm>({
@@ -477,7 +479,28 @@ export default function ApplicationDetail() {
         const studentSnap = await getDocs(studentQuery);
 
         if (studentSnap.empty) {
-          const studentId = await generateStudentId(application.schoolId ?? schoolId ?? 'main');
+          let studentId: string;
+          if (studentIdMode === 'manual') {
+            studentId = customStudentId.trim();
+            if (!studentId) {
+              toast.error('Enter a Student ID, or switch to Auto-generate.');
+              setSaving(false);
+              return;
+            }
+            const effId = application.schoolId ?? schoolId ?? 'main';
+            const dupSnap = await getDocs(query(
+              collection(db, 'students'),
+              where('schoolId', '==', effId),
+              where('studentId', '==', studentId)
+            ));
+            if (!dupSnap.empty) {
+              toast.error(`Student ID "${studentId}" is already in use.`);
+              setSaving(false);
+              return;
+            }
+          } else {
+            studentId = await generateStudentId(application.schoolId ?? schoolId ?? 'main');
+          }
           const siblingIds = selectedSiblings.map(s => s.id!).filter(Boolean);
           const assignedClass = guardianForm.classAssignment || application.classApplyingFor;
 
@@ -829,6 +852,36 @@ export default function ApplicationDetail() {
                 </div>
               </DetailSection>
             </div>
+          </div>
+
+          {/* Student ID */}
+          <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
+            <h3 className="text-base font-bold text-slate-900 mb-4 flex items-center gap-2">
+              <School className="w-5 h-5 text-indigo-600" /> Student ID
+            </h3>
+            <p className="text-sm text-slate-500 mb-3">Assigned once, when this application is approved.</p>
+            <div className="flex gap-2 mb-2">
+              <button type="button" onClick={() => setStudentIdMode('auto')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors ${
+                  studentIdMode === 'auto' ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300'
+                }`}>
+                Auto-generate
+              </button>
+              <button type="button" onClick={() => {
+                setStudentIdMode('manual');
+                if (!customStudentId.trim() && application?.id) setCustomStudentId(application.id);
+              }}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors ${
+                  studentIdMode === 'manual' ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300'
+                }`}>
+                Enter manually
+              </button>
+            </div>
+            {studentIdMode === 'manual' && (
+              <input value={customStudentId} onChange={e => setCustomStudentId(e.target.value)}
+                className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm"
+                placeholder="e.g. the application number, or your own ID scheme" />
+            )}
           </div>
 
           {/* Class Assignment Override */}

@@ -49,6 +49,7 @@ function StatusPill({ status }: { status: ApplicationStatus }) {
 
 interface DirectAdmitForm {
   // Student
+  studentIdMode: 'auto' | 'manual'; customStudentId: string;
   studentName: string; email: string; phone: string; dob: string;
   gender: string; nin: string; classApplyingFor: string;
   previousSchool: string; homeAddress: string;
@@ -67,6 +68,7 @@ const BLOOD_GROUPS = ['A+', 'A-', 'B+', 'B-', 'O+', 'O-', 'AB+', 'AB-'];
 const RELATIONSHIPS = ['father', 'mother', 'uncle', 'aunt', 'sibling', 'guardian', 'other'];
 
 const EMPTY_FORM: DirectAdmitForm = {
+  studentIdMode: 'auto', customStudentId: '',
   studentName: '', email: '', phone: '', dob: '', gender: 'male', nin: '',
   classApplyingFor: '', previousSchool: '', homeAddress: '',
   otherNationality: '', bloodGroup: 'O+', medicalConditions: '', allergies: '', nationality: 'Nigerian',
@@ -310,6 +312,7 @@ function DirectAdmitModal({
 
   const validate = () => {
     if (step === 1) {
+      if (form.studentIdMode === 'manual' && !form.customStudentId.trim()) return 'Enter a Student ID, or switch to Auto-generate.';
       if (!form.studentName.trim()) return 'Student name is required.';
       if (!form.dob) return 'Date of birth is required.';
       if (!form.gender) return 'Gender is required.';
@@ -339,8 +342,23 @@ function DirectAdmitModal({
     try {
       const batch = writeBatch(db);
 
-      // 1. Generate student ID
-      const studentId = await generateStudentId(schoolId ?? 'main');
+      // 1. Resolve student ID — manual entry (e.g. the application number) or auto-generated
+      let studentId: string;
+      if (form.studentIdMode === 'manual') {
+        studentId = form.customStudentId.trim();
+        const dupSnap = await getDocs(query(
+          collection(db, 'students'),
+          where('schoolId', '==', schoolId ?? 'main'),
+          where('studentId', '==', studentId)
+        ));
+        if (!dupSnap.empty) {
+          toast.error(`Student ID "${studentId}" is already in use.`);
+          setSaving(false);
+          return;
+        }
+      } else {
+        studentId = await generateStudentId(schoolId ?? 'main');
+      }
 
       // 1a. ── Parent account resolution ─────────────────────────────────
       // Priority: 1) explicitly linked parent, 2) existing user by email,
@@ -576,6 +594,28 @@ function DirectAdmitModal({
           {step === 1 && (
             <div className="space-y-4">
               <div className="grid grid-cols-2 gap-4">
+                <div className="col-span-2">
+                  <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Student ID</label>
+                  <div className="flex gap-2 mb-2">
+                    <button type="button" onClick={() => f('studentIdMode', 'auto')}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors ${
+                        form.studentIdMode === 'auto' ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300'
+                      }`}>
+                      Auto-generate
+                    </button>
+                    <button type="button" onClick={() => f('studentIdMode', 'manual')}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors ${
+                        form.studentIdMode === 'manual' ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300'
+                      }`}>
+                      Enter manually
+                    </button>
+                  </div>
+                  {form.studentIdMode === 'manual' && (
+                    <input value={form.customStudentId} onChange={e => f('customStudentId', e.target.value)}
+                      className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm"
+                      placeholder="e.g. an application number, or your own ID scheme" />
+                  )}
+                </div>
                 <div className="col-span-2">
                   <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Full Name *</label>
                   <input value={form.studentName} onChange={e => f('studentName', e.target.value)}
@@ -815,6 +855,7 @@ function DirectAdmitModal({
           {step === 4 && (
             <div className="space-y-4">
               <div className="bg-slate-50 rounded-2xl border border-slate-200 divide-y divide-slate-100">
+                <ReviewRow icon={<User className="w-4 h-4" />} label="Student ID" value={form.studentIdMode === 'manual' ? (form.customStudentId.trim() || '—') : 'Auto-generated on submit'} />
                 <ReviewRow icon={<User className="w-4 h-4" />} label="Student Name" value={form.studentName} />
                 <ReviewRow icon={<BookOpen className="w-4 h-4" />} label="Class" value={form.classApplyingFor} />
                 <ReviewRow icon={<User className="w-4 h-4" />} label="D.O.B / Gender" value={`${formatDate(form.dob)} / ${form.gender}`} />

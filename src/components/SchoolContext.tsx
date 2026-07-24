@@ -369,7 +369,10 @@ export function SchoolProvider({ children }: { children: React.ReactNode }) {
         } else {
           const list = snap.docs
             .map(d => ({ id: d.id, ...d.data() } as SchoolClass))
-            .sort((a, b) => a.name.localeCompare(b.name));
+            // numeric: true so "Year 2" sorts before "Year 10" instead of after —
+            // plain localeCompare treats class names as plain strings ("Year 1" < "Year 10" < "Year 2"),
+            // which made promotion pick the wrong destination class.
+            .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
           setClasses(list);
           // Deduplicate: two Firestore docs with the same name would produce
           // duplicate option keys (React warning) in every class <select>.

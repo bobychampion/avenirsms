@@ -54,15 +54,16 @@ export async function parseSpreadsheetFile<T extends Record<string, string>>(fil
 // ─── Students ────────────────────────────────────────────────────────────────
 
 export const STUDENT_CSV_HEADERS = [
-  'studentName', 'email', 'phone', 'dob', 'gender', 'currentClass',
+  'studentId', 'studentName', 'email', 'phone', 'dob', 'gender', 'currentClass',
   'guardianName', 'guardianPhone', 'guardianEmail', 'homeAddress', 'otherNationality',
   'bloodGroup',
 ] as const;
 
 export type StudentCsvRow = Record<(typeof STUDENT_CSV_HEADERS)[number], string>;
 
+// studentId is optional — leave blank to auto-generate using the school's configured format.
 export const STUDENT_TEMPLATE_SAMPLE: string[] = [
-  'Adaeze Okonkwo', 'adaeze@email.com', '08012345678', '2010-05-15', 'female', 'JSS 1',
+  '', 'Adaeze Okonkwo', 'adaeze@email.com', '08012345678', '2010-05-15', 'female', 'JSS 1',
   'Mrs Okonkwo', '08012345679', 'parent@email.com', '5 Main Street Lagos', '',
   'O+',
 ];
@@ -79,7 +80,7 @@ export function validateStudentRow(row: StudentCsvRow, idx: number): string | nu
 
 export function studentToCsvRow(s: Student): string[] {
   return [
-    s.studentName ?? '', s.email ?? '', s.phone ?? '', s.dob ?? '', s.gender ?? '',
+    s.studentId ?? '', s.studentName ?? '', s.email ?? '', s.phone ?? '', s.dob ?? '', s.gender ?? '',
     s.currentClass ?? '', s.guardianName ?? '', s.guardianPhone ?? '', s.guardianEmail ?? '',
     s.homeAddress ?? '', s.otherNationality ?? '', s.bloodGroup ?? '',
   ];
@@ -161,10 +162,20 @@ export async function importStudentsFromRows(
       continue;
     }
     try {
-      const newId = await generateStudentId(schoolId);
-      if (existingStudentIds.has(newId)) {
-        results.push({ row: i + 2, name: row.studentName, status: 'duplicate', message: 'Student ID collision' });
-        continue;
+      const providedId = row.studentId?.trim();
+      let newId: string;
+      if (providedId) {
+        if (existingStudentIds.has(providedId)) {
+          results.push({ row: i + 2, name: row.studentName, status: 'duplicate', message: `Student ID "${providedId}" already exists` });
+          continue;
+        }
+        newId = providedId;
+      } else {
+        newId = await generateStudentId(schoolId);
+        if (existingStudentIds.has(newId)) {
+          results.push({ row: i + 2, name: row.studentName, status: 'duplicate', message: 'Student ID collision' });
+          continue;
+        }
       }
       const student: Omit<Student, 'id'> = {
         studentName: row.studentName.trim(),

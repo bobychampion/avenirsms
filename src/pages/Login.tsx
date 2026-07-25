@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useAuth } from '../components/FirebaseProvider';
+import { useDomainSchool } from '../components/DomainSchoolContext';
 import { getPostAuthHomePath } from '../utils/postAuthRedirect';
 import { UserProfile } from '../types';
 import {
@@ -68,7 +69,12 @@ const URL_ROLE_ALIASES: Record<string, RegisterRole | null> = {
 
 export default function Login() {
   const params = useParams<{ role?: string; schoolId?: string }>();
-  
+  const { domainSchoolId } = useDomainSchool();
+  // Registration needs the resolved schoolId whether it came from the URL or the
+  // custom domain; link-building below intentionally keeps using params.schoolId only
+  // (on a custom domain, relative links like /login/parent already resolve correctly).
+  const effectiveSchoolId = params.schoolId ?? domainSchoolId ?? undefined;
+
   // Check if this is a student login attempt
   const isStudentLoginAttempt = params.role?.toLowerCase() === 'student';
   
@@ -105,7 +111,7 @@ export default function Login() {
     setLoading(true);
 
     if (isRegistering) {
-      await registerWithEmail(email, password, name, toProfileRole(registerRole), params.schoolId);
+      await registerWithEmail(email, password, name, toProfileRole(registerRole), effectiveSchoolId);
     } else {
       await loginWithEmail(email, password);
     }

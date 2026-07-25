@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { db } from '../firebase';
 import { doc, getDoc } from 'firebase/firestore';
+import { useDomainSchool } from '../components/DomainSchoolContext';
 import {
   GraduationCap, MapPin, Phone, Mail, ArrowRight, Loader2, AlertTriangle,
   Facebook, Instagram, Globe, Twitter, Clock,
@@ -47,7 +48,11 @@ function daysUntil(dateStr: string): number {
 }
 
 export default function SchoolLandingPage() {
-  const { schoolId: param } = useParams<{ schoolId: string }>();
+  const { schoolId: urlParam } = useParams<{ schoolId: string }>();
+  const { domainSchoolId } = useDomainSchool();
+  // On a school's own custom domain there's no /:schoolId in the URL — fall back to the
+  // hostname-resolved schoolId (already a raw doc id, so resolveSchoolSettings's direct lookup hits).
+  const param = urlParam ?? domainSchoolId ?? undefined;
   const [school, setSchool] = useState<SchoolInfo | null>(null);
   const [resolvedId, setResolvedId] = useState('');
   const [loading, setLoading] = useState(true);

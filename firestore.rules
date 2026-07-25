@@ -191,6 +191,13 @@ service cloud.firestore {
       allow write: if isSuperAdmin();
     }
 
+    // Reverse lookup for custom/school-owned domains -> schoolId. Public read is required
+    // because this is resolved on app boot, before any authentication happens.
+    match /school_domains/{hostname} {
+      allow read: if true;
+      allow write: if isSuperAdmin();
+    }
+
     // ─── Platform Invoices (subscription billing — super_admin only) ──────────
 
     match /platform_invoices/{invoiceId} {

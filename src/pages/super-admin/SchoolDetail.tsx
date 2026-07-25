@@ -5,13 +5,13 @@
 
 import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { doc, getDoc, updateDoc, getDocs, collection, query, where, serverTimestamp } from 'firebase/firestore';
+import { doc, getDoc, setDoc, deleteDoc, updateDoc, getDocs, collection, query, where, serverTimestamp } from 'firebase/firestore';
 import { db } from '../../firebase';
 import { School, UserProfile } from '../../types';
 import { useSuperAdmin } from '../../components/SuperAdminContext';
 import DeleteSchoolModal from '../../components/DeleteSchoolModal';
 import {
-  Building2, ArrowLeft, Save, Loader2, LogIn, Users, GraduationCap, CheckCircle2, XCircle, Trash2
+  Building2, ArrowLeft, Save, Loader2, LogIn, Users, GraduationCap, CheckCircle2, XCircle, Trash2, Globe
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
@@ -34,6 +34,9 @@ export default function SchoolDetail() {
   const [status, setStatus] = useState<School['status']>('active');
   const [plan, setPlan] = useState<School['subscriptionPlan']>('pro');
   const [notes, setNotes] = useState('');
+  const [customDomain, setCustomDomain] = useState('');
+  const [domainInput, setDomainInput] = useState('');
+  const [domainSaving, setDomainSaving] = useState(false);
 
   useEffect(() => {
     if (!schoolId) return;
@@ -48,6 +51,8 @@ export default function SchoolDetail() {
           setStatus(data.status);
           setPlan(data.subscriptionPlan);
           setNotes(data.notes || '');
+          setCustomDomain(data.customDomain || '');
+          setDomainInput(data.customDomain || '');
         }
         // Load stats
         const [students, staff, users] = await Promise.all([
@@ -81,6 +86,61 @@ export default function SchoolDetail() {
       toast.error('Failed to save changes');
     } finally {
       setSaving(false);
+    }
+  };
+
+  const normalizeDomain = (raw: string) =>
+    raw.trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/.*$/, '');
+
+  const handleSaveDomain = async () => {
+    if (!schoolId) return;
+    const hostname = normalizeDomain(domainInput);
+
+    if (!hostname) {
+      // Clear the domain
+      if (customDomain) {
+        setDomainSaving(true);
+        try {
+          await deleteDoc(doc(db, 'school_domains', customDomain));
+          await updateDoc(doc(db, 'schools', schoolId), { customDomain: '', updatedAt: serverTimestamp() });
+          setCustomDomain('');
+          toast.success('Custom domain removed');
+        } catch (e: any) {
+          toast.error(e.message || 'Failed to remove domain');
+        } finally {
+          setDomainSaving(false);
+        }
+      }
+      return;
+    }
+
+    if (!/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/.test(hostname)) {
+      toast.error('Enter a plain hostname, e.g. portal.yourschool.com (no https:// or path)');
+      return;
+    }
+
+    setDomainSaving(true);
+    const tid = toast.loading('Saving custom domain…');
+    try {
+      const existing = await getDoc(doc(db, 'school_domains', hostname));
+      if (existing.exists() && existing.data()?.schoolId !== schoolId) {
+        toast.error('This domain is already linked to another school', { id: tid });
+        return;
+      }
+      if (customDomain && customDomain !== hostname) {
+        await deleteDoc(doc(db, 'school_domains', customDomain));
+      }
+      await setDoc(doc(db, 'school_domains', hostname), {
+        schoolId, schoolName: school?.name ?? name, updatedAt: serverTimestamp(),
+      });
+      await updateDoc(doc(db, 'schools', schoolId), { customDomain: hostname, updatedAt: serverTimestamp() });
+      setCustomDomain(hostname);
+      setDomainInput(hostname);
+      toast.success('Custom domain saved — now connect it in Firebase Hosting (see instructions below)', { id: tid, duration: 6000 });
+    } catch (e: any) {
+      toast.error('Failed: ' + (e.message || 'Unknown'), { id: tid });
+    } finally {
+      setDomainSaving(false);
     }
   };
 
@@ -177,6 +237,68 @@ export default function SchoolDetail() {
           {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
           {saving ? 'Saving…' : 'Save Changes'}
         </button>
+      </div>
+
+      {/* Custom Domain */}
+      <div className="bg-white border border-slate-200 rounded-2xl p-6 space-y-4">
+        <h2 className="font-semibold text-slate-800 flex items-center gap-2">
+          <Globe className="w-4 h-4 text-indigo-600" /> Custom Domain
+        </h2>
+        <p className="text-sm text-slate-500">
+          Let this school access their whole portal from their own domain instead of the default URL.
+        </p>
+        <div className="flex items-center gap-2">
+          {customDomain ? (
+            <span className="flex items-center gap-1.5 text-xs font-medium text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-full">
+              <CheckCircle2 className="w-3.5 h-3.5" /> Linked to this school
+            </span>
+          ) : (
+            <span className="flex items-center gap-1.5 text-xs font-medium text-slate-400 bg-slate-50 px-2.5 py-1 rounded-full">
+              <XCircle className="w-3.5 h-3.5" /> Not set
+            </span>
+          )}
+        </div>
+        <div>
+          <label className={labelCls}>Domain</label>
+          <input
+            className={inputCls}
+            value={domainInput}
+            onChange={e => setDomainInput(e.target.value)}
+            placeholder="portal.theirschool.com"
+          />
+        </div>
+        <button
+          onClick={handleSaveDomain}
+          disabled={domainSaving}
+          className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-semibold px-5 py-2.5 rounded-xl transition-colors"
+        >
+          {domainSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+          {domainSaving ? 'Saving…' : customDomain ? 'Update Domain' : 'Save Domain'}
+        </button>
+
+        {customDomain && (
+          <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 text-sm text-slate-600 space-y-2">
+            <p className="font-semibold text-slate-800">Two steps left to go live:</p>
+            <ol className="list-decimal list-inside space-y-1">
+              <li>
+                The school's DNS admin adds a <span className="font-mono bg-white px-1.5 py-0.5 rounded border border-slate-200">CNAME</span> record:{' '}
+                <span className="font-mono bg-white px-1.5 py-0.5 rounded border border-slate-200">{customDomain}</span>
+                {' '}&rarr;{' '}
+                <span className="font-mono bg-white px-1.5 py-0.5 rounded border border-slate-200">avenir-33ab7.web.app</span>
+              </li>
+              <li>
+                In the Firebase Console &rarr; Hosting &rarr; Add custom domain, add{' '}
+                <span className="font-mono bg-white px-1.5 py-0.5 rounded border border-slate-200">{customDomain}</span> and complete the
+                TXT-record ownership check Firebase gives you. SSL is issued automatically once verified — this step can't be automated via CLI.
+              </li>
+              <li>
+                Also add <span className="font-mono bg-white px-1.5 py-0.5 rounded border border-slate-200">{customDomain}</span> under
+                Firebase Console &rarr; Authentication &rarr; Settings &rarr; Authorized domains — otherwise Google Sign-In will fail with
+                an "unauthorized domain" error on this domain even after Hosting is connected.
+              </li>
+            </ol>
+          </div>
+        )}
       </div>
 
       {showDeleteModal && (

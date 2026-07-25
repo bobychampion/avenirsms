@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useAuth } from '../components/FirebaseProvider';
+import { useDomainSchool } from '../components/DomainSchoolContext';
 import { db, handleFirestoreError, OperationType } from '../firebase';
 import { collection, addDoc, query, where, onSnapshot, serverTimestamp, getDoc, doc, getDocs } from 'firebase/firestore';
 import { Application, NIGERIAN_REGULATIONS } from '../types';
@@ -15,8 +16,11 @@ const RELATIONSHIPS = ['father', 'mother', 'uncle', 'aunt', 'sibling', 'guardian
 export default function Apply() {
   const { user } = useAuth();
   const navigate = useNavigate();
-  // schoolId comes from URL param when accessed via /s/:schoolId/apply
-  const { schoolId: urlSchoolId } = useParams<{ schoolId?: string }>();
+  // schoolId comes from URL param when accessed via /s/:schoolId/apply, or from the
+  // hostname when this school has its own custom domain.
+  const { schoolId: routeSchoolId } = useParams<{ schoolId?: string }>();
+  const { domainSchoolId } = useDomainSchool();
+  const urlSchoolId = routeSchoolId ?? domainSchoolId ?? undefined;
   const [step, setStep] = useState(1);
   const [loading, setLoading] = useState(false);
   const [submitted, setSubmitted] = useState(false);

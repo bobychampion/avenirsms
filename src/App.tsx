@@ -4,6 +4,7 @@ import { FirebaseProvider, useAuth } from './components/FirebaseProvider';
 import ErrorBoundary from './components/ErrorBoundary';
 import { AppToaster } from './components/Toast';
 import { SchoolProvider, useSchool } from './components/SchoolContext';
+import { DomainSchoolProvider, useDomainSchool } from './components/DomainSchoolContext';
 import { SuperAdminProvider, useSuperAdmin } from './components/SuperAdminContext';
 import { ImpersonationProvider, useImpersonation } from './components/ImpersonationContext';
 import { getPostAuthHomePath } from './utils/postAuthRedirect';
@@ -249,6 +250,12 @@ function SyncDocumentTitle() {
   return null;
 }
 
+function RootRoute() {
+  const { domainSchoolId, domainSchoolLoading } = useDomainSchool();
+  if (domainSchoolLoading) return <PageLoader />;
+  return domainSchoolId ? <SchoolLandingPage /> : <LandingPage />;
+}
+
 function AppContent() {
   return (
     <>
@@ -257,7 +264,8 @@ function AppContent() {
       <Suspense fallback={<PageLoader />}>
         <Routes>
           {/* ── Standalone promotional landing page (no Layout wrapper) ── */}
-          <Route path="/" element={<LandingPage />} />
+          {/* On a school's own custom domain, this resolves to that school's own landing page instead. */}
+          <Route path="/" element={<RootRoute />} />
 
           {/* ── Per-school public pages (no login required) ── */}
           <Route path="/s/:schoolId" element={<SchoolLandingPage />} />
@@ -371,16 +379,18 @@ function AppContent() {
 function AppShell() {
   return (
     <ErrorBoundary>
-      <FirebaseProvider>
-        <SuperAdminProvider>
-          <ImpersonationProvider>
-            <SchoolProvider>
-              <AppToaster />
-              <AppContent />
-            </SchoolProvider>
-          </ImpersonationProvider>
-        </SuperAdminProvider>
-      </FirebaseProvider>
+      <DomainSchoolProvider>
+        <FirebaseProvider>
+          <SuperAdminProvider>
+            <ImpersonationProvider>
+              <SchoolProvider>
+                <AppToaster />
+                <AppContent />
+              </SchoolProvider>
+            </ImpersonationProvider>
+          </SuperAdminProvider>
+        </FirebaseProvider>
+      </DomainSchoolProvider>
     </ErrorBoundary>
   );
 }

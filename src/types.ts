@@ -114,6 +114,8 @@ export interface School {
   timezone: string;
   notes?: string;
   urlSlug?: string;
+  /** School's own domain/subdomain, e.g. "portal.someschool.com". Mirrored into school_domains/{customDomain}. */
+  customDomain?: string;
 }
 
 export interface SchoolClass {

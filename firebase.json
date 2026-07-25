@@ -14,15 +14,6 @@
     ],
     "headers": [
       {
-        "source": "**/*.@(js|css)",
-        "headers": [
-          {
-            "key": "Cache-Control",
-            "value": "max-age=31536000"
-          }
-        ]
-      },
-      {
         "source": "**",
         "headers": [
           {
@@ -32,12 +23,7 @@
           {
             "key": "X-Content-Type-Options",
             "value": "nosniff"
-          }
-        ]
-      },
-      {
-        "source": "/index.html",
-        "headers": [
+          },
           {
             "key": "Cache-Control",
             "value": "no-cache"
@@ -45,38 +31,11 @@
         ]
       },
       {
-        "source": "/sw.js",
+        "source": "/assets/**",
         "headers": [
           {
             "key": "Cache-Control",
-            "value": "no-cache"
-          }
-        ]
-      },
-      {
-        "source": "/registerSW.js",
-        "headers": [
-          {
-            "key": "Cache-Control",
-            "value": "no-cache"
-          }
-        ]
-      },
-      {
-        "source": "/workbox-*.js",
-        "headers": [
-          {
-            "key": "Cache-Control",
-            "value": "no-cache"
-          }
-        ]
-      },
-      {
-        "source": "/manifest.webmanifest",
-        "headers": [
-          {
-            "key": "Cache-Control",
-            "value": "no-cache"
+            "value": "max-age=31536000, immutable"
           }
         ]
       }

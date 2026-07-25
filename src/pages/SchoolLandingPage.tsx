@@ -106,7 +106,7 @@ export default function SchoolLandingPage() {
             : `linear-gradient(135deg, ${primary} 0%, ${primary}cc 100%)`,
         }}
       >
-        <div className="max-w-4xl mx-auto px-6 py-20 text-center text-white">
+        <div className="max-w-4xl mx-auto px-6 pt-20 pb-28 text-center text-white">
           {school.logoUrl ? (
             <img src={school.logoUrl} alt={school.schoolName} className="w-24 h-24 rounded-full mx-auto mb-6 object-cover border-4 border-white/30 shadow-lg" />
           ) : (

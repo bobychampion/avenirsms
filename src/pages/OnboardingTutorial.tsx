@@ -129,9 +129,9 @@ const ADMIN_SECTIONS: Section[] = [
         tip: 'Name classes clearly — include both level and section (e.g., "SSS 3A"). You can\'t rename a class later without updating all linked records.',
         warning: 'You MUST create classes before admitting students. Students cannot be enrolled without a class assignment.',
         substeps: [
-          'After creating a class, click on it to open the class detail view.',
-          'Use the "Add Subject" panel to assign subjects to the class (e.g., Mathematics, English, Biology).',
-          'Link each subject to the teacher who will teach it — this gives that teacher access to record grades for the class.',
+          'After creating a class, click on it to open "Subject Distribution".',
+          'Pick one or more subjects (the subject list is multi-select) and one teacher, then save — a teacher covering several subjects in the same class doesn\'t need a separate trip through the form for each one.',
+          'Each subject you assign gives that teacher access to record grades and attendance for it in that class.',
         ],
       },
     ],
@@ -220,7 +220,7 @@ const ADMIN_SECTIONS: Section[] = [
         details: [
           'Go to Admin → Bulk Import.',
           'Download the CSV template provided on the page.',
-          'Fill in the template with student data — one student per row. Required fields: studentName, dob, gender, currentClass.',
+          'Fill in the template with student data — one student per row. Required fields: studentName, dob, gender, currentClass. The studentId column is optional: leave a row blank to auto-generate an ID, or fill it in to keep an ID the student already has.',
           'Upload the completed CSV file using the file picker.',
           'The system will preview the data and highlight any rows with errors (missing required fields, invalid class names, etc.).',
           'Fix highlighted errors in the CSV and re-upload, or use the inline editor if available.',
@@ -266,7 +266,7 @@ const ADMIN_SECTIONS: Section[] = [
         pathLabel: 'Admin → Admissions → "Admit Student" button',
         details: [
           'Go to Admin → Admissions and click the "Admit Student" button (top right).',
-          'Step 1 — Student Information: Enter name, date of birth, gender, NIN (optional), nationality, blood group, medical conditions, and home address.',
+          'Step 1 — Student Information: choose Auto-generate or Enter manually for the Student ID (useful for keeping an existing ID, like a paper admission number), then enter name, date of birth, gender, NIN (optional), nationality, blood group, medical conditions, and home address.',
           'Step 2 — Guardian / Parent: Enter the primary guardian\'s name, phone, email, and relationship. Optionally add a second guardian. Check "Link to existing parent portal account" if the parent is already registered.',
           'Step 3 — Siblings & Class: Search for any existing siblings in the school and link them. Select the class the student will be assigned to.',
           'Step 4 — Review & Submit: Verify all details are correct and click "Submit Admission".',

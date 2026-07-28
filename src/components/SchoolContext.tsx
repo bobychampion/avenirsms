@@ -12,7 +12,7 @@
  * Usage:
  *   const { classes, subjects, schoolLevels, periodTimes, currentSession, currentTerm } = useSchool();
  */
-import React, { createContext, useContext, useEffect, useState } from 'react';
+import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { db } from '../firebase';
 import { collection, onSnapshot, orderBy, query, doc, where } from 'firebase/firestore';
 import { SchoolClass, SCHOOL_CLASSES, SUBJECTS, CURRENT_SESSION, TERMS, GradingSystem, CustomGradeScale, LevelGradingOverride, resolveGradingForLevel, SubjectDefinition, TimetablePeriodSlot, DAYS_OF_WEEK, WeekendDay } from '../types';
@@ -156,8 +156,7 @@ export function SchoolProvider({ children }: { children: React.ReactNode }) {
   // signed-in profile's own schoolId.
   const schoolId = impersonatedProfile?.schoolId ?? activeSchoolId ?? profileSchoolId;
 
-  const [classes, setClasses] = useState<SchoolClass[]>([]);
-  const [classNames, setClassNames] = useState<string[]>(SCHOOL_CLASSES);
+  const [rawClasses, setRawClasses] = useState<SchoolClass[]>([]);
   const [currentTerm, setCurrentTerm] = useState<string>('1st Term');
   const [loading, setLoading] = useState(true);
   const [tick, setTick] = useState(0);
@@ -285,8 +284,7 @@ export function SchoolProvider({ children }: { children: React.ReactNode }) {
       setFontFamily('Inter');
       setUrlSlug('');
       setSubjectDefinitions([]);
-      setClasses([]);
-      setClassNames(SCHOOL_CLASSES);
+      setRawClasses([]);
     }
     // When schoolId is set we intentionally let the onSnapshot subscriptions
     // below overwrite the state — no reset needed (new school's data arrives fast).
@@ -351,11 +349,11 @@ export function SchoolProvider({ children }: { children: React.ReactNode }) {
     return () => unsub();
   }, [schoolId]);
 
-  // Subscribe to /classes collection filtered by schoolId
+  // Subscribe to /classes collection filtered by schoolId. Left unsorted here —
+  // final ordering is derived below, against schoolLevels, in the classes/classNames memo.
   useEffect(() => {
     if (!schoolId) {
-      setClasses([]);
-      setClassNames(SCHOOL_CLASSES);
+      setRawClasses([]);
       setLoading(false);
       return;
     }
@@ -363,31 +361,37 @@ export function SchoolProvider({ children }: { children: React.ReactNode }) {
     const unsub = onSnapshot(
       query(collection(db, 'classes'), where('schoolId', '==', schoolId)),
       snap => {
-        if (snap.empty) {
-          setClasses([]);
-          setClassNames(SCHOOL_CLASSES);
-        } else {
-          const list = snap.docs
-            .map(d => ({ id: d.id, ...d.data() } as SchoolClass))
-            // numeric: true so "Year 2" sorts before "Year 10" instead of after —
-            // plain localeCompare treats class names as plain strings ("Year 1" < "Year 10" < "Year 2"),
-            // which made promotion pick the wrong destination class.
-            .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
-          setClasses(list);
-          // Deduplicate: two Firestore docs with the same name would produce
-          // duplicate option keys (React warning) in every class <select>.
-          setClassNames([...new Set(list.map(c => c.name))]);
-        }
+        setRawClasses(snap.docs.map(d => ({ id: d.id, ...d.data() } as SchoolClass)));
         setLoading(false);
       },
       () => {
-        setClasses([]);
-        setClassNames(SCHOOL_CLASSES);
+        setRawClasses([]);
         setLoading(false);
       }
     );
     return () => unsub();
   }, [schoolId, tick]);
+
+  // Final class ordering: prefer the school's configured schoolLevels order (its
+  // index IS the promotion sequence — see the "Grade / Year Levels" editor in
+  // SchoolSettings), falling back to a numeric-aware name sort for any class name
+  // schoolLevels doesn't know about. Without this, schools using spelled-out level
+  // names (e.g. "Basic Two", "Reception Three" — no digits at all) would sort
+  // alphabetically ("Basic Five" before "Basic Four"), breaking promotion order.
+  const { classes, classNames } = useMemo(() => {
+    if (rawClasses.length === 0) {
+      return { classes: [] as SchoolClass[], classNames: SCHOOL_CLASSES };
+    }
+    const sorted = [...rawClasses].sort((a, b) => {
+      const ia = schoolLevels.indexOf(a.name);
+      const ib = schoolLevels.indexOf(b.name);
+      if (ia !== -1 && ib !== -1) return ia - ib;
+      return a.name.localeCompare(b.name, undefined, { numeric: true });
+    });
+    // Deduplicate: two Firestore docs with the same name would produce
+    // duplicate option keys (React warning) in every class <select>.
+    return { classes: sorted, classNames: [...new Set(sorted.map(c => c.name))] };
+  }, [rawClasses, schoolLevels]);
 
   // Subscribe to /subjects collection filtered by schoolId
   useEffect(() => {

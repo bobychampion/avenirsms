@@ -204,6 +204,11 @@ service cloud.firestore {
       allow read, write: if isSuperAdmin();
     }
 
+    // Platform bank account details shown on invoices (Nigeria vs international) — super_admin only.
+    match /platform_settings/{docId} {
+      allow read, write: if isSuperAdmin();
+    }
+
     // ─── Geofences (keyed by schoolId) ────────────────────────────────────────
 
     match /geofences/{schoolId} {

@@ -14,7 +14,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  collection, getDocs, addDoc, updateDoc, doc,
+  collection, getDocs, getDoc, addDoc, updateDoc, setDoc, doc,
   serverTimestamp, query, orderBy, writeBatch,
 } from 'firebase/firestore';
 import { db } from '../../firebase';
@@ -50,6 +50,54 @@ interface LineItem {
   unitPrice: number;
 }
 
+// ─── Payment accounts (bank details shown on invoices) ────────────────────────
+// Nigeria vs everywhere else — picked automatically from the billed school's country,
+// snapshotted onto each invoice at creation time so old invoices keep showing the
+// account that was correct when they were issued, even if details change later.
+
+interface BankAccount {
+  accountHolder: string;
+  accountNumber: string;
+  bankName: string;
+  sortCode?: string;
+  swiftCode?: string;
+  iban?: string;
+  address?: string;
+}
+
+interface PaymentAccounts {
+  nigeria: BankAccount;
+  international: BankAccount;
+}
+
+const EMPTY_BANK_ACCOUNT: BankAccount = {
+  accountHolder: '', accountNumber: '', bankName: '', sortCode: '', swiftCode: '', iban: '', address: '',
+};
+
+const DEFAULT_PAYMENT_ACCOUNTS: PaymentAccounts = {
+  nigeria: EMPTY_BANK_ACCOUNT,
+  international: {
+    accountHolder: 'Aghogho Champion Kpateghe Kpateghe',
+    accountNumber: '43218626',
+    bankName: 'Clear Junction Limited',
+    swiftCode: 'CLJUGB21XXX',
+    iban: 'GB98CLJU04130743218626',
+    address: '4th Floor Imperial House, 15 Kingsway, London, United Kingdom, WC2B 6UN',
+  },
+};
+
+function isNigeria(country: string): boolean {
+  return country.trim().toLowerCase() === 'nigeria';
+}
+
+function pickBankAccount(country: string, accounts: PaymentAccounts): BankAccount {
+  return isNigeria(country) ? accounts.nigeria : accounts.international;
+}
+
+function hasBankDetails(acc: BankAccount): boolean {
+  return !!(acc.accountNumber || acc.iban);
+}
+
 interface PlatformInvoice {
   id?: string;
   invoiceNumber: string;
@@ -74,6 +122,8 @@ interface PlatformInvoice {
   template: TemplateStyle;
   createdAt: any;
   paidAt?: any;
+  /** Snapshot of whichever bank account applied to this school's country at creation time. */
+  paymentAccount?: BankAccount;
 }
 
 // ─── Constants ───────────────────────────────────────────────────────────────
@@ -276,6 +326,30 @@ function InvoicePrintView({ inv, template }: { inv: PlatformInvoice; template: T
           </div>
         </div>
 
+        {/* Payment Details */}
+        {inv.paymentAccount && hasBankDetails(inv.paymentAccount) && (
+          <div className="border border-slate-200 rounded-xl p-4 mb-6 text-sm">
+            <p className="font-semibold text-slate-700 mb-2 text-xs uppercase tracking-wide">Payment Details</p>
+            <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-slate-600">
+              <p><span className="text-slate-400">Account Holder:</span> {inv.paymentAccount.accountHolder}</p>
+              <p><span className="text-slate-400">Bank Name:</span> {inv.paymentAccount.bankName}</p>
+              <p><span className="text-slate-400">Account Number:</span> {inv.paymentAccount.accountNumber}</p>
+              {inv.paymentAccount.sortCode && (
+                <p><span className="text-slate-400">Sort Code:</span> {inv.paymentAccount.sortCode}</p>
+              )}
+              {inv.paymentAccount.swiftCode && (
+                <p><span className="text-slate-400">Swift Code:</span> {inv.paymentAccount.swiftCode}</p>
+              )}
+              {inv.paymentAccount.iban && (
+                <p><span className="text-slate-400">IBAN:</span> {inv.paymentAccount.iban}</p>
+              )}
+              {inv.paymentAccount.address && (
+                <p className="col-span-2"><span className="text-slate-400">Address:</span> {inv.paymentAccount.address}</p>
+              )}
+            </div>
+          </div>
+        )}
+
         {/* Notes */}
         {inv.notes && (
           <div className="border border-slate-200 rounded-xl p-4 mb-6 text-sm text-slate-600 bg-slate-50">
@@ -301,11 +375,12 @@ function InvoicePrintView({ inv, template }: { inv: PlatformInvoice; template: T
 
 interface CreateModalProps {
   schools: School[];
+  paymentAccounts: PaymentAccounts;
   onClose: () => void;
   onCreated: (inv: PlatformInvoice) => void;
 }
 
-function CreateInvoiceModal({ schools, onClose, onCreated }: CreateModalProps) {
+function CreateInvoiceModal({ schools, paymentAccounts, onClose, onCreated }: CreateModalProps) {
   const [selectedSchoolId, setSelectedSchoolId] = useState('');
   const [billingCycle, setBillingCycle] = useState<BillingCycle>('termly');
   const [template, setTemplate] = useState<TemplateStyle>('standard');
@@ -367,6 +442,7 @@ function CreateInvoiceModal({ schools, onClose, onCreated }: CreateModalProps) {
         notes,
         template,
         createdAt:        serverTimestamp(),
+        paymentAccount:   pickBankAccount(selectedSchool.country || 'Nigeria', paymentAccounts),
       };
       const ref = await addDoc(collection(db, 'platform_invoices'), inv);
       toast.success('Invoice created');
@@ -571,11 +647,12 @@ function CreateInvoiceModal({ schools, onClose, onCreated }: CreateModalProps) {
 
 interface BulkModalProps {
   schools: School[];
+  paymentAccounts: PaymentAccounts;
   onClose: () => void;
   onDone: (created: PlatformInvoice[]) => void;
 }
 
-function BulkGenerateModal({ schools, onClose, onDone }: BulkModalProps) {
+function BulkGenerateModal({ schools, paymentAccounts, onClose, onDone }: BulkModalProps) {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [billingCycle, setBillingCycle] = useState<BillingCycle>('termly');
   const [template, setTemplate] = useState<TemplateStyle>('standard');
@@ -630,6 +707,7 @@ function BulkGenerateModal({ schools, onClose, onDone }: BulkModalProps) {
         notes:            'Thank you for choosing Avenir SIS. Please make payment within 7 days.',
         template,
         createdAt:        serverTimestamp(),
+        paymentAccount:   pickBankAccount(school.country || 'Nigeria', paymentAccounts),
       };
       batch.set(invRef, inv);
       created.push({ ...inv, id: invRef.id });
@@ -773,6 +851,123 @@ function BulkGenerateModal({ schools, onClose, onDone }: BulkModalProps) {
   );
 }
 
+// ─── Payment Accounts Modal ───────────────────────────────────────────────────
+// The bank account that gets shown on an invoice, picked automatically from the
+// billed school's country: Nigeria uses the Nigeria account below, everywhere
+// else uses the international one.
+
+function BankAccountFields({ label, value, onChange, showInternationalFields }: {
+  label: string; value: BankAccount; onChange: (next: BankAccount) => void; showInternationalFields: boolean;
+}) {
+  const field = (key: keyof BankAccount, v: string) => onChange({ ...value, [key]: v });
+  const inputCls = "w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 outline-none";
+  const labelCls = "block text-xs font-semibold text-slate-500 mb-1";
+  return (
+    <div className="space-y-3">
+      <h3 className="font-bold text-slate-800 text-sm">{label}</h3>
+      <div>
+        <label className={labelCls}>Account Holder</label>
+        <input className={inputCls} value={value.accountHolder} onChange={e => field('accountHolder', e.target.value)} />
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <label className={labelCls}>Bank Name</label>
+          <input className={inputCls} value={value.bankName} onChange={e => field('bankName', e.target.value)} />
+        </div>
+        <div>
+          <label className={labelCls}>Account Number</label>
+          <input className={inputCls} value={value.accountNumber} onChange={e => field('accountNumber', e.target.value)} />
+        </div>
+      </div>
+      {!showInternationalFields && (
+        <div>
+          <label className={labelCls}>Sort Code</label>
+          <input className={inputCls} value={value.sortCode ?? ''} onChange={e => field('sortCode', e.target.value)} placeholder="Optional" />
+        </div>
+      )}
+      {showInternationalFields && (
+        <>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className={labelCls}>Swift Code</label>
+              <input className={inputCls} value={value.swiftCode ?? ''} onChange={e => field('swiftCode', e.target.value)} />
+            </div>
+            <div>
+              <label className={labelCls}>IBAN</label>
+              <input className={inputCls} value={value.iban ?? ''} onChange={e => field('iban', e.target.value)} />
+            </div>
+          </div>
+          <div>
+            <label className={labelCls}>Bank Address</label>
+            <input className={inputCls} value={value.address ?? ''} onChange={e => field('address', e.target.value)} />
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function PaymentAccountsModal({ accounts, onClose, onSaved }: {
+  accounts: PaymentAccounts; onClose: () => void; onSaved: (accounts: PaymentAccounts) => void;
+}) {
+  const [nigeria, setNigeria] = useState<BankAccount>(accounts.nigeria);
+  const [international, setInternational] = useState<BankAccount>(accounts.international);
+  const [saving, setSaving] = useState(false);
+
+  const handleSave = async () => {
+    setSaving(true);
+    const next: PaymentAccounts = { nigeria, international };
+    try {
+      await setDoc(doc(db, 'platform_settings', 'payment_accounts'), next);
+      onSaved(next);
+      toast.success('Payment accounts saved');
+      onClose();
+    } catch {
+      toast.error('Failed to save payment accounts');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+        <div className="flex items-center justify-between p-5 border-b border-slate-100">
+          <h2 className="text-lg font-bold text-slate-900 flex items-center gap-2">
+            <CreditCard className="w-5 h-5 text-indigo-600" /> Payment Accounts
+          </h2>
+          <button onClick={onClose} className="p-1.5 hover:bg-slate-100 rounded-lg">
+            <X className="w-4 h-4 text-slate-400" />
+          </button>
+        </div>
+        <div className="p-5 space-y-6">
+          <p className="text-sm text-slate-500">
+            New invoices automatically show the account matching the school's country — Nigeria uses the
+            Nigeria account, every other country uses the international account.
+          </p>
+          <BankAccountFields label="Nigeria Account (NGN)" value={nigeria} onChange={setNigeria} showInternationalFields={false} />
+          <div className="border-t border-slate-100 pt-5">
+            <BankAccountFields label="International Account" value={international} onChange={setInternational} showInternationalFields={true} />
+          </div>
+        </div>
+        <div className="flex gap-3 p-5 border-t border-slate-100">
+          <button onClick={onClose} className="flex-1 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-sm font-bold transition-colors">
+            Cancel
+          </button>
+          <button
+            onClick={handleSave}
+            disabled={saving}
+            className="flex-1 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white text-sm font-bold flex items-center justify-center gap-2 transition-colors"
+          >
+            {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <CreditCard className="w-4 h-4" />}
+            {saving ? 'Saving…' : 'Save Payment Accounts'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Preview Modal ────────────────────────────────────────────────────────────
 
 function PreviewModal({ inv, onClose, onStatusChange }: {
@@ -907,16 +1102,26 @@ export default function InvoiceGenerator() {
 
   const [showCreate, setShowCreate] = useState(false);
   const [showBulk, setShowBulk] = useState(false);
+  const [showPaymentSettings, setShowPaymentSettings] = useState(false);
   const [previewInv, setPreviewInv] = useState<PlatformInvoice | null>(null);
+  const [paymentAccounts, setPaymentAccounts] = useState<PaymentAccounts>(DEFAULT_PAYMENT_ACCOUNTS);
 
   // Load data in parallel
   useEffect(() => {
     Promise.all([
       getDocs(query(collection(db, 'platform_invoices'), orderBy('createdAt', 'desc'))),
       getDocs(collection(db, 'schools')),
-    ]).then(([invSnap, schoolSnap]) => {
+      getDoc(doc(db, 'platform_settings', 'payment_accounts')),
+    ]).then(([invSnap, schoolSnap, paymentSnap]) => {
       setInvoices(invSnap.docs.map(d => ({ id: d.id, ...d.data() } as PlatformInvoice)));
       setSchools(schoolSnap.docs.map(d => ({ id: d.id, ...d.data() } as School)));
+      if (paymentSnap.exists()) {
+        const data = paymentSnap.data() as PaymentAccounts;
+        setPaymentAccounts({
+          nigeria: { ...EMPTY_BANK_ACCOUNT, ...data.nigeria },
+          international: { ...DEFAULT_PAYMENT_ACCOUNTS.international, ...data.international },
+        });
+      }
     }).catch((err) => {
       console.error('InvoiceGenerator load error:', err);
       toast.error('Failed to load data');
@@ -969,6 +1174,12 @@ export default function InvoiceGenerator() {
           </div>
         </div>
         <div className="flex gap-2">
+          <button
+            onClick={() => setShowPaymentSettings(true)}
+            className="flex items-center gap-2 bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 font-bold px-4 py-2.5 rounded-xl text-sm transition-colors"
+          >
+            <CreditCard className="w-4 h-4" /> Payment Accounts
+          </button>
           <button
             onClick={() => setShowBulk(true)}
             className="flex items-center gap-2 bg-amber-500 hover:bg-amber-600 text-white font-bold px-4 py-2.5 rounded-xl text-sm transition-colors shadow-lg shadow-amber-200"
@@ -1136,6 +1347,7 @@ export default function InvoiceGenerator() {
       {showCreate && (
         <CreateInvoiceModal
           schools={schools}
+          paymentAccounts={paymentAccounts}
           onClose={() => setShowCreate(false)}
           onCreated={handleCreated}
         />
@@ -1143,8 +1355,16 @@ export default function InvoiceGenerator() {
       {showBulk && (
         <BulkGenerateModal
           schools={schools}
+          paymentAccounts={paymentAccounts}
           onClose={() => setShowBulk(false)}
           onDone={handleBulkDone}
+        />
+      )}
+      {showPaymentSettings && (
+        <PaymentAccountsModal
+          accounts={paymentAccounts}
+          onClose={() => setShowPaymentSettings(false)}
+          onSaved={setPaymentAccounts}
         />
       )}
       {previewInv && (

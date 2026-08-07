@@ -13,8 +13,9 @@ import toast from 'react-hot-toast';
 import {
   Building2, Users, CheckCircle2, CreditCard, Plus, ArrowRight,
   TrendingUp, AlertCircle, Clock, FileText, Zap, Bell, Mail,
-  Phone, BookOpen, ChevronDown, CheckCheck, X, Inbox, Eye, EyeOff, Copy, KeyRound,
+  Phone, BookOpen, ChevronDown, CheckCheck, X, Inbox, Eye, EyeOff, Copy, KeyRound, Send, Loader2,
 } from 'lucide-react';
+import { sendDemoProvisioned, sendPlatformBroadcast } from '../../services/emailService';
 
 interface DemoRequest {
   id: string;
@@ -72,6 +73,11 @@ export default function SuperAdminDashboard() {
   const [demoFilter, setDemoFilter] = useState<DemoRequest['status'] | 'all'>('all');
   const [updatingId, setUpdatingId] = useState<string | null>(null);
   const [revealedPasswords, setRevealedPasswords] = useState<Set<string>>(new Set());
+  const [sendingCredentials, setSendingCredentials] = useState<string | null>(null);
+  const [broadcastSubject, setBroadcastSubject] = useState('');
+  const [broadcastMessage, setBroadcastMessage] = useState('');
+  const [broadcastFilter, setBroadcastFilter] = useState<'all' | 'active' | 'trial' | 'demo'>('all');
+  const [broadcasting, setBroadcasting] = useState(false);
 
   const togglePasswordReveal = (id: string) => {
     setRevealedPasswords(prev => {
@@ -150,6 +156,60 @@ export default function SuperAdminDashboard() {
       setDemoRequests(prev => prev.map(r => r.id === req.id ? { ...r, status: 'converted' } : r));
     } finally {
       setUpdatingId(null);
+    }
+  };
+
+  const sendDemoCredentials = async (req: DemoRequest) => {
+    const email = req.adminEmail || req.email;
+    if (!email || !req.tempPassword) return;
+    setSendingCredentials(req.id);
+    try {
+      await sendDemoProvisioned({
+        to: email,
+        branding: { schoolName: req.schoolName },
+        adminName: req.adminName || req.contactName || 'Administrator',
+        loginEmail: email,
+        temporaryPassword: req.tempPassword,
+        expiresInDays: 7,
+      });
+      toast.success('Demo credentials sent to ' + email);
+    } catch {
+      toast.error('Failed to send credentials email');
+    } finally {
+      setSendingCredentials(null);
+    }
+  };
+
+  const sendBroadcast = async () => {
+    if (!broadcastSubject.trim() || !broadcastMessage.trim()) {
+      toast.error('Subject and message are required');
+      return;
+    }
+    const recipients = schools
+      .filter(s => broadcastFilter === 'all' || s.status === broadcastFilter)
+      .map(s => s.adminEmail)
+      .filter((e): e is string => !!e && e.trim() !== '');
+    if (recipients.length === 0) {
+      toast.error('No schools with email addresses match the selected filter');
+      return;
+    }
+    setBroadcasting(true);
+    try {
+      const BATCH = 50;
+      for (let i = 0; i < recipients.length; i += BATCH) {
+        await sendPlatformBroadcast({
+          to: recipients.slice(i, i + BATCH),
+          subject: broadcastSubject,
+          message: broadcastMessage,
+        });
+      }
+      toast.success(`Announcement sent to ${recipients.length} school${recipients.length !== 1 ? 's' : ''}`);
+      setBroadcastSubject('');
+      setBroadcastMessage('');
+    } catch {
+      toast.error('Failed to send broadcast email');
+    } finally {
+      setBroadcasting(false);
     }
   };
 
@@ -341,6 +401,19 @@ export default function SuperAdminDashboard() {
                         Mark Contacted
                       </button>
                     )}
+                    {req.tempPassword && (req.status === 'provisioned' || req.status === 'contacted') && (
+                      <button
+                        onClick={() => sendDemoCredentials(req)}
+                        disabled={sendingCredentials === req.id}
+                        title="Email login credentials to school admin"
+                        className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-violet-600 hover:bg-violet-700 text-white text-xs font-bold transition-colors disabled:opacity-50"
+                      >
+                        {sendingCredentials === req.id
+                          ? <Loader2 className="w-3 h-3 animate-spin" />
+                          : <Mail className="w-3 h-3" />}
+                        Send Credentials
+                      </button>
+                    )}
                     {(req.status === 'conversion_requested' || req.status === 'provisioned') && req.schoolId && (
                       <button onClick={() => activateDemoSchool(req)} disabled={updatingId === req.id}
                         className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition-colors disabled:opacity-50">
@@ -366,6 +439,53 @@ export default function SuperAdminDashboard() {
             ))}
           </div>
         )}
+      </div>
+
+      {/* ── Platform Broadcast Email ──────────────────────────────────────────── */}
+      <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-sm">
+        <div className="px-5 py-4 border-b border-slate-100 flex items-center gap-2">
+          <Send className="w-4 h-4 text-indigo-600" />
+          <h2 className="font-semibold text-slate-800">Send Announcement to Schools</h2>
+        </div>
+        <div className="p-5 space-y-4">
+          <div className="flex flex-wrap gap-2">
+            {(['all', 'active', 'trial', 'demo'] as const).map(f => (
+              <button key={f} onClick={() => setBroadcastFilter(f)}
+                className={`px-3 py-1 rounded-lg text-xs font-semibold capitalize transition-colors ${
+                  broadcastFilter === f ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                }`}
+              >
+                {f === 'all' ? `All schools (${schools.filter(s => s.adminEmail).length})` : `${f} (${schools.filter(s => s.status === f && s.adminEmail).length})`}
+              </button>
+            ))}
+          </div>
+          <div>
+            <label className="block text-sm font-semibold text-slate-700 mb-1.5">Subject</label>
+            <input
+              className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
+              placeholder="e.g. Important Platform Update — Action Required"
+              value={broadcastSubject}
+              onChange={e => setBroadcastSubject(e.target.value)}
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-semibold text-slate-700 mb-1.5">Message</label>
+            <textarea
+              className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-500 outline-none h-28 resize-none"
+              placeholder="Write your announcement message here…"
+              value={broadcastMessage}
+              onChange={e => setBroadcastMessage(e.target.value)}
+            />
+          </div>
+          <button
+            onClick={sendBroadcast}
+            disabled={broadcasting || !broadcastSubject.trim() || !broadcastMessage.trim()}
+            className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold px-5 py-2.5 rounded-xl transition-colors text-sm"
+          >
+            {broadcasting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+            {broadcasting ? 'Sending…' : 'Send Announcement'}
+          </button>
+        </div>
       </div>
 
       {/* Recent schools table */}

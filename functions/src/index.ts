@@ -20,6 +20,8 @@ import { initializeApp } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 import { getFirestore, Timestamp } from 'firebase-admin/firestore';
 import { getMessaging } from 'firebase-admin/messaging';
+import { sendEmail, resendApiKey } from './email/resendService';
+import * as templates from './email/emailTemplates';
 import {
   ConnectGoogleWorkspaceRequest,
   ConnectGoogleWorkspaceResponse,
@@ -1475,5 +1477,131 @@ export const deleteSchool = onCall<DeleteSchoolPayload>(
       errors: collectionErrors,
       auditLogId: auditLogRef.id,
     };
+  }
+);
+
+// ─── Resend Email ─────────────────────────────────────────────────────────────
+
+export type EmailTemplateType =
+  | 'admissionApproved'
+  | 'admissionRejected'
+  | 'feeReminder'
+  | 'staffWelcome'
+  | 'parentNotification'
+  | 'attendanceAlert'
+  | 'reportCardReady'
+  | 'schoolSuspended'
+  | 'demoProvisioned'
+  | 'platformInvoice';
+
+interface SendEmailRequest {
+  /** Which template to render, or 'raw' for a direct html/subject payload. */
+  template: EmailTemplateType | 'raw';
+  /** Template-specific data (matches the opts type of the chosen template). */
+  data: Record<string, any>;
+  /** Override recipient(s) — if omitted, template must resolve the address. */
+  to: string | string[];
+}
+
+interface SendEmailResponse {
+  id: string;
+}
+
+/**
+ * sendTransactionalEmail — render a template and send it via Resend.
+ *
+ * Caller must be authenticated and belong to the same school as the
+ * action being triggered (admin/School_admin/teacher for most templates;
+ * accountant for fee reminders). Super admin may send to any school.
+ *
+ * API key: stored as Firebase secret RESEND_API_KEY.
+ * Set it once with: firebase functions:secrets:set RESEND_API_KEY
+ */
+export const sendTransactionalEmail = onCall<SendEmailRequest, Promise<SendEmailResponse>>(
+  { secrets: [resendApiKey] },
+  async (request): Promise<SendEmailResponse> => {
+    const { auth, data } = request;
+    if (!auth) throw new HttpsError('unauthenticated', 'Sign-in required.');
+
+    const { template, data: templateData, to } = data ?? ({} as SendEmailRequest);
+    if (!template || !to) {
+      throw new HttpsError('invalid-argument', 'template and to are required.');
+    }
+
+    // Load actor profile for auth check
+    const db = getFirestore();
+    const actorSnap = await db.doc(`users/${auth.uid}`).get();
+    const actor = actorSnap.data();
+    if (!actor) throw new HttpsError('not-found', 'Caller profile not found.');
+
+    // Only staff roles (admin, teacher, hr, accountant, super_admin) may send email
+    const ALLOWED_ROLES = ['super_admin', 'admin', 'School_admin', 'teacher', 'accountant', 'hr'];
+    if (!ALLOWED_ROLES.includes(actor.role)) {
+      throw new HttpsError('permission-denied', 'Insufficient role to send email.');
+    }
+
+    // Render template
+    let subject: string;
+    let html: string;
+
+    if (template === 'raw') {
+      subject = templateData.subject as string;
+      html = templateData.html as string;
+      if (!subject || !html) {
+        throw new HttpsError('invalid-argument', 'Raw email requires subject and html.');
+      }
+    } else {
+      const branding: templates.SchoolBranding = {
+        schoolName: templateData.schoolName ?? 'Avenir SIS',
+        primaryColor: templateData.primaryColor,
+        appUrl: templateData.appUrl,
+      };
+      const d = { ...templateData, branding };
+
+      switch (template) {
+        case 'admissionApproved':
+          ({ subject, html } = templates.admissionApproved(d as any)); break;
+        case 'admissionRejected':
+          ({ subject, html } = templates.admissionRejected(d as any)); break;
+        case 'feeReminder':
+          ({ subject, html } = templates.feeReminder(d as any)); break;
+        case 'staffWelcome':
+          ({ subject, html } = templates.staffWelcome(d as any)); break;
+        case 'parentNotification':
+          ({ subject, html } = templates.parentNotification(d as any)); break;
+        case 'attendanceAlert':
+          ({ subject, html } = templates.attendanceAlert(d as any)); break;
+        case 'reportCardReady':
+          ({ subject, html } = templates.reportCardReady(d as any)); break;
+        case 'schoolSuspended':
+          ({ subject, html } = templates.schoolSuspended(d as any)); break;
+        case 'demoProvisioned':
+          ({ subject, html } = templates.demoProvisioned(d as any)); break;
+        case 'platformInvoice':
+          ({ subject, html } = templates.platformInvoice(d as any)); break;
+        default:
+          throw new HttpsError('invalid-argument', `Unknown template: ${template}`);
+      }
+    }
+
+    try {
+      const result = await sendEmail({ to, subject, html, tags: [{ name: 'template', value: template }] });
+
+      // Audit log
+      await db.collection('audit_log').add({
+        schoolId: actor.schoolId ?? null,
+        actorId: auth.uid,
+        actorEmail: actor.email ?? null,
+        actorRole: actor.role ?? null,
+        action: 'email.sent',
+        details: { template, to, subject, resendId: result.id },
+        createdAt: Timestamp.now(),
+      });
+
+      return { id: result.id };
+    } catch (error) {
+      console.error('[sendTransactionalEmail]', error);
+      throw new HttpsError('internal', `Email send failed: ${error instanceof Error ? error.message : 'unknown'}`);
+    }
   }
 );

@@ -24,8 +24,9 @@ import {
   FileText, Plus, Printer, CheckCircle2, Clock, XCircle,
   Download, Layers, Building2, Search, ChevronDown, X,
   ArrowLeft, Loader2, Zap, Eye, CreditCard, AlertCircle,
-  Calendar, RefreshCw, Filter,
+  Calendar, RefreshCw, Filter, Mail,
 } from 'lucide-react';
+import { sendPlatformInvoice } from '../../services/emailService';
 import toast from 'react-hot-toast';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -392,6 +393,7 @@ function CreateInvoiceModal({ schools, paymentAccounts, onClose, onCreated }: Cr
   const [currency, setCurrency] = useState<InvoiceCurrency>('NGN');
   const [useCustomAmount, setUseCustomAmount] = useState(false);
   const [customAmount, setCustomAmount] = useState<number>(0);
+  const [emailInvoice, setEmailInvoice] = useState(true);
 
   const selectedSchool = schools.find(s => s.id === selectedSchoolId) ?? null;
 
@@ -446,6 +448,25 @@ function CreateInvoiceModal({ schools, paymentAccounts, onClose, onCreated }: Cr
       };
       const ref = await addDoc(collection(db, 'platform_invoices'), inv);
       toast.success('Invoice created');
+      if (emailInvoice && selectedSchool.adminEmail) {
+        sendPlatformInvoice({
+          to: selectedSchool.adminEmail,
+          branding: { schoolName: selectedSchool.name },
+          adminName: 'Administrator',
+          invoiceNumber: inv.invoiceNumber,
+          issueDate: inv.issueDate,
+          dueDate: inv.dueDate,
+          lineItems: inv.lineItems,
+          subtotal: inv.subtotal,
+          discount: inv.discount,
+          tax: inv.tax,
+          total: inv.total,
+          currency: inv.currency,
+          currencySymbol: CURRENCY_SYMBOLS[inv.currency] ?? inv.currency,
+          notes: inv.notes,
+        }).then(() => toast.success('Invoice emailed to school admin'))
+          .catch(() => toast.error('Invoice created but email failed'));
+      }
       onCreated({ ...inv, id: ref.id });
       onClose();
     } catch {
@@ -624,6 +645,21 @@ function CreateInvoiceModal({ schools, paymentAccounts, onClose, onCreated }: Cr
             </div>
           )}
         </div>
+
+        {selectedSchool?.adminEmail && (
+          <div className="px-6 pb-2">
+            <label className="flex items-center gap-2 text-sm text-slate-600 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={emailInvoice}
+                onChange={e => setEmailInvoice(e.target.checked)}
+                className="rounded border-slate-300"
+              />
+              <Mail className="w-3.5 h-3.5 text-slate-400" />
+              Email invoice to <span className="font-medium text-slate-800">{selectedSchool.adminEmail}</span>
+            </label>
+          </div>
+        )}
 
         <div className="px-6 pb-6 flex gap-3">
           <button onClick={onClose} className="flex-1 py-2.5 rounded-xl border border-slate-200 text-slate-600 text-sm font-semibold hover:bg-slate-50 transition-colors">

@@ -7,9 +7,23 @@
 }
 
 @layer base {
+  html {
+    overflow-x: hidden;
+  }
   body {
     @apply bg-slate-50 text-slate-900 antialiased font-sans;
+    overflow-x: hidden;
+    max-width: 100%;
   }
+}
+
+/* Hide scrollbar visually while keeping scroll function (mobile tab bars etc.) */
+.scrollbar-none {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.scrollbar-none::-webkit-scrollbar {
+  display: none;
 }
 
 .glass-card {

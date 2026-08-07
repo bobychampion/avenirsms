@@ -8,10 +8,11 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { doc, getDoc, setDoc, deleteDoc, updateDoc, getDocs, collection, query, where, serverTimestamp } from 'firebase/firestore';
 import { db } from '../../firebase';
 import { School, UserProfile } from '../../types';
+import { sendSchoolSuspended } from '../../services/emailService';
 import { useSuperAdmin } from '../../components/SuperAdminContext';
 import DeleteSchoolModal from '../../components/DeleteSchoolModal';
 import {
-  Building2, ArrowLeft, Save, Loader2, LogIn, Users, GraduationCap, CheckCircle2, XCircle, Trash2, Globe
+  Building2, ArrowLeft, Save, Loader2, LogIn, Users, GraduationCap, CheckCircle2, XCircle, Trash2, Globe, Clock
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
@@ -27,6 +28,7 @@ export default function SchoolDetail() {
   const [staffCount, setStaffCount] = useState<number | null>(null);
   const [userCount, setUserCount] = useState<number | null>(null);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [lastAdminLogin, setLastAdminLogin] = useState<Date | null>(null);
 
   // Editable fields
   const [name, setName] = useState('');
@@ -63,6 +65,15 @@ export default function SchoolDetail() {
         setStudentCount(students.size);
         setStaffCount(staff.size);
         setUserCount(users.size);
+        // Find the most recent admin login
+        const adminUsers = users.docs
+          .map(d => d.data() as UserProfile)
+          .filter(u => u.role === 'admin' || u.role === 'School_admin');
+        const lastLogin = adminUsers
+          .map(u => u.lastLoginAt?.toDate?.() ?? null)
+          .filter(Boolean)
+          .sort((a, b) => b!.getTime() - a!.getTime())[0] ?? null;
+        setLastAdminLogin(lastLogin);
       } catch (e) {
         toast.error('Failed to load school');
       } finally {
@@ -75,6 +86,7 @@ export default function SchoolDetail() {
   const handleSave = async () => {
     if (!schoolId) return;
     setSaving(true);
+    const previousStatus = school?.status;
     try {
       await updateDoc(doc(db, 'schools', schoolId), {
         name, adminEmail, status, subscriptionPlan: plan, notes,
@@ -82,6 +94,13 @@ export default function SchoolDetail() {
       });
       toast.success('School updated');
       setSchool(s => s ? { ...s, name, adminEmail, status, subscriptionPlan: plan, notes } : s);
+      if (status === 'suspended' && previousStatus !== 'suspended' && adminEmail) {
+        sendSchoolSuspended({
+          to: adminEmail,
+          branding: { schoolName: name },
+          adminName: 'Administrator',
+        }).catch(() => {});
+      }
     } catch {
       toast.error('Failed to save changes');
     } finally {
@@ -178,7 +197,7 @@ export default function SchoolDetail() {
       </div>
 
       {/* Stats */}
-      <div className="grid grid-cols-3 gap-4">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
         {[
           { label: 'Students', value: studentCount, icon: GraduationCap, color: 'text-indigo-600' },
           { label: 'Staff', value: staffCount, icon: Users, color: 'text-emerald-600' },
@@ -190,6 +209,15 @@ export default function SchoolDetail() {
             <p className="text-xs text-slate-400">{s.label}</p>
           </div>
         ))}
+        <div className="bg-white border border-slate-200 rounded-xl p-4 text-center">
+          <Clock className="w-5 h-5 text-amber-500 mx-auto mb-1" />
+          <p className="text-sm font-bold text-slate-900 leading-tight">
+            {lastAdminLogin
+              ? lastAdminLogin.toLocaleDateString('en-NG', { day: 'numeric', month: 'short', year: 'numeric' })
+              : '—'}
+          </p>
+          <p className="text-xs text-slate-400">Last Admin Login</p>
+        </div>
       </div>
 
       {/* Edit form */}

@@ -63,6 +63,9 @@ const URL_ROLE_ALIASES: Record<string, RegisterRole | null> = {
   teacher: 'teacher',
   staff: 'staff',
   admin: 'staff',
+  principal: 'staff',
+  owner: 'staff',
+  student: null,  // handled separately — shows parent-portal redirect
 };
 
 

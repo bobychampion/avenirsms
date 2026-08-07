@@ -10,8 +10,8 @@ const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
 export const db = getFirestore(app, (firebaseConfig as any).firestoreDatabaseId);
 
-// Connect to local Functions emulator in development
-if (import.meta.env.DEV) {
+// Connect to local Functions emulator only when explicitly enabled
+if (import.meta.env.VITE_USE_EMULATOR === 'true') {
   const functions = getFunctions(app);
   connectFunctionsEmulator(functions, '127.0.0.1', 5001);
 }

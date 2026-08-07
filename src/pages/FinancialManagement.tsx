@@ -636,6 +636,7 @@ export default function FinancialManagement() {
               </button>
             </div>
           </div>
+          <div className="overflow-x-auto">
           <table className="w-full text-left">
             <thead className="bg-slate-50 border-b border-slate-200">
               <tr>
@@ -731,6 +732,7 @@ export default function FinancialManagement() {
               ))}
             </tbody>
           </table>
+          </div>
         </div>
       )}
 
@@ -746,6 +748,7 @@ export default function FinancialManagement() {
               Nothing pending — all caught up.
             </div>
           ) : (
+            <div className="overflow-x-auto">
             <table className="w-full text-left">
               <thead className="bg-slate-50 border-b border-slate-200">
                 <tr>
@@ -785,6 +788,7 @@ export default function FinancialManagement() {
                 })}
               </tbody>
             </table>
+            </div>
           )}
         </div>
       )}
@@ -861,6 +865,7 @@ export default function FinancialManagement() {
               are shown here for the audit trail only — a parent's claim alone is never treated as real income.
             </p>
           </div>
+          <div className="overflow-x-auto">
           <table className="w-full text-left">
             <thead className="bg-slate-50 border-b border-slate-200">
               <tr>
@@ -897,11 +902,13 @@ export default function FinancialManagement() {
               })}
             </tbody>
           </table>
+          </div>
         </div>
       )}
 
       {activeTab === 'expenses' && (
         <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
+          <div className="overflow-x-auto">
           <table className="w-full text-left">
             <thead className="bg-slate-50 border-b border-slate-200">
               <tr>
@@ -924,6 +931,7 @@ export default function FinancialManagement() {
               ))}
             </tbody>
           </table>
+          </div>
         </div>
       )}
 

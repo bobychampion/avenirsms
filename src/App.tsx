@@ -37,6 +37,7 @@ import StaffManagement from './pages/StaffManagement';
 import PayrollManagement from './pages/PayrollManagement';
 import AnalyticsDashboard from './pages/AnalyticsDashboard';
 import CurriculumMapping from './pages/CurriculumMapping';
+import LessonCoverage from './pages/LessonCoverage';
 import AdmissionsManagement from './pages/AdmissionsManagement';
 import StudentPromotion from './pages/StudentPromotion';
 import SchoolSettingsPage from './pages/SchoolSettings';
@@ -48,6 +49,8 @@ import IntegrationSettings from './pages/IntegrationSettings';
 import GoogleOAuthCallback from './pages/GoogleOAuthCallback';
 import WhatsAppNotifications from './pages/WhatsAppNotifications';
 import OnboardingTutorial from './pages/OnboardingTutorial';
+import MobileWelcome from './pages/MobileWelcome';
+import { Capacitor } from '@capacitor/core';
 import CBTExamEngine from './pages/CBTExamEngine';
 import AdminMobileDashboard from './pages/mobile/AdminMobileDashboard';
 import TeacherMobileAttendance from './pages/mobile/TeacherMobileAttendance';
@@ -252,6 +255,8 @@ function SyncDocumentTitle() {
 
 function RootRoute() {
   const { domainSchoolId, domainSchoolLoading } = useDomainSchool();
+  // On the native mobile app skip the marketing landing page entirely
+  if (Capacitor.isNativePlatform()) return <Navigate to="/welcome" replace />;
   if (domainSchoolLoading) return <PageLoader />;
   return domainSchoolId ? <SchoolLandingPage /> : <LandingPage />;
 }
@@ -266,6 +271,9 @@ function AppContent() {
           {/* ── Standalone promotional landing page (no Layout wrapper) ── */}
           {/* On a school's own custom domain, this resolves to that school's own landing page instead. */}
           <Route path="/" element={<RootRoute />} />
+
+          {/* ── Mobile app welcome / role picker (Capacitor native only) ── */}
+          <Route path="/welcome" element={<MobileWelcome />} />
 
           {/* ── Per-school public pages (no login required) ── */}
           <Route path="/s/:schoolId" element={<SchoolLandingPage />} />
@@ -311,6 +319,7 @@ function AppContent() {
           <Route path="/admin/payroll" element={<Layout><ProtectedRoute allowFinanceRoles><PayrollManagement /></ProtectedRoute></Layout>} />
           <Route path="/admin/analytics" element={<Layout><ProtectedRoute allowFinanceRoles><AnalyticsDashboard /></ProtectedRoute></Layout>} />
           <Route path="/admin/curriculum" element={<Layout><ProtectedRoute role="admin"><CurriculumMapping /></ProtectedRoute></Layout>} />
+          <Route path="/admin/lesson-coverage" element={<Layout><ProtectedRoute roles={['admin', 'School_admin', 'teacher']}><LessonCoverage /></ProtectedRoute></Layout>} />
           <Route path="/admin/promotion" element={<Layout><ProtectedRoute role="admin"><StudentPromotion /></ProtectedRoute></Layout>} />
           <Route path="/admin/pins" element={<Layout><ProtectedRoute role="admin"><PinManagement /></ProtectedRoute></Layout>} />
           <Route path="/admin/settings" element={<Layout><ProtectedRoute role="admin"><SchoolSettingsPage /></ProtectedRoute></Layout>} />

@@ -70,7 +70,7 @@ export function MobileShell({ children, role }: MobileShellProps) {
   const initial = profile?.displayName?.[0]?.toUpperCase() || '?';
 
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col font-sans max-w-md mx-auto relative">
+    <div className="min-h-screen bg-slate-50 flex flex-col font-sans max-w-md mx-auto relative overflow-x-hidden">
 
       {/* ── TOP BAR ── */}
       <header className="sticky top-0 z-40 bg-white/80 backdrop-blur-md border-b border-slate-100 h-14 flex items-center px-4 gap-3">
@@ -146,7 +146,7 @@ export function MobileShell({ children, role }: MobileShellProps) {
       )}
 
       {/* ── MAIN CONTENT ── */}
-      <main className="flex-1 overflow-y-auto pb-20">
+      <main className="flex-1 overflow-y-auto overflow-x-hidden pb-20">
         {children}
       </main>
 

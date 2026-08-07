@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useState, ReactNode } from 'react';
 import { onAuthStateChanged, User, signInWithPopup, GoogleAuthProvider, signOut, signInWithEmailAndPassword, createUserWithEmailAndPassword } from 'firebase/auth';
-import { doc, setDoc, onSnapshot, updateDoc, getDoc } from 'firebase/firestore';
+import { doc, setDoc, onSnapshot, updateDoc, getDoc, serverTimestamp } from 'firebase/firestore';
 import { auth, db, handleFirestoreError, OperationType } from '../firebase';
 import { UserProfile } from '../types';
 import { hasPermission as checkPermission, type Permission } from '../utils/permissions';
@@ -53,6 +53,9 @@ export function FirebaseProvider({ children }: { children: ReactNode }) {
       setProfile(null);
       setLoading(true);
       setSchoolSuspended(false);
+
+      // Record last active time — silently ignored if the profile doc doesn't exist yet
+      updateDoc(doc(db, 'users', currentUser.uid), { lastLoginAt: serverTimestamp() }).catch(() => {});
 
       const profileRef = doc(db, 'users', currentUser.uid);
       let bootstrapping = false;

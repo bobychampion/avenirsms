@@ -257,7 +257,8 @@ service cloud.firestore {
     // ─── FCM tokens (user-scoped by uid) ──────────────────────────────────────
 
     match /fcm_tokens/{userId} {
-      allow read, write: if isAuthenticated() && isOwner(userId);
+      allow read: if isSuperAdmin() || (isAuthenticated() && isOwner(userId));
+      allow write: if isAuthenticated() && isOwner(userId);
       // Admins clean up a deleted user's stale push token; no schoolId is
       // stored on this doc to scope further, so this is school-admin-wide.
       allow delete: if isSuperAdmin() || isAdmin();
@@ -385,7 +386,9 @@ service cloud.firestore {
     }
 
     match /student_skills/{skillId} {
-      allow read: if isAuthenticated() && (isSuperAdmin() || docBelongsToCallerSchool());
+      allow read: if isSuperAdmin() ||
+                    (isAuthenticated() && docBelongsToCallerSchool()) ||
+                    isGuardianOfStudent(resource.data.studentId);
       allow write: if isSuperAdmin() ||
                     ((isAdmin() || isTeacher()) && newDocBelongsToCallerSchool());
     }
@@ -763,6 +766,19 @@ service cloud.firestore {
         isSuperAdmin() ||
         (isAdmin() && docBelongsToCallerSchool())
       );
+      allow delete: if isSuperAdmin() || (isAdmin() && docBelongsToCallerSchool());
+    }
+
+    // ─── Lesson Coverage ─────────────────────────────────────────────────────
+    // Teachers log their own lessons; admins can log any lesson and delete records.
+    // delete uses docBelongsToCallerSchool() (reads the EXISTING resource) not
+    // newDocBelongsToCallerSchool(), for the same reason as other collections above.
+
+    match /lesson_coverage/{recordId} {
+      allow read: if isAuthenticated() && (isSuperAdmin() ||
+                    ((isAdmin() || isTeacher()) && docBelongsToCallerSchool()));
+      allow create, update: if isSuperAdmin() ||
+                    ((isAdmin() || isTeacher()) && newDocBelongsToCallerSchool());
       allow delete: if isSuperAdmin() || (isAdmin() && docBelongsToCallerSchool());
     }
 

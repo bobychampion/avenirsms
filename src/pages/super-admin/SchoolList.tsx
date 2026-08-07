@@ -12,6 +12,7 @@ import { db } from '../../firebase';
 import { School } from '../../types';
 import { useSuperAdmin } from '../../components/SuperAdminContext';
 import DeleteSchoolModal from '../../components/DeleteSchoolModal';
+import { sendSchoolSuspended } from '../../services/emailService';
 import {
   Building2, Plus, LogIn, Pencil, CheckCircle2, XCircle, Search, Trash2
 } from 'lucide-react';
@@ -49,6 +50,13 @@ export default function SchoolList() {
       });
       setSchools(prev => prev.map(s => s.id === school.id ? { ...s, status: newStatus } : s));
       toast.success(`School ${newStatus === 'active' ? 'activated' : 'suspended'}`);
+      if (newStatus === 'suspended' && school.adminEmail) {
+        sendSchoolSuspended({
+          to: school.adminEmail,
+          branding: { schoolName: school.name },
+          adminName: 'Administrator',
+        }).catch(() => {});
+      }
     } catch {
       toast.error('Failed to update school status');
     }

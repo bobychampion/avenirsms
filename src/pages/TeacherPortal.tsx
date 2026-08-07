@@ -24,6 +24,7 @@ import {
   Sparkles, FileText, Copy, ChevronDown, Star, Award,
   MapPin, Navigation, LogIn, LogOut, ShieldAlert, Lock,
   ChevronRight, Inbox, GraduationCap, Home, BookMarked, CalendarOff,
+  AlertTriangle,
 } from 'lucide-react';
 import { initFCMForUser, onForegroundMessage, showFcmPushNotification } from '../services/notificationService';
 import ProfileHeader from './TeacherPortal/ProfileHeader';
@@ -1310,7 +1311,7 @@ export default function TeacherPortal() {
       />
 
       {/* Tab Bar */}
-      <div className="flex space-x-1 bg-slate-100 p-1 rounded-xl mb-8 w-full overflow-x-auto">
+      <div className="flex space-x-1 bg-slate-100 p-1 rounded-xl mb-8 w-full overflow-x-auto scrollbar-none" style={{ WebkitOverflowScrolling: 'touch' }}>
         {tabs.map(({ id, label, Icon, badge }) => (
           <button
             key={id}
@@ -1331,6 +1332,32 @@ export default function TeacherPortal() {
       {/* ── HOME / OVERVIEW TAB ── */}
       {activeTab === 'home' && (
         <>
+        {/* Attendance reminder banner */}
+        {(() => {
+          const pending = myAssignedClasses.filter(c => !todaysMarkedClasses.has(c));
+          if (pending.length === 0) return null;
+          return (
+            <div className="mb-4 flex flex-wrap items-center gap-3 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3">
+              <AlertTriangle className="w-5 h-5 text-amber-500 flex-shrink-0" />
+              <span className="text-sm font-medium text-amber-800 flex-1">
+                {pending.length === 1
+                  ? `Attendance not yet marked for ${pending[0]}`
+                  : `${pending.length} classes still need attendance today`}
+              </span>
+              <div className="flex flex-wrap gap-2">
+                {pending.map(c => (
+                  <button
+                    key={c}
+                    onClick={() => openDailyAttendanceFor(c)}
+                    className="px-3 py-1 rounded-lg text-xs font-semibold bg-amber-500 text-white hover:bg-amber-600 transition-colors"
+                  >
+                    Mark {c} →
+                  </button>
+                ))}
+              </div>
+            </div>
+          );
+        })()}
         <TodayPanel
           myTimetables={myTimetables}
           mySpecialLessons={mySpecialLessons}

@@ -15,6 +15,7 @@ import {
   Clock, Award, Briefcase, CreditCard, Map, Menu, X, Bell,
   ArrowUpRight, Key, MessageSquare, FileSpreadsheet, Database,
   HelpCircle, Building2, ShieldCheck, LogIn, MapPin, WifiOff, Chrome, Package, Sparkles,
+  NotebookPen,
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { db } from '../firebase';
@@ -157,6 +158,7 @@ const adminNavGroups = [
       { to: '/admin/report-cards', label: 'Report Cards', icon: FileText },
       { to: '/admin/exams', label: 'Exams', icon: ClipboardList },
       { to: '/admin/curriculum', label: 'Curriculum', icon: Map },
+      { to: '/admin/lesson-coverage', label: 'Lesson Coverage', icon: NotebookPen },
       { to: '/admin/promotion', label: 'Promotion', icon: ArrowUpRight },
     ],
   },

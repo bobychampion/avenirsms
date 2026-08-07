@@ -6,7 +6,7 @@ import {
   collection, query, onSnapshot, where, addDoc, serverTimestamp,
   orderBy, updateDoc, doc, getDoc, getDocs, limit
 } from 'firebase/firestore';
-import { Student, Assignment, AssignmentSubmission, Message, Grade, Attendance, SchoolEvent, Invoice, Notification, TERMS, CURRENT_SESSION, calculateGrade, SKILL_LABELS, SKILL_RATING_LABELS, SkillRating, SubjectAttendance, SpecialLesson, SpecialLessonAttendance } from '../types';
+import { Student, Assignment, AssignmentSubmission, Message, Grade, Attendance, SchoolEvent, Invoice, Notification, TERMS, calculateGrade, SKILL_LABELS, SKILL_RATING_LABELS, SkillRating, SubjectAttendance, SpecialLesson, SpecialLessonAttendance } from '../types';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   BookOpen, Calendar, MessageSquare, Loader2, CheckCircle2, Clock,
@@ -37,7 +37,7 @@ export default function ParentPortal() {
   const { user, profile } = useAuth();
   const navigate = useNavigate();
   const schoolId = useSchoolId();
-  const { getGradingForClass, locale, currency, schoolName, logoUrl, reportShowLogo, reportFooterText, attendanceMode } = useSchool();
+  const { getGradingForClass, locale, currency, schoolName, logoUrl, reportShowLogo, reportFooterText, attendanceMode, currentSession } = useSchool();
   const [children, setChildren] = useState<Student[]>([]);
   const [selectedChild, setSelectedChild] = useState<Student | null>(null);
   const [grades, setGrades] = useState<Grade[]>([]);
@@ -547,7 +547,7 @@ export default function ParentPortal() {
   };
 
   // Derived stats
-  const filteredGrades = grades.filter(g => g.term === filterTerm && g.session === CURRENT_SESSION);
+  const filteredGrades = grades.filter(g => g.term === filterTerm && g.session === currentSession);
   const avgScore = filteredGrades.length > 0
     ? Math.round(filteredGrades.reduce((s, g) => s + (g.totalScore || (g.caScore + g.examScore)), 0) / filteredGrades.length)
     : 0;
@@ -558,7 +558,7 @@ export default function ParentPortal() {
   const unreadMsgs = messages.filter(m => m.senderId !== user?.uid && !m.read).length;
 
   // Report card derived data
-  const reportCardGrades = grades.filter(g => g.term === reportCardTerm && g.session === CURRENT_SESSION);
+  const reportCardGrades = grades.filter(g => g.term === reportCardTerm && g.session === currentSession);
   const reportCardAvg = reportCardGrades.length > 0
     ? Math.round(reportCardGrades.reduce((s, g) => s + (g.totalScore || (g.caScore + g.examScore)), 0) / reportCardGrades.length)
     : 0;
@@ -572,7 +572,7 @@ export default function ParentPortal() {
           collection(db, 'student_skills'),
           where('studentId', '==', selectedChild.id),
           where('term', '==', reportCardTerm),
-          where('session', '==', CURRENT_SESSION)
+          where('session', '==', currentSession)
         ));
         if (!snap.empty) setReportCardSkills(snap.docs[0].data().skills);
         else setReportCardSkills(null);
@@ -775,7 +775,7 @@ export default function ParentPortal() {
               className="px-3 py-2 rounded-xl border border-slate-200 text-sm font-medium outline-none focus:ring-2 focus:ring-indigo-500">
               {TERMS.map(t => <option key={t} value={t}>{t}</option>)}
             </select>
-            <span className="text-xs text-slate-400">{CURRENT_SESSION} Session</span>
+            <span className="text-xs text-slate-400">{currentSession} Session</span>
           </div>
 
           {filteredGrades.length === 0 ? (
@@ -1565,7 +1565,7 @@ export default function ParentPortal() {
                 {TERMS.map(t => <option key={t} value={t}>{t}</option>)}
               </select>
             </div>
-            <span className="text-xs text-slate-400">{CURRENT_SESSION}</span>
+            <span className="text-xs text-slate-400">{currentSession}</span>
             <label className="flex items-center gap-2 text-sm font-medium text-slate-600 print:hidden">
               <input
                 type="checkbox"
@@ -1620,7 +1620,7 @@ export default function ParentPortal() {
                   { label: 'Student', value: selectedChild.studentName },
                   { label: 'Class', value: selectedChild.currentClass },
                   { label: 'Term', value: reportCardTerm },
-                  { label: 'Session', value: CURRENT_SESSION },
+                  { label: 'Session', value: currentSession },
                 ].map(item => (
                   <div key={item.label} className="px-4 py-3">
                     <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-0.5">{item.label}</p>
@@ -1679,7 +1679,7 @@ export default function ParentPortal() {
                       <td colSpan={2} className="py-3 font-bold text-slate-700 text-sm pl-1">Overall Average</td>
                       <td colSpan={2} className="py-3 text-center font-black text-indigo-700 text-lg">{reportCardAvg}%</td>
                       <td colSpan={3} className="py-3 text-left pl-2 font-bold text-slate-700 text-sm">
-                        {(() => { const g = getGradingForClass(selectedChild.currentClass); return calculateGrade(reportCardAvg, g.gradingSystem, g.customGradingScale); })()} — <span className="text-xs text-slate-500">{CURRENT_SESSION}</span>
+                        {(() => { const g = getGradingForClass(selectedChild.currentClass); return calculateGrade(reportCardAvg, g.gradingSystem, g.customGradingScale); })()} — <span className="text-xs text-slate-500">{currentSession}</span>
                       </td>
                     </tr>
                   </tfoot>

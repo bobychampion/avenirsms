@@ -95,6 +95,7 @@ export interface UserProfile {
    * that state so the UI can hide/label it distinctly from a normal disable.
    */
   deletedAt?: any;
+  lastLoginAt?: any;
 }
 
 /** Platform-level school record (schools collection) */
@@ -1041,4 +1042,33 @@ export interface AlumniProfile {
   lastContactDate?: string;
   createdAt: any;
   updatedAt?: any;
+}
+
+
+// ─── Lesson Coverage ──────────────────────────────────────────────────────────
+
+export type LessonStatus = 'completed' | 'not_completed' | 'partially_completed';
+export type LessonType = 'regular' | 'cover';
+
+export interface LessonCoverage {
+  id?: string;
+  schoolId: string;
+  /** ISO date string: YYYY-MM-DD */
+  date: string;
+  session: string;
+  term: string;
+  className: string;
+  subject: string;
+  /** Period label, e.g. "Period 1" or a timetablePeriod slotId */
+  period: string;
+  topicCovered: string;
+  lessonStatus: LessonStatus;
+  lessonType: LessonType;
+  teacherName: string;
+  teacherId: string;
+  remarks: string;
+  recordedBy: string;
+  recordedAt: any;
+  /** curriculum_items doc ID that this lesson is linked to, null if free-text entry */
+  curriculumItemId?: string | null;
 }

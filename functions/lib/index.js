@@ -1,6 +1,39 @@
 "use strict";
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.dailyReminders = exports.verifyStorageConnection = exports.deleteStorageFile = exports.getUploadSignature = exports.disconnectStorageProvider = exports.connectStorageProvider = exports.testStorageConnection = exports.archiveClassroomCourse = exports.syncClassroomCourse = exports.deleteCalendarEvent = exports.syncCalendarEvent = exports.verifyGoogleConnection = exports.disconnectGoogleWorkspace = exports.refreshGoogleToken = exports.connectGoogleWorkspace = exports.setStudentPassword = void 0;
+exports.sendTransactionalEmail = exports.deleteSchool = exports.expireDemoSchools = exports.dailyReminders = exports.verifyStorageConnection = exports.deleteStorageFile = exports.getUploadSignature = exports.disconnectStorageProvider = exports.connectStorageProvider = exports.testStorageConnection = exports.archiveClassroomCourse = exports.syncClassroomCourse = exports.deleteCalendarEvent = exports.syncCalendarEvent = exports.verifyGoogleConnection = exports.disconnectGoogleWorkspace = exports.refreshGoogleToken = exports.connectGoogleWorkspace = exports.setStudentPassword = void 0;
 exports.connectGoogleWorkspaceHandler = connectGoogleWorkspaceHandler;
 exports.refreshGoogleTokenHandler = refreshGoogleTokenHandler;
 exports.disconnectGoogleWorkspaceHandler = disconnectGoogleWorkspaceHandler;
@@ -27,6 +60,8 @@ const app_1 = require("firebase-admin/app");
 const auth_1 = require("firebase-admin/auth");
 const firestore_1 = require("firebase-admin/firestore");
 const messaging_1 = require("firebase-admin/messaging");
+const resendService_1 = require("./email/resendService");
+const templates = __importStar(require("./email/emailTemplates"));
 const googleAuthService_1 = require("./google/googleAuthService");
 const googleTokenService_1 = require("./google/googleTokenService");
 const googleVerificationService_1 = require("./google/googleVerificationService");
@@ -74,6 +109,12 @@ exports.setStudentPassword = (0, https_1.onCall)(async (request) => {
     });
     return { ok: true };
 });
+// SPARK-PLAN-TODO: Super Admin "View As" impersonation does NOT use a Cloud
+// Function — see firestore.rules (impersonation_logs match) and
+// src/components/ImpersonationContext.tsx. This keeps the feature usable on
+// the free Spark plan, which cannot deploy Cloud Functions at all. Once on
+// Blaze, consider re-adding startImpersonation/endImpersonation here if the
+// feature needs Admin SDK access (e.g. a real "Act As" custom token).
 /**
  * Core logic for connecting Google Workspace to a school
  *
@@ -751,7 +792,8 @@ async function sendFcmNotification(token, title, body, data) {
  *  1. Fetch all invoices where status ∈ ['unpaid','partial'] across all schools.
  *  2. Filter to those with dueDate ≤ today.
  *  3. For each invoice, look up the student → parent guardian's Firebase UID →
- *     their FCM token stored in `users/{uid}.fcmToken`.
+ *     their FCM token stored in `fcm_tokens/{uid}.token` (written by
+ *     notificationService.ts's initFCMForUser on the client).
  *  4. Send a push notification via FCM.
  *  5. Write a `notifications` Firestore doc so the in-app bell also reflects it.
  *
@@ -760,6 +802,11 @@ async function sendFcmNotification(token, title, body, data) {
  *  2. Compare with the previous 2 school days.
  *  3. If a student is absent all 3 days and has no approved absence_request
  *     covering today, send the parent a welfare check notification.
+ *
+ * SPARK-PLAN-TODO: this is a scheduled Cloud Function — it cannot run at all
+ * on the free Spark plan (no Cloud Functions of any kind can be deployed).
+ * The token lookup bug (reading the wrong field) is fixed below regardless,
+ * so this works correctly the day this project is upgraded to Blaze.
  */
 exports.dailyReminders = (0, scheduler_1.onSchedule)({ schedule: '0 6 * * *', timeZone: 'UTC', region: 'us-central1' }, async (_event) => {
     const db = (0, firestore_1.getFirestore)();
@@ -787,14 +834,14 @@ exports.dailyReminders = (0, scheduler_1.onSchedule)({ schedule: '0 6 * * *', ti
             if (!student?.guardianUserId)
                 continue;
             // Get guardian's FCM token
-            const userDoc = await db.doc(`users/${student.guardianUserId}`).get();
-            const userData = userDoc.data();
-            if (!userData?.fcmToken)
+            const tokenDoc = await db.doc(`fcm_tokens/${student.guardianUserId}`).get();
+            const tokenData = tokenDoc.data();
+            if (!tokenData?.token)
                 continue;
             const overdueDays = Math.round((today.getTime() - new Date(dueDate).getTime()) / 86400000);
             const title = overdueDays > 0 ? '⚠️ Fee Overdue' : '💳 Fee Due Today';
             const body = `${studentName ?? 'Your child'}'s school fee of ₦${(amount ?? 0).toLocaleString()} is ${overdueDays > 0 ? `${overdueDays} day${overdueDays > 1 ? 's' : ''} overdue` : 'due today'}.`;
-            await sendFcmNotification(userData.fcmToken, title, body, {
+            await sendFcmNotification(tokenData.token, title, body, {
                 type: 'fee_due',
                 invoiceId: invoiceDoc.id,
                 schoolId,
@@ -867,13 +914,13 @@ exports.dailyReminders = (0, scheduler_1.onSchedule)({ schedule: '0 6 * * *', ti
             const student = studentDoc.data();
             if (!student?.guardianUserId)
                 continue;
-            const userDoc = await db.doc(`users/${student.guardianUserId}`).get();
-            const userData = userDoc.data();
-            if (!userData?.fcmToken)
+            const tokenDoc = await db.doc(`fcm_tokens/${student.guardianUserId}`).get();
+            const tokenData = tokenDoc.data();
+            if (!tokenData?.token)
                 continue;
             const title = '📋 Absence Alert';
             const body = `${student.studentName ?? 'Your child'} has been absent for 3 consecutive school days. Please contact the school.`;
-            await sendFcmNotification(userData.fcmToken, title, body, {
+            await sendFcmNotification(tokenData.token, title, body, {
                 type: 'attendance',
                 studentId,
                 schoolId: student.schoolId ?? '',
@@ -895,5 +942,320 @@ exports.dailyReminders = (0, scheduler_1.onSchedule)({ schedule: '0 6 * * *', ti
     }
     console.log(`[dailyReminders] Absence alerts sent: ${absenceAlertsSent}`);
     console.log(`[dailyReminders] Complete. Fee: ${feeRemindersSent}, Absence: ${absenceAlertsSent}`);
+});
+/**
+ * Auto-suspends demo schools once their 7-day trial (`subscriptionExpiresAt`)
+ * has passed. Runs every 6 hours — tight enough for a 7-day window without
+ * being wasteful. Only touches `status === 'demo'` docs; schools a super admin
+ * has manually put in 'trial'/'active'/'suspended' are never touched here.
+ *
+ * Once flipped to 'suspended', firestore.rules' schoolIsActive() check blocks
+ * all further data access for that school's users immediately — no separate
+ * enforcement step needed.
+ *
+ * SPARK-PLAN-TODO: same Blaze-plan requirement as dailyReminders above.
+ */
+exports.expireDemoSchools = (0, scheduler_1.onSchedule)({ schedule: '0 */6 * * *', timeZone: 'UTC', region: 'us-central1' }, async (_event) => {
+    const db = (0, firestore_1.getFirestore)();
+    const now = firestore_1.Timestamp.now();
+    const expiredSnap = await db
+        .collection('schools')
+        .where('status', '==', 'demo')
+        .where('subscriptionExpiresAt', '<=', now)
+        .get();
+    if (expiredSnap.empty) {
+        console.log('[expireDemoSchools] No expired demo schools found.');
+        return;
+    }
+    const batch = db.batch();
+    for (const schoolDoc of expiredSnap.docs) {
+        batch.update(schoolDoc.ref, {
+            status: 'suspended',
+            autoSuspendedAt: now,
+            updatedAt: now,
+        });
+    }
+    await batch.commit();
+    console.log(`[expireDemoSchools] Auto-suspended ${expiredSnap.size} expired demo school(s).`);
+});
+// ─── School deletion ─────────────────────────────────────────────────────────
+/**
+ * School-scoped collections wiped when a school is deleted. Kept in sync by
+ * hand with SCHOOL_SCOPED_COLLECTIONS in src/services/schoolDeletionService.ts
+ * (that copy drives the pre-delete document-count estimate shown in the
+ * confirmation modal; this copy is what actually gets deleted).
+ */
+const SCHOOL_SCOPED_COLLECTIONS = [
+    'students', 'guardians', 'staff', 'users',
+    'classes', 'subjects', 'class_subjects', 'grades', 'student_skills',
+    'attendance', 'attendance_checkins', 'timetables',
+    'assignments', 'assignment_submissions',
+    'events', 'notifications', 'notification_broadcasts', 'messages',
+    'invoices', 'fee_payments', 'payments', 'expenses',
+    'exams', 'exam_seating', 'question_bank', 'cbt_exams', 'cbt_sessions',
+    'curriculum_documents', 'curriculum_items',
+    'leave_requests', 'payroll', 'hr_policies', 'onboarding_records', 'leave_entitlements',
+    'pins', 'promotions', 'whatsapp_logs', 'applications',
+    'library_books', 'library_circulation',
+    'mail', 'lifecycle_events', 'behavioral_records', 'alumni_profiles',
+    'cover_assignments', 'school_trips', 'trip_registrations', 'absence_requests',
+];
+/** Financial collections optionally preserved (marked deleted, not removed) for audit trails. */
+const FINANCIAL_COLLECTIONS = ['invoices', 'fee_payments', 'payments', 'expenses', 'platform_invoices'];
+/** Standalone documents keyed by schoolId (not collections of many docs). */
+const DOCUMENT_COLLECTIONS = ['school_settings', 'geofences'];
+/**
+ * Permanently deletes a school: its Firestore data across 40+ collections,
+ * its users' Firebase Auth accounts, and the school document itself.
+ * Runs server-side (Admin SDK) because deleting other users' Auth accounts
+ * and cascading across every school-scoped collection both require
+ * privileges the client SDK cannot be granted safely.
+ *
+ * Guardrail: the school must already be 'suspended' (not 'active') before
+ * it can be deleted — prevents accidentally deleting a live paying school.
+ */
+exports.deleteSchool = (0, https_1.onCall)({ timeoutSeconds: 540, memory: '512MiB' }, async (request) => {
+    const { auth, data } = request;
+    if (!auth)
+        throw new https_1.HttpsError('unauthenticated', 'Sign-in required.');
+    const db = (0, firestore_1.getFirestore)();
+    const actorSnap = await db.doc(`users/${auth.uid}`).get();
+    const actor = actorSnap.data();
+    if (!actor || actor.role !== 'super_admin') {
+        throw new https_1.HttpsError('permission-denied', 'Only super admins may delete a school.');
+    }
+    const { schoolId, preserveFinancial } = data ?? {};
+    if (!schoolId || typeof schoolId !== 'string') {
+        throw new https_1.HttpsError('invalid-argument', 'schoolId is required.');
+    }
+    const schoolRef = db.doc(`schools/${schoolId}`);
+    const schoolSnap = await schoolRef.get();
+    if (!schoolSnap.exists) {
+        throw new https_1.HttpsError('not-found', 'School not found.');
+    }
+    const school = schoolSnap.data();
+    if (school.status === 'active') {
+        throw new https_1.HttpsError('failed-precondition', 'Suspend the school before deleting it.');
+    }
+    console.log(`[deleteSchool] ${auth.uid} deleting school ${schoolId} (${school.name ?? 'unnamed'})`);
+    // 1. Delete Firebase Auth accounts for this school's users (super_admin accounts,
+    //    which never carry a schoolId, are naturally excluded from this query).
+    const usersSnap = await db.collection('users').where('schoolId', '==', schoolId).get();
+    const uids = usersSnap.docs.map(d => d.id);
+    let authAccountsDeleted = 0;
+    for (let i = 0; i < uids.length; i += 1000) {
+        const chunk = uids.slice(i, i + 1000);
+        if (chunk.length === 0)
+            continue;
+        try {
+            const result = await (0, auth_1.getAuth)().deleteUsers(chunk);
+            authAccountsDeleted += result.successCount;
+            if (result.errors.length) {
+                console.warn(`[deleteSchool] ${result.errors.length} Auth deletions failed:`, result.errors.map(e => e.error.message));
+            }
+        }
+        catch (err) {
+            console.error('[deleteSchool] Auth batch deletion failed:', err.message);
+        }
+    }
+    // 2. Cascade-delete (or mark-preserved) every school-scoped collection.
+    const deletionsByCollection = {};
+    const collectionErrors = [];
+    for (const col of SCHOOL_SCOPED_COLLECTIONS) {
+        try {
+            const snap = await db.collection(col).where('schoolId', '==', schoolId).get();
+            if (snap.empty)
+                continue;
+            const preserve = !!preserveFinancial && FINANCIAL_COLLECTIONS.includes(col);
+            const writer = db.bulkWriter();
+            writer.onWriteError((err) => {
+                console.error(`[deleteSchool] bulkWriter error in ${col}:`, err.message);
+                return err.failedAttempts < 3;
+            });
+            for (const docSnap of snap.docs) {
+                if (preserve) {
+                    writer.update(docSnap.ref, {
+                        schoolDeleted: true,
+                        deletedAt: firestore_1.Timestamp.now(),
+                        deletedBy: auth.uid,
+                    });
+                }
+                else {
+                    writer.delete(docSnap.ref);
+                }
+            }
+            await writer.close();
+            deletionsByCollection[col] = snap.size;
+        }
+        catch (err) {
+            console.error(`[deleteSchool] Failed to process collection ${col}:`, err.message);
+            collectionErrors.push({ collection: col, error: err.message ?? String(err) });
+        }
+    }
+    // 2b. fcm_tokens are keyed by uid (not schoolId) — clean up per deleted user.
+    try {
+        await Promise.all(uids.map(uid => db.doc(`fcm_tokens/${uid}`).delete()));
+    }
+    catch (err) {
+        collectionErrors.push({ collection: 'fcm_tokens', error: err.message ?? String(err) });
+    }
+    // 3. Standalone documents keyed by schoolId.
+    for (const col of DOCUMENT_COLLECTIONS) {
+        try {
+            await db.doc(`${col}/${schoolId}`).delete();
+        }
+        catch (err) {
+            collectionErrors.push({ collection: col, error: err.message ?? String(err) });
+        }
+    }
+    // 4. Google Workspace integration subcollection doc.
+    try {
+        await db.doc(`schools/${schoolId}/integrations/google`).delete();
+    }
+    catch (err) {
+        collectionErrors.push({ collection: 'integrations/google', error: err.message ?? String(err) });
+    }
+    // 5. school_slugs entries pointing at this schoolId (doc id is the slug, not the schoolId).
+    try {
+        const slugSnap = await db.collection('school_slugs').where('schoolId', '==', schoolId).get();
+        await Promise.all(slugSnap.docs.map(d => d.ref.delete()));
+    }
+    catch (err) {
+        collectionErrors.push({ collection: 'school_slugs', error: err.message ?? String(err) });
+    }
+    // 6. The school document itself, last.
+    await schoolRef.delete();
+    // 7. Audit log — the single authoritative record of this deletion.
+    const auditLogRef = await db.collection('audit_log').add({
+        schoolId,
+        schoolName: school.name ?? null,
+        actorId: auth.uid,
+        actorEmail: actor.email ?? null,
+        actorRole: actor.role ?? null,
+        action: 'school.delete',
+        schoolSnapshot: {
+            status: school.status ?? null,
+            subscriptionPlan: school.subscriptionPlan ?? null,
+            adminEmail: school.adminEmail ?? null,
+            createdAt: school.createdAt ?? null,
+        },
+        summary: {
+            deletionsByCollection,
+            totalDocumentsDeleted: Object.values(deletionsByCollection).reduce((a, b) => a + b, 0),
+            authAccountsDeleted,
+            preservedFinancial: !!preserveFinancial,
+            errors: collectionErrors,
+        },
+        createdAt: firestore_1.Timestamp.now(),
+    });
+    console.log(`[deleteSchool] Complete. ${authAccountsDeleted} auth accounts, ` +
+        `${Object.values(deletionsByCollection).reduce((a, b) => a + b, 0)} documents deleted.`);
+    return {
+        success: true,
+        deletionsByCollection,
+        authAccountsDeleted,
+        errors: collectionErrors,
+        auditLogId: auditLogRef.id,
+    };
+});
+/**
+ * sendTransactionalEmail — render a template and send it via Resend.
+ *
+ * Caller must be authenticated and belong to the same school as the
+ * action being triggered (admin/School_admin/teacher for most templates;
+ * accountant for fee reminders). Super admin may send to any school.
+ *
+ * API key: stored as Firebase secret RESEND_API_KEY.
+ * Set it once with: firebase functions:secrets:set RESEND_API_KEY
+ */
+exports.sendTransactionalEmail = (0, https_1.onCall)({ secrets: [resendService_1.resendApiKey] }, async (request) => {
+    const { auth, data } = request;
+    if (!auth)
+        throw new https_1.HttpsError('unauthenticated', 'Sign-in required.');
+    const { template, data: templateData, to } = data ?? {};
+    if (!template || !to) {
+        throw new https_1.HttpsError('invalid-argument', 'template and to are required.');
+    }
+    // Load actor profile for auth check
+    const db = (0, firestore_1.getFirestore)();
+    const actorSnap = await db.doc(`users/${auth.uid}`).get();
+    const actor = actorSnap.data();
+    if (!actor)
+        throw new https_1.HttpsError('not-found', 'Caller profile not found.');
+    // Only staff roles (admin, teacher, hr, accountant, super_admin) may send email
+    const ALLOWED_ROLES = ['super_admin', 'admin', 'School_admin', 'teacher', 'accountant', 'hr'];
+    if (!ALLOWED_ROLES.includes(actor.role)) {
+        throw new https_1.HttpsError('permission-denied', 'Insufficient role to send email.');
+    }
+    // Render template
+    let subject;
+    let html;
+    if (template === 'raw') {
+        subject = templateData.subject;
+        html = templateData.html;
+        if (!subject || !html) {
+            throw new https_1.HttpsError('invalid-argument', 'Raw email requires subject and html.');
+        }
+    }
+    else {
+        const branding = {
+            schoolName: templateData.schoolName ?? 'Avenir SIS',
+            primaryColor: templateData.primaryColor,
+            appUrl: templateData.appUrl,
+        };
+        const d = { ...templateData, branding };
+        switch (template) {
+            case 'admissionApproved':
+                ({ subject, html } = templates.admissionApproved(d));
+                break;
+            case 'admissionRejected':
+                ({ subject, html } = templates.admissionRejected(d));
+                break;
+            case 'feeReminder':
+                ({ subject, html } = templates.feeReminder(d));
+                break;
+            case 'staffWelcome':
+                ({ subject, html } = templates.staffWelcome(d));
+                break;
+            case 'parentNotification':
+                ({ subject, html } = templates.parentNotification(d));
+                break;
+            case 'attendanceAlert':
+                ({ subject, html } = templates.attendanceAlert(d));
+                break;
+            case 'reportCardReady':
+                ({ subject, html } = templates.reportCardReady(d));
+                break;
+            case 'schoolSuspended':
+                ({ subject, html } = templates.schoolSuspended(d));
+                break;
+            case 'demoProvisioned':
+                ({ subject, html } = templates.demoProvisioned(d));
+                break;
+            case 'platformInvoice':
+                ({ subject, html } = templates.platformInvoice(d));
+                break;
+            default:
+                throw new https_1.HttpsError('invalid-argument', `Unknown template: ${template}`);
+        }
+    }
+    try {
+        const result = await (0, resendService_1.sendEmail)({ to, subject, html, tags: [{ name: 'template', value: template }] });
+        // Audit log
+        await db.collection('audit_log').add({
+            schoolId: actor.schoolId ?? null,
+            actorId: auth.uid,
+            actorEmail: actor.email ?? null,
+            actorRole: actor.role ?? null,
+            action: 'email.sent',
+            details: { template, to, subject, resendId: result.id },
+            createdAt: firestore_1.Timestamp.now(),
+        });
+        return { id: result.id };
+    }
+    catch (error) {
+        console.error('[sendTransactionalEmail]', error);
+        throw new https_1.HttpsError('internal', `Email send failed: ${error instanceof Error ? error.message : 'unknown'}`);
+    }
 });
 //# sourceMappingURL=index.js.map

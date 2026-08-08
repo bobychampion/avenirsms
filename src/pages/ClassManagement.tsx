@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { db, handleFirestoreError, OperationType } from '../firebase';
 import { collection, query, onSnapshot, addDoc, updateDoc, doc, deleteDoc, where, getDocs } from 'firebase/firestore';
-import { getFunctions, httpsCallable } from 'firebase/functions';
+import { callApi } from '../services/api';
 import { SchoolClass, ClassSubject, SUBJECTS, UserProfile } from '../types';
 import { useSchool } from '../components/SchoolContext';
 import { useSchoolId } from '../hooks/useSchoolId';
@@ -104,13 +104,7 @@ export default function ClassManagement() {
     if (classroomStatus !== 'connected' || !schoolId) return;
     setSyncingId(firestoreId);
     try {
-      const functions = getFunctions();
-      const syncFn = httpsCallable<
-        { schoolId: string; cls: { name: string; section?: string }; googleCourseId?: string },
-        { googleCourseId: string }
-      >(functions, 'syncClassroomCourse');
-
-      const { data: result } = await syncFn({
+      const result = await callApi<{ googleCourseId: string }>('/api/sync-classroom-course', {
         schoolId,
         cls: {
           name: classData.name!,
@@ -119,7 +113,6 @@ export default function ClassManagement() {
         ...(existingCourseId ? { googleCourseId: existingCourseId } : {}),
       });
 
-      // Store googleCourseId back on the Firestore class document
       await updateDoc(doc(db, 'classes', firestoreId), {
         googleCourseId: result.googleCourseId,
       });
@@ -275,12 +268,9 @@ export default function ClassManagement() {
       // Archive the Google Classroom course first (if synced)
       if (cls.googleCourseId && classroomStatus === 'connected') {
         try {
-          const functions = getFunctions();
-          const archiveFn = httpsCallable(functions, 'archiveClassroomCourse');
-          await archiveFn({ schoolId, googleCourseId: cls.googleCourseId });
+          await callApi('/api/archive-classroom-course', { schoolId, googleCourseId: cls.googleCourseId });
         } catch (err: any) {
           console.warn('Classroom archive failed:', err?.message ?? err);
-          // Proceed with Firestore deletion regardless
         }
       }
       await deleteDoc(doc(db, 'classes', cls.id));

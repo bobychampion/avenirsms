@@ -169,10 +169,8 @@ export default function IntegrationSettings() {
   const handleVerify = async () => {
     setVerifying(true);
     try {
-      const { getFunctions, httpsCallable } = await import('firebase/functions');
-      const fns = getFunctions();
-      const verify = httpsCallable(fns, 'verifyGoogleConnection');
-      await verify({ schoolId });
+      const { callApi } = await import('../services/api');
+      await callApi('/api/verify-google', { schoolId });
       toast.success('Verification complete.');
     } catch (err: any) {
       toast.error(err?.message || 'Verification failed.');
@@ -184,10 +182,8 @@ export default function IntegrationSettings() {
   const handleDisconnect = async () => {
     setDisconnecting(true);
     try {
-      const { getFunctions, httpsCallable } = await import('firebase/functions');
-      const fns = getFunctions();
-      const disconnect = httpsCallable(fns, 'disconnectGoogleWorkspace');
-      await disconnect({ schoolId });
+      const { callApi } = await import('../services/api');
+      await callApi('/api/disconnect-google', { schoolId });
       toast.success('Google Workspace disconnected.');
       setShowDisconnectConfirm(false);
     } catch (err: any) {
@@ -208,15 +204,9 @@ export default function IntegrationSettings() {
       });
       toast.success(`${SERVICE_META[service].label} ${enabled ? 'enabled' : 'disabled'}.`);
 
-      // When enabling a service, immediately verify so the status badge updates
-      // from "Disabled" to "Connected" (or "Error" if something is wrong)
       if (enabled) {
-        const { getFunctions, httpsCallable } = await import('firebase/functions');
-        const fns = getFunctions();
-        const verify = httpsCallable(fns, 'verifyGoogleConnection');
-        await verify({ schoolId }).catch(() => {
-          // Verification errors are non-fatal — status will show Error badge
-        });
+        const { callApi } = await import('../services/api');
+        await callApi('/api/verify-google', { schoolId }).catch(() => {});
       }
     } catch {
       toast.error('Failed to update service.');

@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { db, handleFirestoreError, OperationType } from '../firebase';
 import { useAuth } from '../components/FirebaseProvider';
 import { collection, query, onSnapshot, orderBy, addDoc, deleteDoc, doc, updateDoc, where, getDoc } from 'firebase/firestore';
-import { getFunctions, httpsCallable } from 'firebase/functions';
+import { callApi } from '../services/api';
 import { SchoolEvent } from '../types';
 import { useSchoolId } from '../hooks/useSchoolId';
 import { motion, AnimatePresence } from 'motion/react';
@@ -80,9 +80,7 @@ export default function SchoolCalendar() {
     if (calendarStatus !== 'connected') return;
     setSyncingId(firestoreId);
     try {
-      const fns = getFunctions();
-      const syncFn = httpsCallable<any, { googleEventId: string }>(fns, 'syncCalendarEvent');
-      const result = await syncFn({
+      const result = await callApi<{ googleEventId: string }>('/api/sync-calendar-event', {
         schoolId,
         event: {
           title: eventData.title,
@@ -93,7 +91,7 @@ export default function SchoolCalendar() {
         googleEventId: existingGoogleId,
       });
       await updateDoc(doc(db, 'events', firestoreId), {
-        googleEventId: result.data.googleEventId,
+        googleEventId: result.googleEventId,
       });
       toast.success('Synced to Google Calendar', { icon: '📅' });
     } catch (err: any) {
@@ -144,9 +142,7 @@ export default function SchoolCalendar() {
       // Remove from Google Calendar first
       if (event.googleEventId && calendarStatus === 'connected') {
         try {
-          const fns = getFunctions();
-          const deleteFn = httpsCallable(fns, 'deleteCalendarEvent');
-          await deleteFn({ schoolId, googleEventId: event.googleEventId });
+          await callApi('/api/delete-calendar-event', { schoolId, googleEventId: event.googleEventId });
         } catch (err) {
           console.warn('Google Calendar delete failed (continuing):', err);
         }

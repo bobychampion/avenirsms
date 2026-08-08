@@ -9,12 +9,15 @@ interface UploadSignatureResponse {
   folder: string;
 }
 
+const FUNCTION_TO_ROUTE: Record<string, string> = {
+  getUploadSignature: '/api/get-upload-signature',
+  deleteStorageFile: '/api/delete-storage-file',
+};
+
 async function callFunction<TReq, TRes>(name: string, data: TReq): Promise<TRes> {
-  const { getFunctions, httpsCallable } = await import('firebase/functions');
-  const fns = getFunctions();
-  const fn = httpsCallable<TReq, TRes>(fns, name);
-  const result = await fn(data);
-  return result.data;
+  const { callApi } = await import('../api');
+  const route = FUNCTION_TO_ROUTE[name] ?? `/api/${name}`;
+  return callApi<TRes>(route, data);
 }
 
 /**

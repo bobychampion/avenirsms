@@ -278,38 +278,29 @@ export async function validateDeletion(schoolId: string): Promise<ValidationResu
 }
 
 /**
- * Permanently deletes a school via the `deleteSchool` Cloud Function.
+ * Permanently deletes a school via the Vercel `/api/delete-school` route.
  *
  * Deletion runs server-side (Admin SDK) because it also removes the
  * school's users' Firebase Auth accounts — something the client SDK can
- * never do — and cascades across 40+ Firestore collections, which is safer
- * done with elevated privileges than by granting the client broad delete
- * permissions. The Cloud Function writes the single authoritative audit
- * log entry; call validateDeletion() beforehand for the confirmation UI's
- * document-count estimate.
+ * never do — and cascades across 40+ Firestore collections.
  */
 export async function deleteSchool(options: DeletionOptions): Promise<DeletionResult> {
-  const { getFunctions, httpsCallable } = await import('firebase/functions');
-  const callable = httpsCallable<
-    { schoolId: string; preserveFinancial?: boolean },
-    {
-      success: boolean;
-      deletionsByCollection: Record<string, number>;
-      authAccountsDeleted: number;
-      errors: Array<{ collection: string; error: string }>;
-      auditLogId: string;
-    }
-  >(getFunctions(), 'deleteSchool');
-
-  const response = await callable({
+  const { callApi } = await import('./api');
+  const data = await callApi<{
+    success: boolean;
+    deletionsByCollection: Record<string, number>;
+    authAccountsDeleted: number;
+    errors?: Array<{ collection: string; error: string }>;
+    auditLogId: string;
+  }>('/api/delete-school', {
     schoolId: options.schoolId,
     preserveFinancial: options.preserveFinancial,
   });
 
-  const { deletionsByCollection, authAccountsDeleted, errors, auditLogId } = response.data;
+  const { deletionsByCollection, authAccountsDeleted, errors = [], auditLogId } = data;
 
   return {
-    success: response.data.success && errors.length === 0,
+    success: data.success && errors.length === 0,
     summary: {
       totalDocumentsDeleted: Object.values(deletionsByCollection).reduce((sum, count) => sum + count, 0),
       deletionsByCollection,

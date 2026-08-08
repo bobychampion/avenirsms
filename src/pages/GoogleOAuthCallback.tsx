@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { getFunctions, httpsCallable } from 'firebase/functions';
+import { callApi } from '../services/api';
 import { Loader2, CheckCircle2, XCircle, Chrome } from 'lucide-react';
 
 type Status = 'loading' | 'success' | 'error';
@@ -39,9 +39,7 @@ export default function GoogleOAuthCallback() {
 
     const connect = async () => {
       try {
-        const fns = getFunctions();
-        const connectFn = httpsCallable(fns, 'connectGoogleWorkspace');
-        await connectFn({ code, state, redirectUri });
+        await callApi('/api/connect-google', { code, state, redirectUri });
         setStatus('success');
         setMessage('Google Workspace connected successfully!');
         setTimeout(() => navigate('/admin/integrations/google'), 2000);

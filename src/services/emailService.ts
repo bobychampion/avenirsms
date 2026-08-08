@@ -1,13 +1,4 @@
-/**
- * Frontend wrapper for the sendTransactionalEmail Cloud Function.
- *
- * Usage example:
- *   import { sendFeeReminder } from '../services/emailService';
- *   await sendFeeReminder({ to: 'parent@email.com', guardianName: 'Mrs Okafor', ... });
- */
-import { getFunctions, httpsCallable } from 'firebase/functions';
-
-const functions = getFunctions();
+import { callApi } from './api';
 
 type EmailTemplateType =
   | 'admissionApproved'
@@ -28,18 +19,9 @@ interface SendEmailRequest {
   to: string | string[];
 }
 
-interface SendEmailResponse {
-  id: string;
-}
-
-const callSendEmail = httpsCallable<SendEmailRequest, SendEmailResponse>(
-  functions,
-  'sendTransactionalEmail'
-);
-
 async function send(req: SendEmailRequest): Promise<string> {
-  const result = await callSendEmail(req);
-  return result.data.id;
+  const result = await callApi<{ id: string }>('/api/send-email', req);
+  return result.id;
 }
 
 // ─── Typed helpers ────────────────────────────────────────────────────────────

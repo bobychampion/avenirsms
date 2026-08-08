@@ -125,6 +125,10 @@ interface PlatformInvoice {
   paidAt?: any;
   /** Snapshot of whichever bank account applied to this school's country at creation time. */
   paymentAccount?: BankAccount;
+  /** Official billing details for the receiving party — defaults to the school name but can be overridden per invoice. VAT and address are optional. */
+  receiverName?: string;
+  receiverVAT?: string;
+  receiverAddress?: string;
 }
 
 // ─── Constants ───────────────────────────────────────────────────────────────
@@ -237,9 +241,11 @@ function InvoicePrintView({ inv, template }: { inv: PlatformInvoice; template: T
         <div className="grid grid-cols-2 gap-8 mb-8">
           <div>
             <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Billed To</p>
-            <p className="font-bold text-slate-900 text-sm">{inv.schoolName}</p>
+            <p className="font-bold text-slate-900 text-sm">{inv.receiverName || inv.schoolName}</p>
             <p className="text-sm text-slate-500">{inv.schoolAdminEmail}</p>
+            {inv.receiverAddress && <p className="text-sm text-slate-500">{inv.receiverAddress}</p>}
             <p className="text-sm text-slate-500">{inv.schoolCountry}</p>
+            {inv.receiverVAT && <p className="text-sm text-slate-500">VAT No: {inv.receiverVAT}</p>}
             <div className="mt-2">
               <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${
                 inv.subscriptionPlan === 'enterprise' ? 'bg-purple-100 text-purple-700' :
@@ -394,8 +400,16 @@ function CreateInvoiceModal({ schools, paymentAccounts, onClose, onCreated }: Cr
   const [useCustomAmount, setUseCustomAmount] = useState(false);
   const [customAmount, setCustomAmount] = useState<number>(0);
   const [emailInvoice, setEmailInvoice] = useState(true);
+  const [receiverName, setReceiverName] = useState('');
+  const [receiverVAT, setReceiverVAT] = useState('');
+  const [receiverAddress, setReceiverAddress] = useState('');
 
   const selectedSchool = schools.find(s => s.id === selectedSchoolId) ?? null;
+
+  // Default the receiver name to the school's name when a school is picked — still editable.
+  useEffect(() => {
+    if (selectedSchool) setReceiverName(prev => prev || selectedSchool.name);
+  }, [selectedSchool]);
 
   const planLineItems = selectedSchool
     ? buildLineItems(selectedSchool.subscriptionPlan, billingCycle)
@@ -445,6 +459,9 @@ function CreateInvoiceModal({ schools, paymentAccounts, onClose, onCreated }: Cr
         template,
         createdAt:        serverTimestamp(),
         paymentAccount:   pickBankAccount(selectedSchool.country || 'Nigeria', paymentAccounts),
+        receiverName:     receiverName || selectedSchool.name,
+        receiverVAT:      receiverVAT || undefined,
+        receiverAddress:  receiverAddress || undefined,
       };
       const ref = await addDoc(collection(db, 'platform_invoices'), inv);
       toast.success('Invoice created');
@@ -516,6 +533,34 @@ function CreateInvoiceModal({ schools, paymentAccounts, onClose, onCreated }: Cr
               <p className="text-indigo-600 text-xs mt-0.5">Plan: <strong>{PLAN_PRICES[selectedSchool.subscriptionPlan]?.label ?? selectedSchool.subscriptionPlan}</strong></p>
             </div>
           )}
+
+          {/* Receiver information — what appears in the "Billed To" block on the invoice */}
+          <div className="border border-slate-200 rounded-xl p-3 space-y-3">
+            <p className="text-xs font-bold text-slate-500 uppercase tracking-wide">Receiver Information</p>
+            <div>
+              <label className="block text-sm font-semibold text-slate-700 mb-1.5">Receiver Name</label>
+              <input
+                className={inputCls}
+                value={receiverName}
+                onChange={e => setReceiverName(e.target.value)}
+                placeholder="Official billing name (defaults to school name)"
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-sm font-semibold text-slate-700 mb-1.5">
+                  VAT Number <span className="text-slate-400 font-normal">(optional)</span>
+                </label>
+                <input className={inputCls} value={receiverVAT} onChange={e => setReceiverVAT(e.target.value)} placeholder="e.g. NG-1234567890" />
+              </div>
+              <div>
+                <label className="block text-sm font-semibold text-slate-700 mb-1.5">
+                  Address <span className="text-slate-400 font-normal">(optional)</span>
+                </label>
+                <input className={inputCls} value={receiverAddress} onChange={e => setReceiverAddress(e.target.value)} placeholder="Billing address" />
+              </div>
+            </div>
+          </div>
 
           {/* Billing cycle */}
           <div>

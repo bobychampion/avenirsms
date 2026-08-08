@@ -170,7 +170,7 @@ export default function IntegrationSettings() {
     setVerifying(true);
     try {
       const { callApi } = await import('../services/api');
-      await callApi('/api/verify-google', { schoolId });
+      await callApi('/api/google?action=verify', { schoolId });
       toast.success('Verification complete.');
     } catch (err: any) {
       toast.error(err?.message || 'Verification failed.');
@@ -183,7 +183,7 @@ export default function IntegrationSettings() {
     setDisconnecting(true);
     try {
       const { callApi } = await import('../services/api');
-      await callApi('/api/disconnect-google', { schoolId });
+      await callApi('/api/google?action=disconnect', { schoolId });
       toast.success('Google Workspace disconnected.');
       setShowDisconnectConfirm(false);
     } catch (err: any) {
@@ -206,7 +206,7 @@ export default function IntegrationSettings() {
 
       if (enabled) {
         const { callApi } = await import('../services/api');
-        await callApi('/api/verify-google', { schoolId }).catch(() => {});
+        await callApi('/api/google?action=verify', { schoolId }).catch(() => {});
       }
     } catch {
       toast.error('Failed to update service.');

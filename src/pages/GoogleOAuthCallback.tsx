@@ -39,7 +39,7 @@ export default function GoogleOAuthCallback() {
 
     const connect = async () => {
       try {
-        await callApi('/api/connect-google', { code, state, redirectUri });
+        await callApi('/api/google?action=connect', { code, state, redirectUri });
         setStatus('success');
         setMessage('Google Workspace connected successfully!');
         setTimeout(() => navigate('/admin/integrations/google'), 2000);

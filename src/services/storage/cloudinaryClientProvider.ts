@@ -11,7 +11,7 @@ interface UploadSignatureResponse {
 
 const FUNCTION_TO_ROUTE: Record<string, string> = {
   getUploadSignature: '/api/get-upload-signature',
-  deleteStorageFile: '/api/delete-storage-file',
+  deleteStorageFile: '/api/storage?action=delete-file',
 };
 
 async function callFunction<TReq, TRes>(name: string, data: TReq): Promise<TRes> {

@@ -80,7 +80,7 @@ export default function SchoolCalendar() {
     if (calendarStatus !== 'connected') return;
     setSyncingId(firestoreId);
     try {
-      const result = await callApi<{ googleEventId: string }>('/api/sync-calendar-event', {
+      const result = await callApi<{ googleEventId: string }>('/api/calendar?action=sync', {
         schoolId,
         event: {
           title: eventData.title,
@@ -142,7 +142,7 @@ export default function SchoolCalendar() {
       // Remove from Google Calendar first
       if (event.googleEventId && calendarStatus === 'connected') {
         try {
-          await callApi('/api/delete-calendar-event', { schoolId, googleEventId: event.googleEventId });
+          await callApi('/api/calendar?action=delete', { schoolId, googleEventId: event.googleEventId });
         } catch (err) {
           console.warn('Google Calendar delete failed (continuing):', err);
         }

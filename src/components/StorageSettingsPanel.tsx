@@ -13,12 +13,12 @@ interface Props {
 }
 
 const FUNCTION_TO_ROUTE: Record<string, string> = {
-  testStorageConnection: '/api/test-storage',
-  connectStorageProvider: '/api/connect-storage',
-  disconnectStorageProvider: '/api/disconnect-storage',
+  testStorageConnection: '/api/storage?action=test',
+  connectStorageProvider: '/api/storage?action=connect',
+  disconnectStorageProvider: '/api/storage?action=disconnect',
   getUploadSignature: '/api/get-upload-signature',
-  deleteStorageFile: '/api/delete-storage-file',
-  verifyStorageConnection: '/api/verify-storage',
+  deleteStorageFile: '/api/storage?action=delete-file',
+  verifyStorageConnection: '/api/storage?action=verify',
 };
 
 async function callFunction<TReq, TRes>(name: string, data: TReq): Promise<TRes> {

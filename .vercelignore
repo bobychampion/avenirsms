@@ -1,4 +1,7 @@
-functions/
+functions/node_modules/
+functions/lib/
+functions/google-oauth-secret.json
+functions/test-resend.mjs
 android/
 Docs/
 dataconnect/

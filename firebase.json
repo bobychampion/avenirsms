@@ -46,7 +46,6 @@
     "indexes": "firestore.indexes.json"
   },
   "functions": {
-    "source": "functions",
-    "runtime": "nodejs20"
+    "source": "functions"
   }
 }

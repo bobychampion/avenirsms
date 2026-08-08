@@ -8,7 +8,7 @@
  * fetch the caller's users/{uid} doc, require super_admin OR
  * (admin/School_admin scoped to the target schoolId).
  */
-import { HttpsError } from 'firebase-functions/v2/https';
+import { HttpsError } from '../compat/httpsError';
 import { getFirestore } from 'firebase-admin/firestore';
 import {
   testCloudinaryCredentials,

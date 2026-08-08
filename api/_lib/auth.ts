@@ -29,9 +29,26 @@ export class AppError extends Error {
   }
 }
 
+const CODE_TO_STATUS: Record<string, number> = {
+  unauthenticated: 401,
+  'permission-denied': 403,
+  'not-found': 404,
+  'invalid-argument': 400,
+  'failed-precondition': 400,
+  'already-exists': 409,
+  'resource-exhausted': 429,
+  internal: 500,
+};
+
 export function errorResponse(res: any, err: unknown) {
   if (err instanceof AppError) {
     return res.status(err.httpStatus).json({ error: err.message, code: err.code });
+  }
+  // Handle HttpsError from our compat shim (used in storageHandlers.ts)
+  if (err instanceof Error && 'code' in err && typeof (err as any).code === 'string') {
+    const code = (err as any).code as string;
+    const status = CODE_TO_STATUS[code] ?? 500;
+    return res.status(status).json({ error: err.message, code });
   }
   console.error('[api]', err);
   return res.status(500).json({ error: 'Internal server error', code: 'internal' });

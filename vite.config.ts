@@ -46,7 +46,7 @@ export default defineConfig(({mode}) => {
           clientsClaim: true,
           skipWaiting: true,
           maximumFileSizeToCacheInBytes: 4 * 1024 * 1024,
-          // Cache the app shell (HTML/JS/CSS) with StaleWhileRevalidate
+          navigateFallbackDenylist: [/^\/api\//],
           globPatterns: ['**/*.{js,css,html,svg,woff2}'],
           runtimeCaching: [
             // Firestore — NetworkFirst: always try live data, fall back to cache

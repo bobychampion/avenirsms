@@ -9,6 +9,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(401).json({ error: 'Unauthorized' });
   }
 
+  try {
+    return await run(res);
+  } catch (err: any) {
+    console.error('[dailyReminders] Failed:', err);
+    return res.status(500).json({ error: err?.message ?? String(err), code: err?.code ?? 'internal' });
+  }
+}
+
+async function run(res: VercelResponse) {
   const db = getFirestore();
   const messaging = getMessaging();
 

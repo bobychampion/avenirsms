@@ -255,8 +255,9 @@ export default function SuperAdminDashboard() {
       setBroadcastSubject(draft.subject);
       setBroadcastMessage(draft.message);
       toast.success('Draft ready — review before sending', { id: tid });
-    } catch {
-      toast.error('Failed to generate draft', { id: tid });
+    } catch (err: any) {
+      console.error('[handleGenerateAnnouncement]', err);
+      toast.error(`Failed to generate draft: ${err?.message ?? 'unknown error'}`, { id: tid });
     } finally {
       setGeneratingAnnouncement(false);
     }
@@ -308,8 +309,9 @@ export default function SuperAdminDashboard() {
       setStaffSubject(draft.subject);
       setStaffMessage(draft.message);
       toast.success('Draft ready — review before sending', { id: tid });
-    } catch {
-      toast.error('Failed to generate draft', { id: tid });
+    } catch (err: any) {
+      console.error('[handleGenerateStaffDraft]', err);
+      toast.error(`Failed to generate draft: ${err?.message ?? 'unknown error'}`, { id: tid });
     } finally {
       setGeneratingStaffDraft(false);
     }

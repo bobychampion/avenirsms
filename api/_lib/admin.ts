@@ -15,6 +15,11 @@ function init() {
   });
 }
 
-init();
+try {
+  init();
+} catch (e) {
+  // Log at module load so Vercel function logs show the exact key error
+  console.error('[admin] Firebase init failed:', e);
+}
 
 export { getFirestore, getAuth, getMessaging };

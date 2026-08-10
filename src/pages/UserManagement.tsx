@@ -40,7 +40,7 @@ interface RoleChangeConfirm {
 export default function UserManagement() {
   const schoolId = useSchoolId();
   const navigate = useNavigate();
-  const { user: currentUser, isSuperAdmin } = useAuth();
+  const { user: currentUser, isSuperAdmin, isAdmin } = useAuth();
   const { startImpersonation } = useImpersonation();
   const [viewingAsId, setViewingAsId] = useState<string | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState<UserProfile | null>(null);
@@ -500,7 +500,7 @@ export default function UserManagement() {
                           <option value="admin">Admin</option>
                           <option value="School_admin">School Admin</option>
                         </select>
-                        {isSuperAdmin && IMPERSONATABLE_ROLES.has(u.role) && (
+                        {(isSuperAdmin || isAdmin) && IMPERSONATABLE_ROLES.has(u.role) && (
                           <button onClick={e => { e.stopPropagation(); handleViewAs(u); }} disabled={u.disabled || viewingAsId === u.uid}
                             title={u.disabled ? 'Cannot view as a disabled account' : 'View As (read-only)'}
                             className="p-1.5 rounded-lg text-indigo-500 hover:bg-indigo-50 transition-all disabled:opacity-40">

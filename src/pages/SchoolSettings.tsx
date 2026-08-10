@@ -871,7 +871,7 @@ function PortalLinks({ schoolId, urlSlug }: { schoolId: string | null; urlSlug: 
 
 export default function SchoolSettingsPage() {
   const { schoolId } = useSchool();
-  const { isSuperAdmin } = useAuth();
+  const { isSuperAdmin, isAdmin } = useAuth();
   const [form, setForm] = useState<SchoolSettings>(defaultSettings);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -2818,13 +2818,12 @@ export default function SchoolSettingsPage() {
             </div>
           </section>
 
-          {/* URL Slug — super admin only */}
-          {isSuperAdmin && (
+          {/* URL Slug — admin and super admin */}
+          {(isSuperAdmin || isAdmin) && (
             <section className="bg-white rounded-2xl border-2 border-purple-200 shadow-sm p-6">
               <div className="flex items-center gap-2 mb-1">
                 <LinkIcon className="w-4 h-4 text-purple-600" />
                 <h2 className="font-bold text-slate-800 text-sm">Custom URL Slug</h2>
-                <span className="ml-auto text-xs font-bold text-purple-700 bg-purple-100 px-2 py-0.5 rounded-full">Super Admin Only</span>
               </div>
               <p className="text-xs text-slate-500 mb-5">
                 Give this school a short, memorable URL. The public landing page will be accessible at

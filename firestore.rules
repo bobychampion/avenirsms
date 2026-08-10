@@ -144,7 +144,9 @@ service cloud.firestore {
         (isAuthenticated() &&
          request.resource.data.status == 'demo' &&
          request.resource.data.adminEmail == request.auth.token.email);
-      allow update, delete: if isSuperAdmin();
+      // Admin can update their own school's metadata (name, settings); only super_admin can delete schools.
+      allow update: if isSuperAdmin() || (isAdmin() && belongsToSchool(schoolId));
+      allow delete: if isSuperAdmin();
     }
 
     // ─── School settings (keyed by schoolId, not 'main') ──────────────────────
@@ -188,7 +190,10 @@ service cloud.firestore {
 
     match /school_slugs/{slug} {
       allow read: if true;
-      allow write: if isSuperAdmin();
+      allow create, update: if isSuperAdmin() ||
+        (isAdmin() && request.resource.data.get('schoolId', null) == userProfile().schoolId);
+      allow delete: if isSuperAdmin() ||
+        (isAdmin() && resource.data.get('schoolId', null) == userProfile().schoolId);
     }
 
     // Reverse lookup for custom/school-owned domains -> schoolId. Public read is required
@@ -239,7 +244,7 @@ service cloud.firestore {
                     // Admin provisioning any school-scoped account (students, parents, staff)
                     (isAdmin() &&
                      request.resource.data.get('schoolId', null) == userProfile().schoolId &&
-                     !(request.resource.data.get('role', '') in ['super_admin', 'admin', 'School_admin'])) ||
+                     !(request.resource.data.get('role', '') in ['super_admin'])) ||
                     isSuperAdmin());
 
       allow update: if emailRoleConsistent(request.resource.data) && (
@@ -257,10 +262,8 @@ service cloud.firestore {
     // ─── FCM tokens (user-scoped by uid) ──────────────────────────────────────
 
     match /fcm_tokens/{userId} {
-      allow read: if isSuperAdmin() || (isAuthenticated() && isOwner(userId));
+      allow read: if isSuperAdmin() || isAdmin() || (isAuthenticated() && isOwner(userId));
       allow write: if isAuthenticated() && isOwner(userId);
-      // Admins clean up a deleted user's stale push token; no schoolId is
-      // stored on this doc to scope further, so this is school-admin-wide.
       allow delete: if isSuperAdmin() || isAdmin();
     }
 
@@ -506,11 +509,9 @@ service cloud.firestore {
         ))
       );
       allow create: if isAuthenticated() && newDocBelongsToCallerSchool();
-      // Marking a message read: receiverId may be a uid or an email (see read
-      // rule above) — same fix applies here, otherwise "mark as read" silently
-      // fails with permission-denied whenever receiverId was stored as an email.
       allow update: if isAuthenticated() && (
         isSuperAdmin() ||
+        (isAdmin() && docBelongsToCallerSchool()) ||
         ((request.auth.uid == resource.data.receiverId || request.auth.token.email == resource.data.receiverId) &&
          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['read']))
       );
@@ -1023,15 +1024,25 @@ service cloud.firestore {
         !target.get('disabled', false);
     }
 
+    // True when the target user belongs to the caller's school (for admin-scoped "View As").
+    function targetBelongsToCallerSchool(targetUid) {
+      let target = get(/databases/$(database)/documents/users/$(targetUid)).data;
+      return target.get('schoolId', null) == userProfile().schoolId;
+    }
+
     match /impersonation_logs/{logId} {
-      allow read: if isSuperAdmin();
+      // Super admin sees all logs; admin sees only sessions they started.
+      allow read: if isSuperAdmin() ||
+        (isAdmin() && resource.data.superAdminUid == request.auth.uid);
 
-      allow create: if isSuperAdmin() &&
-        request.resource.data.superAdminUid == request.auth.uid &&
+      // Super admin: any impersonatable user. Admin: impersonatable users within their school only.
+      allow create: if request.resource.data.superAdminUid == request.auth.uid &&
         request.resource.data.endedAt == null &&
-        targetIsImpersonatable(request.resource.data.targetUid);
+        targetIsImpersonatable(request.resource.data.targetUid) &&
+        (isSuperAdmin() ||
+         (isAdmin() && targetBelongsToCallerSchool(request.resource.data.targetUid)));
 
-      allow update: if isSuperAdmin() &&
+      allow update: if (isSuperAdmin() || isAdmin()) &&
         resource.data.superAdminUid == request.auth.uid &&
         resource.data.endedAt == null &&
         request.resource.data.diff(resource.data).affectedKeys().hasOnly(['endedAt', 'endReason']);

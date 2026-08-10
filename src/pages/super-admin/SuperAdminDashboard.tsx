@@ -6,7 +6,7 @@
 
 import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { collection, getDocs, query, orderBy, doc, updateDoc, where, getCountFromServer } from 'firebase/firestore';
+import { collection, getDocs, getDoc, query, orderBy, doc, updateDoc, where, getCountFromServer } from 'firebase/firestore';
 import { db } from '../../firebase';
 import { School } from '../../types';
 import toast from 'react-hot-toast';
@@ -14,8 +14,10 @@ import {
   Building2, Users, CheckCircle2, CreditCard, Plus, ArrowRight,
   TrendingUp, AlertCircle, Clock, FileText, Zap, Bell, Mail,
   Phone, BookOpen, ChevronDown, CheckCheck, X, Inbox, Eye, EyeOff, Copy, KeyRound, Send, Loader2,
+  Image as ImageIcon, AlertTriangle,
 } from 'lucide-react';
-import { sendDemoProvisioned, sendPlatformBroadcast } from '../../services/emailService';
+import { sendDemoProvisioned, sendPlatformBroadcast, sendRaw } from '../../services/emailService';
+import { buildStaffBroadcastEmail } from '../../utils/staffBroadcastEmail';
 
 interface DemoRequest {
   id: string;
@@ -78,6 +80,21 @@ export default function SuperAdminDashboard() {
   const [broadcastMessage, setBroadcastMessage] = useState('');
   const [broadcastFilter, setBroadcastFilter] = useState<'all' | 'active' | 'trial' | 'demo'>('all');
   const [broadcasting, setBroadcasting] = useState(false);
+
+  // Staff broadcast (admins/teachers, personalized with each recipient's own school logo)
+  const [staffAudience, setStaffAudience] = useState<{ admin: boolean; teacher: boolean }>({ admin: true, teacher: false });
+  const [staffSubject, setStaffSubject] = useState('');
+  const [staffMessage, setStaffMessage] = useState('');
+  type StaffRecipient = { uid: string; email: string; name: string; role: string; schoolId: string | null; school: string; hasLogo: boolean; branding: Record<string, any> };
+  const [staffPreview, setStaffPreview] = useState<{ recipients: StaffRecipient[]; bySchool: Record<string, { count: number; hasLogo: boolean }> } | null>(null);
+  const [staffPreviewLoading, setStaffPreviewLoading] = useState(false);
+  const [staffSending, setStaffSending] = useState(false);
+  const [staffProgress, setStaffProgress] = useState<{ sent: number; failed: number; total: number } | null>(null);
+  const [staffFailures, setStaffFailures] = useState<{ email: string; error: string }[]>([]);
+
+  // Any change to who's targeted invalidates the last preview — the Send button
+  // stays locked until a fresh preview is pulled for the current selection.
+  useEffect(() => { setStaffPreview(null); }, [staffAudience.admin, staffAudience.teacher]);
 
   const togglePasswordReveal = (id: string) => {
     setRevealedPasswords(prev => {
@@ -210,6 +227,113 @@ export default function SuperAdminDashboard() {
       toast.error('Failed to send broadcast email');
     } finally {
       setBroadcasting(false);
+    }
+  };
+
+  const fetchStaffPreview = async () => {
+    const roles: string[] = [];
+    if (staffAudience.admin) roles.push('admin', 'School_admin');
+    if (staffAudience.teacher) roles.push('teacher');
+    if (roles.length === 0) {
+      toast.error('Select at least one audience (Admins or Teachers)');
+      return;
+    }
+
+    setStaffPreviewLoading(true);
+    try {
+      const usersSnap = await getDocs(query(collection(db, 'users'), where('role', 'in', roles)));
+      const seen = new Set<string>();
+      const users = usersSnap.docs
+        .map(d => ({ uid: d.id, ...d.data() } as any))
+        .filter(u => u.email && !u.disabled && !u.deletedAt)
+        .filter(u => {
+          const key = String(u.email).toLowerCase().trim();
+          if (seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        });
+
+      const schoolIds = [...new Set(users.map(u => u.schoolId).filter(Boolean))] as string[];
+      const brandingMap: Record<string, any> = {};
+      await Promise.all(schoolIds.map(async sid => {
+        try {
+          const snap = await getDoc(doc(db, 'school_settings', sid));
+          brandingMap[sid] = snap.exists() ? snap.data() : {};
+        } catch {
+          brandingMap[sid] = {};
+        }
+      }));
+
+      const recipients: StaffRecipient[] = users.map(u => {
+        const branding = (u.schoolId && brandingMap[u.schoolId]) || {};
+        return {
+          uid: u.uid,
+          email: u.email,
+          name: u.displayName || u.email,
+          role: u.role,
+          schoolId: u.schoolId ?? null,
+          school: branding.schoolName || '(no school)',
+          hasLogo: /^https:\/\//i.test(branding.logoUrl || ''),
+          branding,
+        };
+      });
+
+      const bySchool: Record<string, { count: number; hasLogo: boolean }> = {};
+      for (const r of recipients) {
+        bySchool[r.school] ??= { count: 0, hasLogo: r.hasLogo };
+        bySchool[r.school].count++;
+      }
+
+      setStaffPreview({ recipients, bySchool });
+    } catch {
+      toast.error('Failed to load recipients');
+    } finally {
+      setStaffPreviewLoading(false);
+    }
+  };
+
+  const sendStaffBroadcast = async () => {
+    if (!staffPreview) return;
+    if (!staffSubject.trim() || !staffMessage.trim()) {
+      toast.error('Subject and message are required');
+      return;
+    }
+
+    setStaffSending(true);
+    setStaffFailures([]);
+    const total = staffPreview.recipients.length;
+    setStaffProgress({ sent: 0, failed: 0, total });
+
+    let sent = 0, failed = 0;
+    const failures: { email: string; error: string }[] = [];
+
+    for (const r of staffPreview.recipients) {
+      const { subject, html } = buildStaffBroadcastEmail(
+        { displayName: r.name, email: r.email },
+        r.branding,
+        { subject: staffSubject, message: staffMessage },
+      );
+      try {
+        await sendRaw({ to: r.email, subject, html });
+        sent++;
+      } catch (e: any) {
+        failed++;
+        failures.push({ email: r.email, error: e?.message ?? 'Send failed' });
+      }
+      setStaffProgress({ sent, failed, total });
+      // Stay under Resend's rate limit.
+      await new Promise(res => setTimeout(res, 600));
+    }
+
+    setStaffFailures(failures);
+    setStaffSending(false);
+    if (failed === 0) {
+      toast.success(`Sent to all ${sent} recipient${sent !== 1 ? 's' : ''}`);
+      setStaffSubject('');
+      setStaffMessage('');
+      setStaffPreview(null);
+    } else {
+      toast.error(`Sent ${sent}, failed ${failed} — see details below`);
     }
   };
 
@@ -485,6 +609,125 @@ export default function SuperAdminDashboard() {
             {broadcasting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
             {broadcasting ? 'Sending…' : 'Send Announcement'}
           </button>
+        </div>
+      </div>
+
+      {/* ── Staff Broadcast (admins/teachers, personalized with each school's own logo) ── */}
+      <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-sm">
+        <div className="px-5 py-4 border-b border-slate-100 flex items-center gap-2">
+          <Users className="w-4 h-4 text-indigo-600" />
+          <h2 className="font-semibold text-slate-800">Staff Broadcast</h2>
+          <span className="text-xs text-slate-400 font-normal">— sent to each admin/teacher's own inbox, branded with their school's logo</span>
+        </div>
+        <div className="p-5 space-y-4">
+          <div>
+            <label className="block text-sm font-semibold text-slate-700 mb-1.5">Audience</label>
+            <div className="flex flex-wrap gap-2">
+              {([
+                { key: 'admin' as const, label: 'Admins' },
+                { key: 'teacher' as const, label: 'Teachers' },
+              ]).map(opt => (
+                <button
+                  key={opt.key}
+                  onClick={() => setStaffAudience(prev => ({ ...prev, [opt.key]: !prev[opt.key] }))}
+                  className={`px-3 py-1 rounded-lg text-xs font-semibold transition-colors ${
+                    staffAudience[opt.key] ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-sm font-semibold text-slate-700 mb-1.5">Subject</label>
+            <input
+              className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
+              placeholder="e.g. Happy Summer Break!"
+              value={staffSubject}
+              onChange={e => setStaffSubject(e.target.value)}
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-semibold text-slate-700 mb-1.5">Message</label>
+            <textarea
+              className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-500 outline-none h-28 resize-none"
+              placeholder="Write your message here — each recipient sees their own name and school branding automatically…"
+              value={staffMessage}
+              onChange={e => setStaffMessage(e.target.value)}
+            />
+          </div>
+
+          <div className="flex flex-wrap items-center gap-3">
+            <button
+              onClick={fetchStaffPreview}
+              disabled={staffPreviewLoading || staffSending}
+              className="flex items-center gap-2 bg-slate-100 hover:bg-slate-200 disabled:opacity-50 disabled:cursor-not-allowed text-slate-700 font-semibold px-4 py-2.5 rounded-xl transition-colors text-sm"
+            >
+              {staffPreviewLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Users className="w-4 h-4" />}
+              {staffPreviewLoading ? 'Loading recipients…' : staffPreview ? 'Refresh recipients' : 'Preview recipients'}
+            </button>
+
+            <button
+              onClick={sendStaffBroadcast}
+              disabled={!staffPreview || staffPreview.recipients.length === 0 || staffSending || !staffSubject.trim() || !staffMessage.trim()}
+              className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold px-5 py-2.5 rounded-xl transition-colors text-sm"
+            >
+              {staffSending
+                ? <Loader2 className="w-4 h-4 animate-spin" />
+                : <Send className="w-4 h-4" />}
+              {staffSending
+                ? `Sending… ${staffProgress?.sent ?? 0}/${staffProgress?.total ?? 0}`
+                : staffPreview
+                  ? `Send to ${staffPreview.recipients.length} recipient${staffPreview.recipients.length !== 1 ? 's' : ''}`
+                  : 'Preview recipients first'}
+            </button>
+          </div>
+
+          {staffPreview && !staffSending && (
+            <div className="border border-slate-200 rounded-xl overflow-hidden">
+              <div className="px-4 py-2.5 bg-slate-50 border-b border-slate-200 flex items-center justify-between text-xs">
+                <span className="font-semibold text-slate-700">
+                  {staffPreview.recipients.length} recipient{staffPreview.recipients.length !== 1 ? 's' : ''} across {Object.keys(staffPreview.bySchool).length} school{Object.keys(staffPreview.bySchool).length !== 1 ? 's' : ''}
+                </span>
+                {staffPreview.recipients.some(r => !r.hasLogo) && (
+                  <span className="flex items-center gap-1 text-amber-600 font-medium">
+                    <ImageIcon className="w-3.5 h-3.5" />
+                    {staffPreview.recipients.filter(r => !r.hasLogo).length} without a renderable logo (school name used instead)
+                  </span>
+                )}
+              </div>
+              <div className="max-h-48 overflow-y-auto divide-y divide-slate-100">
+                {Object.entries(staffPreview.bySchool).map(([school, info]: [string, { count: number; hasLogo: boolean }]) => (
+                  <div key={school} className="px-4 py-2 flex items-center justify-between text-xs">
+                    <span className="text-slate-700">{school}</span>
+                    <span className="flex items-center gap-2 text-slate-500">
+                      {info.count} recipient{info.count !== 1 ? 's' : ''}
+                      {!info.hasLogo && <span className="text-amber-600">no logo</span>}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {staffFailures.length > 0 && (
+            <div className="border border-red-200 rounded-xl overflow-hidden">
+              <div className="px-4 py-2.5 bg-red-50 border-b border-red-200 flex items-center gap-2 text-xs font-semibold text-red-700">
+                <AlertTriangle className="w-3.5 h-3.5" />
+                {staffFailures.length} failed to send
+              </div>
+              <div className="max-h-40 overflow-y-auto divide-y divide-red-100">
+                {staffFailures.map(f => (
+                  <div key={f.email} className="px-4 py-2 flex items-center justify-between text-xs">
+                    <span className="text-slate-700">{f.email}</span>
+                    <span className="text-red-600">{f.error}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       </div>
 

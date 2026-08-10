@@ -157,6 +157,11 @@ export async function sendPlatformInvoice(opts: {
   return send({ template: 'platformInvoice', to: opts.to, data: { ...opts, ...opts.branding } });
 }
 
+/** Send a single pre-built HTML email — used by callers that build their own template (e.g. per-recipient branded broadcasts). */
+export async function sendRaw(opts: { to: string; subject: string; html: string }) {
+  return send({ template: 'raw', to: opts.to, data: { subject: opts.subject, html: opts.html } });
+}
+
 export async function sendPlatformBroadcast(opts: {
   to: string | string[];
   subject: string;

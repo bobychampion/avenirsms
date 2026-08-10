@@ -69,6 +69,8 @@ export default function SuperAdminDashboard() {
     totalSchools: 0, activeSchools: 0, suspendedSchools: 0,
     trialSchools: 0, demoSchools: 0, totalStudents: 0, loading: true,
   });
+  const [lastAdminLoginBySchool, setLastAdminLoginBySchool] = useState<Record<string, Date | null>>({});
+  const [healthLoading, setHealthLoading] = useState(true);
   const [demoRequests, setDemoRequests] = useState<DemoRequest[]>([]);
   const [demoLoading, setDemoLoading] = useState(true);
   const [demoFilter, setDemoFilter] = useState<DemoRequest['status'] | 'all'>('all');
@@ -141,6 +143,25 @@ export default function SuperAdminDashboard() {
         const schoolsSnap = await getDocs(collection(db, 'schools'));
         const schoolList = schoolsSnap.docs.map(d => ({ id: d.id, ...d.data() } as School));
         setSchools(schoolList);
+
+        // Last admin login per school, for the School Health panel — one query
+        // for all admins/School_admins, grouped client-side, instead of one
+        // query per school.
+        getDocs(query(collection(db, 'users'), where('role', 'in', ['admin', 'School_admin'])))
+          .then(usersSnap => {
+            const lastLogin: Record<string, Date | null> = {};
+            for (const d of usersSnap.docs) {
+              const u = d.data() as any;
+              if (!u.schoolId) continue;
+              const login = u.lastLoginAt?.toDate?.() ?? null;
+              if (!login) continue;
+              if (!lastLogin[u.schoolId] || login > lastLogin[u.schoolId]!) lastLogin[u.schoolId] = login;
+            }
+            setLastAdminLoginBySchool(lastLogin);
+            setHealthLoading(false);
+          })
+          .catch(() => setHealthLoading(false));
+
         // Total students is a pure count for one KPI tile — use a server-side
         // aggregation query instead of downloading every student document from
         // every school. This used to scan the entire `students` collection on
@@ -258,10 +279,46 @@ export default function SuperAdminDashboard() {
     return d.toLocaleString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
   };
 
-  const templateLabel = (template: string) => {
-    if (template === 'raw') return 'Custom';
-    return template.replace(/([A-Z])/g, ' $1').replace(/^./, c => c.toUpperCase()).trim();
+  // ── School Health: computed signal per school, not just a status field ────
+  type HealthLevel = 'healthy' | 'watch' | 'at-risk' | 'never-logged-in' | 'expiring-soon';
+  const HEALTH_CONFIG: Record<HealthLevel, { label: string; color: string; dot: string }> = {
+    'healthy':          { label: 'Healthy',           color: 'text-emerald-700 bg-emerald-50', dot: 'bg-emerald-500' },
+    'watch':            { label: 'Watch',              color: 'text-amber-700 bg-amber-50',     dot: 'bg-amber-500' },
+    'at-risk':          { label: 'At risk',             color: 'text-red-700 bg-red-50',         dot: 'bg-red-500' },
+    'never-logged-in':  { label: 'Never logged in',     color: 'text-slate-600 bg-slate-100',    dot: 'bg-slate-400' },
+    'expiring-soon':    { label: 'Expiring soon',       color: 'text-violet-700 bg-violet-50',   dot: 'bg-violet-500' },
   };
+
+  const schoolHealth = (school: School): { level: HealthLevel; reason: string; daysSinceLogin: number | null } => {
+    const lastLogin = lastAdminLoginBySchool[school.id!] ?? null;
+    const daysSinceLogin = lastLogin ? Math.floor((Date.now() - lastLogin.getTime()) / 86400000) : null;
+    const expiresAt = school.subscriptionExpiresAt?.toDate?.() ?? null;
+    const daysUntilExpiry = expiresAt ? Math.floor((expiresAt.getTime() - Date.now()) / 86400000) : null;
+
+    if (daysSinceLogin === null) {
+      return { level: 'never-logged-in', reason: 'No admin login recorded yet', daysSinceLogin: null };
+    }
+    if ((school.status === 'trial' || school.status === 'demo') && daysUntilExpiry !== null && daysUntilExpiry <= 3) {
+      return { level: 'expiring-soon', reason: `${school.status} expires in ${Math.max(daysUntilExpiry, 0)} day${daysUntilExpiry !== 1 ? 's' : ''}`, daysSinceLogin };
+    }
+    if (daysSinceLogin > 30) {
+      return { level: 'at-risk', reason: `No admin login in ${daysSinceLogin} days`, daysSinceLogin };
+    }
+    if (daysSinceLogin > 14) {
+      return { level: 'watch', reason: `Last admin login ${daysSinceLogin} days ago`, daysSinceLogin };
+    }
+    return { level: 'healthy', reason: `Last admin login ${daysSinceLogin} day${daysSinceLogin !== 1 ? 's' : ''} ago`, daysSinceLogin };
+  };
+
+  const activeSchoolsForHealth = schools.filter(s => s.status !== 'suspended');
+  const healthEntries = activeSchoolsForHealth.map(s => ({ school: s, ...schoolHealth(s) }));
+  const healthCounts = healthEntries.reduce((acc, e) => {
+    acc[e.level] = (acc[e.level] ?? 0) + 1;
+    return acc;
+  }, {} as Record<HealthLevel, number>);
+  const needsAttention = healthEntries
+    .filter(e => e.level !== 'healthy')
+    .sort((a, b) => (b.daysSinceLogin ?? 9999) - (a.daysSinceLogin ?? 9999));
 
   return (
     <div className="p-6 space-y-8 max-w-6xl mx-auto">
@@ -318,6 +375,71 @@ export default function SuperAdminDashboard() {
             );
           })}
         </div>
+      </div>
+
+      {/* School Health */}
+      <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm">
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center gap-2">
+            {healthLoading ? (
+              <Loader2 className="w-4 h-4 text-slate-400 animate-spin" />
+            ) : needsAttention.length === 0 ? (
+              <CheckCheck className="w-4 h-4 text-emerald-600" />
+            ) : (
+              <AlertCircle className="w-4 h-4 text-amber-600" />
+            )}
+            <h2 className="font-semibold text-slate-800 text-sm">School Health</h2>
+            <span className="text-xs text-slate-400">— admin login activity &amp; trial/demo expiry</span>
+          </div>
+        </div>
+
+        {!healthLoading && (
+          <div className="flex flex-wrap gap-2 mb-4">
+            {(Object.keys(HEALTH_CONFIG) as HealthLevel[]).map(level => {
+              const count = healthCounts[level] ?? 0;
+              if (count === 0) return null;
+              const cfg = HEALTH_CONFIG[level];
+              return (
+                <span key={level} className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold ${cfg.color}`}>
+                  <span className={`w-1.5 h-1.5 rounded-full ${cfg.dot}`} /> {count} {cfg.label}
+                </span>
+              );
+            })}
+          </div>
+        )}
+
+        {healthLoading ? (
+          <div className="py-6 text-center text-slate-400 text-sm">Loading…</div>
+        ) : needsAttention.length === 0 ? (
+          <div className="py-6 text-center text-slate-400 text-sm">Every active school looks healthy — no action needed.</div>
+        ) : (
+          <div className="divide-y divide-slate-100">
+            {needsAttention.slice(0, 8).map(({ school, level, reason }) => {
+              const cfg = HEALTH_CONFIG[level];
+              return (
+                <div key={school.id} className="py-2.5 flex items-center justify-between gap-4">
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <span className={`w-2 h-2 rounded-full shrink-0 ${cfg.dot}`} />
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium text-slate-800 truncate">{school.name}</p>
+                      <p className="text-xs text-slate-500">{reason}</p>
+                    </div>
+                  </div>
+                  <Link to={`/super-admin/schools/${school.id}`} className="text-xs font-semibold text-indigo-600 hover:text-indigo-700 shrink-0">
+                    Manage →
+                  </Link>
+                </div>
+              );
+            })}
+            {needsAttention.length > 8 && (
+              <div className="pt-3 text-center">
+                <Link to="/super-admin/schools" className="text-xs font-semibold text-indigo-600 hover:text-indigo-700">
+                  +{needsAttention.length - 8} more — view all schools
+                </Link>
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* KPI Cards */}

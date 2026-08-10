@@ -78,51 +78,6 @@ export default function SuperAdminDashboard() {
   const [revealedPasswords, setRevealedPasswords] = useState<Set<string>>(new Set());
   const [sendingCredentials, setSendingCredentials] = useState<string | null>(null);
 
-  // ── System Status: every api/ route, checked with an unauthenticated probe.
-  // Safe on every route (including delete-school) because every handler's
-  // requireAuth()/CRON_SECRET check runs before it ever touches the request
-  // body — confirmed across all route files. 401 (or 200 for the bodyless
-  // /api/ping) means the function loaded and is executing; anything else
-  // (404, 500, timeout) means it's actually broken.
-  const API_ROUTES: { path: string; method: 'GET' | 'POST'; label: string }[] = [
-    { path: '/api/ping', method: 'GET', label: 'ping' },
-    { path: '/api/comms', method: 'POST', label: 'comms' },
-    { path: '/api/google', method: 'POST', label: 'google' },
-    { path: '/api/send-email', method: 'POST', label: 'send-email' },
-    { path: '/api/storage', method: 'POST', label: 'storage' },
-    { path: '/api/get-upload-signature', method: 'POST', label: 'upload-signature' },
-    { path: '/api/set-student-password', method: 'POST', label: 'set-student-password' },
-    { path: '/api/delete-school', method: 'POST', label: 'delete-school' },
-    { path: '/api/cron/daily-reminders', method: 'GET', label: 'cron/daily-reminders' },
-    { path: '/api/cron/expire-demo', method: 'GET', label: 'cron/expire-demo' },
-    { path: '/api/cron/send-scheduled', method: 'GET', label: 'cron/send-scheduled' },
-  ];
-  const [routeStatus, setRouteStatus] = useState<Record<string, 'checking' | 'up' | 'down'>>({});
-  const [statusChecking, setStatusChecking] = useState(false);
-  const [lastChecked, setLastChecked] = useState<Date | null>(null);
-
-  const checkApiStatus = async () => {
-    setStatusChecking(true);
-    setRouteStatus(Object.fromEntries(API_ROUTES.map(r => [r.path, 'checking' as const])));
-    const entries = await Promise.all(API_ROUTES.map(async r => {
-      try {
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 10000);
-        const res = await fetch(r.path, { method: r.method, signal: controller.signal });
-        clearTimeout(timeout);
-        const up = r.path === '/api/ping' ? res.status === 200 : res.status === 401;
-        return [r.path, up ? 'up' as const : 'down' as const] as const;
-      } catch {
-        return [r.path, 'down' as const] as const;
-      }
-    }));
-    setRouteStatus(Object.fromEntries(entries));
-    setLastChecked(new Date());
-    setStatusChecking(false);
-  };
-
-  useEffect(() => { checkApiStatus(); }, []);
-
   const togglePasswordReveal = (id: string) => {
     setRevealedPasswords(prev => {
       const next = new Set(prev);
@@ -334,47 +289,6 @@ export default function SuperAdminDashboard() {
         >
           <Plus className="w-4 h-4" /> Add School
         </Link>
-      </div>
-
-      {/* System Status */}
-      <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm">
-        <div className="flex items-center justify-between mb-3">
-          <div className="flex items-center gap-2">
-            {statusChecking ? (
-              <Loader2 className="w-4 h-4 text-slate-400 animate-spin" />
-            ) : Object.values(routeStatus).every(s => s === 'up') ? (
-              <CheckCheck className="w-4 h-4 text-emerald-600" />
-            ) : (
-              <AlertCircle className="w-4 h-4 text-red-600" />
-            )}
-            <h2 className="font-semibold text-slate-800 text-sm">System Status</h2>
-            {lastChecked && (
-              <span className="text-xs text-slate-400">
-                checked {lastChecked.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}
-              </span>
-            )}
-          </div>
-          <button onClick={checkApiStatus} disabled={statusChecking}
-            className="flex items-center gap-1.5 bg-slate-100 hover:bg-slate-200 disabled:opacity-50 text-slate-700 font-semibold px-3 py-1.5 rounded-lg transition-colors text-xs"
-          >
-            {statusChecking ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : 'Recheck'}
-          </button>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          {API_ROUTES.map(r => {
-            const s = routeStatus[r.path] ?? 'checking';
-            return (
-              <span key={r.path}
-                className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium ${
-                  s === 'up' ? 'bg-emerald-50 text-emerald-700' : s === 'down' ? 'bg-red-50 text-red-700' : 'bg-slate-50 text-slate-400'
-                }`}
-              >
-                <span className={`w-1.5 h-1.5 rounded-full ${s === 'up' ? 'bg-emerald-500' : s === 'down' ? 'bg-red-500' : 'bg-slate-300 animate-pulse'}`} />
-                {r.label}
-              </span>
-            );
-          })}
-        </div>
       </div>
 
       {/* School Health */}

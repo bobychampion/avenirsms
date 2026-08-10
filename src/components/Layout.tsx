@@ -15,7 +15,7 @@ import {
   Clock, Award, Briefcase, CreditCard, Map, Menu, X, Bell,
   ArrowUpRight, Key, MessageSquare, FileSpreadsheet, Database,
   HelpCircle, Building2, ShieldCheck, LogIn, MapPin, WifiOff, Chrome, Package, Sparkles,
-  NotebookPen,
+  NotebookPen, Activity,
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { db } from '../firebase';
@@ -124,6 +124,7 @@ const superAdminNavGroups = [
     label: 'System',
     items: [
       { to: '/admin/migrate', label: 'Data Migration', icon: Database },
+      { to: '/super-admin/status', label: 'System Status', icon: Activity },
     ],
   },
 ];

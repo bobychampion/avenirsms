@@ -117,6 +117,7 @@ const superAdminNavGroups = [
     items: [
       { to: '/super-admin', label: 'Platform Dashboard', icon: LayoutDashboard, exact: true },
       { to: '/super-admin/schools', label: 'Schools', icon: Building2 },
+      { to: '/super-admin/communications', label: 'Communications', icon: MessageSquare },
     ],
   },
   {

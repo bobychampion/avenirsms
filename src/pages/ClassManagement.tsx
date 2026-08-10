@@ -104,7 +104,7 @@ export default function ClassManagement() {
     if (classroomStatus !== 'connected' || !schoolId) return;
     setSyncingId(firestoreId);
     try {
-      const result = await callApi<{ googleCourseId: string }>('/api/classroom?action=sync', {
+      const result = await callApi<{ googleCourseId: string }>('/api/google?action=classroom.sync', {
         schoolId,
         cls: {
           name: classData.name!,
@@ -268,7 +268,7 @@ export default function ClassManagement() {
       // Archive the Google Classroom course first (if synced)
       if (cls.googleCourseId && classroomStatus === 'connected') {
         try {
-          await callApi('/api/classroom?action=archive', { schoolId, googleCourseId: cls.googleCourseId });
+          await callApi('/api/google?action=classroom.archive', { schoolId, googleCourseId: cls.googleCourseId });
         } catch (err: any) {
           console.warn('Classroom archive failed:', err?.message ?? err);
         }

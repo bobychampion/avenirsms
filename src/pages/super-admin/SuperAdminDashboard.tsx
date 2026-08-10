@@ -6,7 +6,7 @@
 
 import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { collection, getDocs, getDoc, query, orderBy, doc, updateDoc, where, limit, getCountFromServer } from 'firebase/firestore';
+import { collection, getDocs, query, orderBy, doc, updateDoc, where, getCountFromServer } from 'firebase/firestore';
 import { db } from '../../firebase';
 import { School } from '../../types';
 import toast from 'react-hot-toast';
@@ -14,11 +14,9 @@ import {
   Building2, Users, CheckCircle2, CreditCard, Plus, ArrowRight,
   TrendingUp, AlertCircle, Clock, FileText, Zap, Bell, Mail,
   Phone, BookOpen, ChevronDown, CheckCheck, X, Inbox, Eye, EyeOff, Copy, KeyRound, Send, Loader2,
-  Image as ImageIcon, AlertTriangle, Sparkles, History,
+  MessageSquare,
 } from 'lucide-react';
-import { sendDemoProvisioned, sendPlatformBroadcast, sendRaw } from '../../services/emailService';
-import { buildStaffBroadcastEmail } from '../../utils/staffBroadcastEmail';
-import { generateAnnouncementDraft } from '../../services/geminiService';
+import { sendDemoProvisioned } from '../../services/emailService';
 
 interface DemoRequest {
   id: string;
@@ -77,42 +75,51 @@ export default function SuperAdminDashboard() {
   const [updatingId, setUpdatingId] = useState<string | null>(null);
   const [revealedPasswords, setRevealedPasswords] = useState<Set<string>>(new Set());
   const [sendingCredentials, setSendingCredentials] = useState<string | null>(null);
-  const [broadcastSubject, setBroadcastSubject] = useState('');
-  const [broadcastMessage, setBroadcastMessage] = useState('');
-  const [broadcastFilter, setBroadcastFilter] = useState<'all' | 'active' | 'trial' | 'demo'>('all');
-  const [broadcasting, setBroadcasting] = useState(false);
-  const [announcementTopic, setAnnouncementTopic] = useState('');
-  const [generatingAnnouncement, setGeneratingAnnouncement] = useState(false);
 
-  // Staff broadcast (admins/teachers, personalized with each recipient's own school logo)
-  const [staffAudience, setStaffAudience] = useState<{ admin: boolean; teacher: boolean }>({ admin: true, teacher: false });
-  const [staffSubject, setStaffSubject] = useState('');
-  const [staffMessage, setStaffMessage] = useState('');
-  type StaffRecipient = { uid: string; email: string; name: string; role: string; schoolId: string | null; school: string; hasLogo: boolean; branding: Record<string, any> };
-  const [staffPreview, setStaffPreview] = useState<{ recipients: StaffRecipient[]; bySchool: Record<string, { count: number; hasLogo: boolean }> } | null>(null);
-  const [staffPreviewLoading, setStaffPreviewLoading] = useState(false);
-  const [staffSending, setStaffSending] = useState(false);
-  const [staffProgress, setStaffProgress] = useState<{ sent: number; failed: number; total: number } | null>(null);
-  const [staffFailures, setStaffFailures] = useState<{ email: string; error: string }[]>([]);
-  const [staffTopic, setStaffTopic] = useState('');
-  const [generatingStaffDraft, setGeneratingStaffDraft] = useState(false);
+  // ── System Status: every api/ route, checked with an unauthenticated probe.
+  // Safe on every route (including delete-school) because every handler's
+  // requireAuth()/CRON_SECRET check runs before it ever touches the request
+  // body — confirmed across all route files. 401 (or 200 for the bodyless
+  // /api/ping) means the function loaded and is executing; anything else
+  // (404, 500, timeout) means it's actually broken.
+  const API_ROUTES: { path: string; method: 'GET' | 'POST'; label: string }[] = [
+    { path: '/api/ping', method: 'GET', label: 'ping' },
+    { path: '/api/comms', method: 'POST', label: 'comms' },
+    { path: '/api/google', method: 'POST', label: 'google' },
+    { path: '/api/send-email', method: 'POST', label: 'send-email' },
+    { path: '/api/storage', method: 'POST', label: 'storage' },
+    { path: '/api/get-upload-signature', method: 'POST', label: 'upload-signature' },
+    { path: '/api/set-student-password', method: 'POST', label: 'set-student-password' },
+    { path: '/api/delete-school', method: 'POST', label: 'delete-school' },
+    { path: '/api/cron/daily-reminders', method: 'GET', label: 'cron/daily-reminders' },
+    { path: '/api/cron/expire-demo', method: 'GET', label: 'cron/expire-demo' },
+    { path: '/api/cron/send-scheduled', method: 'GET', label: 'cron/send-scheduled' },
+  ];
+  const [routeStatus, setRouteStatus] = useState<Record<string, 'checking' | 'up' | 'down'>>({});
+  const [statusChecking, setStatusChecking] = useState(false);
+  const [lastChecked, setLastChecked] = useState<Date | null>(null);
 
-  // Message history — every send from either broadcast tool is logged to audit_log by /api/send-email.
-  type SentMessage = {
-    id: string;
-    subject: string;
-    to: string | string[];
-    template: string;
-    actorEmail: string | null;
-    createdAt: any;
+  const checkApiStatus = async () => {
+    setStatusChecking(true);
+    setRouteStatus(Object.fromEntries(API_ROUTES.map(r => [r.path, 'checking' as const])));
+    const entries = await Promise.all(API_ROUTES.map(async r => {
+      try {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 10000);
+        const res = await fetch(r.path, { method: r.method, signal: controller.signal });
+        clearTimeout(timeout);
+        const up = r.path === '/api/ping' ? res.status === 200 : res.status === 401;
+        return [r.path, up ? 'up' as const : 'down' as const] as const;
+      } catch {
+        return [r.path, 'down' as const] as const;
+      }
+    }));
+    setRouteStatus(Object.fromEntries(entries));
+    setLastChecked(new Date());
+    setStatusChecking(false);
   };
-  const [messageHistory, setMessageHistory] = useState<SentMessage[] | null>(null);
-  const [historyLoading, setHistoryLoading] = useState(false);
-  const [expandedHistoryId, setExpandedHistoryId] = useState<string | null>(null);
 
-  // Any change to who's targeted invalidates the last preview — the Send button
-  // stays locked until a fresh preview is pulled for the current selection.
-  useEffect(() => { setStaffPreview(null); }, [staffAudience.admin, staffAudience.teacher]);
+  useEffect(() => { checkApiStatus(); }, []);
 
   const togglePasswordReveal = (id: string) => {
     setRevealedPasswords(prev => {
@@ -215,215 +222,6 @@ export default function SuperAdminDashboard() {
     }
   };
 
-  const fetchMessageHistory = async () => {
-    setHistoryLoading(true);
-    try {
-      const snap = await getDocs(query(
-        collection(db, 'audit_log'),
-        where('action', '==', 'email.sent'),
-        orderBy('createdAt', 'desc'),
-        limit(50),
-      ));
-      setMessageHistory(snap.docs.map(d => {
-        const data = d.data() as any;
-        return {
-          id: d.id,
-          subject: data.details?.subject ?? '(no subject)',
-          to: data.details?.to ?? [],
-          template: data.details?.template ?? 'unknown',
-          actorEmail: data.actorEmail ?? null,
-          createdAt: data.createdAt,
-        };
-      }));
-    } catch {
-      toast.error('Failed to load message history');
-    } finally {
-      setHistoryLoading(false);
-    }
-  };
-
-  const handleGenerateAnnouncement = async () => {
-    if (!announcementTopic.trim()) {
-      toast.error('Describe what the announcement is about first');
-      return;
-    }
-    setGeneratingAnnouncement(true);
-    const tid = toast.loading('Drafting announcement with AI…');
-    try {
-      const draft = await generateAnnouncementDraft(announcementTopic, 'schools');
-      if (!draft.subject && !draft.message) throw new Error('empty draft');
-      setBroadcastSubject(draft.subject);
-      setBroadcastMessage(draft.message);
-      toast.success('Draft ready — review before sending', { id: tid });
-    } catch (err: any) {
-      console.error('[handleGenerateAnnouncement]', err);
-      toast.error(`Failed to generate draft: ${err?.message ?? 'unknown error'}`, { id: tid });
-    } finally {
-      setGeneratingAnnouncement(false);
-    }
-  };
-
-  const sendBroadcast = async () => {
-    if (!broadcastSubject.trim() || !broadcastMessage.trim()) {
-      toast.error('Subject and message are required');
-      return;
-    }
-    const recipients = schools
-      .filter(s => broadcastFilter === 'all' || s.status === broadcastFilter)
-      .map(s => s.adminEmail)
-      .filter((e): e is string => !!e && e.trim() !== '');
-    if (recipients.length === 0) {
-      toast.error('No schools with email addresses match the selected filter');
-      return;
-    }
-    setBroadcasting(true);
-    try {
-      const BATCH = 50;
-      for (let i = 0; i < recipients.length; i += BATCH) {
-        await sendPlatformBroadcast({
-          to: recipients.slice(i, i + BATCH),
-          subject: broadcastSubject,
-          message: broadcastMessage,
-        });
-      }
-      toast.success(`Announcement sent to ${recipients.length} school${recipients.length !== 1 ? 's' : ''}`);
-      setBroadcastSubject('');
-      setBroadcastMessage('');
-    } catch {
-      toast.error('Failed to send broadcast email');
-    } finally {
-      setBroadcasting(false);
-    }
-  };
-
-  const handleGenerateStaffDraft = async () => {
-    if (!staffTopic.trim()) {
-      toast.error('Describe what the announcement is about first');
-      return;
-    }
-    setGeneratingStaffDraft(true);
-    const tid = toast.loading('Drafting announcement with AI…');
-    try {
-      const draft = await generateAnnouncementDraft(staffTopic, 'staff');
-      if (!draft.subject && !draft.message) throw new Error('empty draft');
-      setStaffSubject(draft.subject);
-      setStaffMessage(draft.message);
-      toast.success('Draft ready — review before sending', { id: tid });
-    } catch (err: any) {
-      console.error('[handleGenerateStaffDraft]', err);
-      toast.error(`Failed to generate draft: ${err?.message ?? 'unknown error'}`, { id: tid });
-    } finally {
-      setGeneratingStaffDraft(false);
-    }
-  };
-
-  const fetchStaffPreview = async () => {
-    const roles: string[] = [];
-    if (staffAudience.admin) roles.push('admin', 'School_admin');
-    if (staffAudience.teacher) roles.push('teacher');
-    if (roles.length === 0) {
-      toast.error('Select at least one audience (Admins or Teachers)');
-      return;
-    }
-
-    setStaffPreviewLoading(true);
-    try {
-      const usersSnap = await getDocs(query(collection(db, 'users'), where('role', 'in', roles)));
-      const seen = new Set<string>();
-      const users = usersSnap.docs
-        .map(d => ({ uid: d.id, ...d.data() } as any))
-        .filter(u => u.email && !u.disabled && !u.deletedAt)
-        .filter(u => {
-          const key = String(u.email).toLowerCase().trim();
-          if (seen.has(key)) return false;
-          seen.add(key);
-          return true;
-        });
-
-      const schoolIds = [...new Set(users.map(u => u.schoolId).filter(Boolean))] as string[];
-      const brandingMap: Record<string, any> = {};
-      await Promise.all(schoolIds.map(async sid => {
-        try {
-          const snap = await getDoc(doc(db, 'school_settings', sid));
-          brandingMap[sid] = snap.exists() ? snap.data() : {};
-        } catch {
-          brandingMap[sid] = {};
-        }
-      }));
-
-      const recipients: StaffRecipient[] = users.map(u => {
-        const branding = (u.schoolId && brandingMap[u.schoolId]) || {};
-        return {
-          uid: u.uid,
-          email: u.email,
-          name: u.displayName || u.email,
-          role: u.role,
-          schoolId: u.schoolId ?? null,
-          school: branding.schoolName || '(no school)',
-          hasLogo: /^https:\/\//i.test(branding.logoUrl || ''),
-          branding,
-        };
-      });
-
-      const bySchool: Record<string, { count: number; hasLogo: boolean }> = {};
-      for (const r of recipients) {
-        bySchool[r.school] ??= { count: 0, hasLogo: r.hasLogo };
-        bySchool[r.school].count++;
-      }
-
-      setStaffPreview({ recipients, bySchool });
-    } catch {
-      toast.error('Failed to load recipients');
-    } finally {
-      setStaffPreviewLoading(false);
-    }
-  };
-
-  const sendStaffBroadcast = async () => {
-    if (!staffPreview) return;
-    if (!staffSubject.trim() || !staffMessage.trim()) {
-      toast.error('Subject and message are required');
-      return;
-    }
-
-    setStaffSending(true);
-    setStaffFailures([]);
-    const total = staffPreview.recipients.length;
-    setStaffProgress({ sent: 0, failed: 0, total });
-
-    let sent = 0, failed = 0;
-    const failures: { email: string; error: string }[] = [];
-
-    for (const r of staffPreview.recipients) {
-      const { subject, html } = buildStaffBroadcastEmail(
-        { displayName: r.name, email: r.email },
-        r.branding,
-        { subject: staffSubject, message: staffMessage },
-      );
-      try {
-        await sendRaw({ to: r.email, subject, html });
-        sent++;
-      } catch (e: any) {
-        failed++;
-        failures.push({ email: r.email, error: e?.message ?? 'Send failed' });
-      }
-      setStaffProgress({ sent, failed, total });
-      // Stay under Resend's rate limit.
-      await new Promise(res => setTimeout(res, 600));
-    }
-
-    setStaffFailures(failures);
-    setStaffSending(false);
-    if (failed === 0) {
-      toast.success(`Sent to all ${sent} recipient${sent !== 1 ? 's' : ''}`);
-      setStaffSubject('');
-      setStaffMessage('');
-      setStaffPreview(null);
-    } else {
-      toast.error(`Sent ${sent}, failed ${failed} — see details below`);
-    }
-  };
-
   const kpiCards = [
     { label: 'Total Schools',   value: stats.totalSchools,   icon: Building2,    color: 'bg-indigo-600', sub: `${stats.activeSchools} active` },
     { label: 'Active Schools',  value: stats.activeSchools,  icon: CheckCircle2, color: 'bg-emerald-600', sub: `${stats.suspendedSchools} suspended` },
@@ -481,6 +279,47 @@ export default function SuperAdminDashboard() {
         </Link>
       </div>
 
+      {/* System Status */}
+      <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm">
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center gap-2">
+            {statusChecking ? (
+              <Loader2 className="w-4 h-4 text-slate-400 animate-spin" />
+            ) : Object.values(routeStatus).every(s => s === 'up') ? (
+              <CheckCheck className="w-4 h-4 text-emerald-600" />
+            ) : (
+              <AlertCircle className="w-4 h-4 text-red-600" />
+            )}
+            <h2 className="font-semibold text-slate-800 text-sm">System Status</h2>
+            {lastChecked && (
+              <span className="text-xs text-slate-400">
+                checked {lastChecked.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}
+              </span>
+            )}
+          </div>
+          <button onClick={checkApiStatus} disabled={statusChecking}
+            className="flex items-center gap-1.5 bg-slate-100 hover:bg-slate-200 disabled:opacity-50 text-slate-700 font-semibold px-3 py-1.5 rounded-lg transition-colors text-xs"
+          >
+            {statusChecking ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : 'Recheck'}
+          </button>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {API_ROUTES.map(r => {
+            const s = routeStatus[r.path] ?? 'checking';
+            return (
+              <span key={r.path}
+                className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium ${
+                  s === 'up' ? 'bg-emerald-50 text-emerald-700' : s === 'down' ? 'bg-red-50 text-red-700' : 'bg-slate-50 text-slate-400'
+                }`}
+              >
+                <span className={`w-1.5 h-1.5 rounded-full ${s === 'up' ? 'bg-emerald-500' : s === 'down' ? 'bg-red-500' : 'bg-slate-300 animate-pulse'}`} />
+                {r.label}
+              </span>
+            );
+          })}
+        </div>
+      </div>
+
       {/* KPI Cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         {kpiCards.map(card => (
@@ -498,11 +337,12 @@ export default function SuperAdminDashboard() {
       </div>
 
       {/* Quick actions */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {[
-          { to: '/super-admin/schools',     icon: Building2, color: 'bg-indigo-50 text-indigo-600', label: 'Manage Schools',    desc: 'View, edit, suspend or enter any school' },
-          { to: '/super-admin/invoices',    icon: FileText,  color: 'bg-emerald-50 text-emerald-600', label: 'Invoice Generator', desc: 'Create, bulk-generate & track subscription invoices' },
-          { to: '/super-admin/schools/new', icon: Plus,      color: 'bg-amber-50 text-amber-600',   label: 'Onboard School',    desc: 'Register a new school on the platform' },
+          { to: '/super-admin/schools',        icon: Building2,     color: 'bg-indigo-50 text-indigo-600', label: 'Manage Schools',    desc: 'View, edit, suspend or enter any school' },
+          { to: '/super-admin/communications', icon: MessageSquare, color: 'bg-blue-50 text-blue-600',     label: 'Communications',    desc: 'Email & push announcements, templates, scheduling' },
+          { to: '/super-admin/invoices',       icon: FileText,      color: 'bg-emerald-50 text-emerald-600', label: 'Invoice Generator', desc: 'Create, bulk-generate & track subscription invoices' },
+          { to: '/super-admin/schools/new',    icon: Plus,          color: 'bg-amber-50 text-amber-600',   label: 'Onboard School',    desc: 'Register a new school on the platform' },
         ].map(action => (
           <Link key={action.to} to={action.to}
             className="flex items-start gap-4 bg-white border border-slate-200 rounded-2xl p-5 shadow-sm hover:shadow-md hover:border-indigo-200 transition-all group"
@@ -662,277 +502,6 @@ export default function SuperAdminDashboard() {
           </div>
         )}
       </div>
-
-      {/* ── Platform Broadcast Email ──────────────────────────────────────────── */}
-      <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-sm">
-        <div className="px-5 py-4 border-b border-slate-100 flex items-center gap-2">
-          <Send className="w-4 h-4 text-indigo-600" />
-          <h2 className="font-semibold text-slate-800">Send Announcement to Schools</h2>
-        </div>
-        <div className="p-5 space-y-4">
-          <div className="flex flex-wrap gap-2">
-            {(['all', 'active', 'trial', 'demo'] as const).map(f => (
-              <button key={f} onClick={() => setBroadcastFilter(f)}
-                className={`px-3 py-1 rounded-lg text-xs font-semibold capitalize transition-colors ${
-                  broadcastFilter === f ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                }`}
-              >
-                {f === 'all' ? `All schools (${schools.filter(s => s.adminEmail).length})` : `${f} (${schools.filter(s => s.status === f && s.adminEmail).length})`}
-              </button>
-            ))}
-          </div>
-          <div>
-            <label className="block text-sm font-semibold text-slate-700 mb-1.5">
-              <Sparkles className="w-3.5 h-3.5 text-violet-600 inline -mt-0.5 mr-1" />
-              Draft with AI <span className="font-normal text-slate-400">(optional — describe it, review before sending)</span>
-            </label>
-            <div className="flex gap-2">
-              <input
-                className="flex-1 px-3 py-2.5 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-violet-500 outline-none"
-                placeholder="e.g. scheduled maintenance this Saturday 2–4am, new report card feature launching"
-                value={announcementTopic}
-                onChange={e => setAnnouncementTopic(e.target.value)}
-                onKeyDown={e => { if (e.key === 'Enter') handleGenerateAnnouncement(); }}
-              />
-              <button
-                onClick={handleGenerateAnnouncement}
-                disabled={generatingAnnouncement || !announcementTopic.trim()}
-                className="flex items-center gap-1.5 bg-violet-600 hover:bg-violet-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold px-4 py-2.5 rounded-xl transition-colors text-sm whitespace-nowrap"
-              >
-                {generatingAnnouncement ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
-                Generate
-              </button>
-            </div>
-          </div>
-          <div>
-            <label className="block text-sm font-semibold text-slate-700 mb-1.5">Subject</label>
-            <input
-              className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
-              placeholder="e.g. Important Platform Update — Action Required"
-              value={broadcastSubject}
-              onChange={e => setBroadcastSubject(e.target.value)}
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-semibold text-slate-700 mb-1.5">Message</label>
-            <textarea
-              className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-500 outline-none h-28 resize-none"
-              placeholder="Write your announcement message here…"
-              value={broadcastMessage}
-              onChange={e => setBroadcastMessage(e.target.value)}
-            />
-          </div>
-          <button
-            onClick={sendBroadcast}
-            disabled={broadcasting || !broadcastSubject.trim() || !broadcastMessage.trim()}
-            className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold px-5 py-2.5 rounded-xl transition-colors text-sm"
-          >
-            {broadcasting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
-            {broadcasting ? 'Sending…' : 'Send Announcement'}
-          </button>
-        </div>
-      </div>
-
-      {/* ── Staff Broadcast (admins/teachers, personalized with each school's own logo) ── */}
-      <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-sm">
-        <div className="px-5 py-4 border-b border-slate-100 flex items-center gap-2">
-          <Users className="w-4 h-4 text-indigo-600" />
-          <h2 className="font-semibold text-slate-800">Staff Broadcast</h2>
-          <span className="text-xs text-slate-400 font-normal">— sent to each admin/teacher's own inbox, branded with their school's logo</span>
-        </div>
-        <div className="p-5 space-y-4">
-          <div>
-            <label className="block text-sm font-semibold text-slate-700 mb-1.5">Audience</label>
-            <div className="flex flex-wrap gap-2">
-              {([
-                { key: 'admin' as const, label: 'Admins' },
-                { key: 'teacher' as const, label: 'Teachers' },
-              ]).map(opt => (
-                <button
-                  key={opt.key}
-                  onClick={() => setStaffAudience(prev => ({ ...prev, [opt.key]: !prev[opt.key] }))}
-                  className={`px-3 py-1 rounded-lg text-xs font-semibold transition-colors ${
-                    staffAudience[opt.key] ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                  }`}
-                >
-                  {opt.label}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div>
-            <label className="block text-sm font-semibold text-slate-700 mb-1.5">
-              <Sparkles className="w-3.5 h-3.5 text-violet-600 inline -mt-0.5 mr-1" />
-              Draft with AI <span className="font-normal text-slate-400">(optional — describe it, review before sending)</span>
-            </label>
-            <div className="flex gap-2">
-              <input
-                className="flex-1 px-3 py-2.5 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-violet-500 outline-none"
-                placeholder="e.g. wishing staff a happy summer break, new term resumption date"
-                value={staffTopic}
-                onChange={e => setStaffTopic(e.target.value)}
-                onKeyDown={e => { if (e.key === 'Enter') handleGenerateStaffDraft(); }}
-              />
-              <button
-                onClick={handleGenerateStaffDraft}
-                disabled={generatingStaffDraft || !staffTopic.trim()}
-                className="flex items-center gap-1.5 bg-violet-600 hover:bg-violet-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold px-4 py-2.5 rounded-xl transition-colors text-sm whitespace-nowrap"
-              >
-                {generatingStaffDraft ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
-                Generate
-              </button>
-            </div>
-          </div>
-          <div>
-            <label className="block text-sm font-semibold text-slate-700 mb-1.5">Subject</label>
-            <input
-              className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
-              placeholder="e.g. Happy Summer Break!"
-              value={staffSubject}
-              onChange={e => setStaffSubject(e.target.value)}
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-semibold text-slate-700 mb-1.5">Message</label>
-            <textarea
-              className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-500 outline-none h-28 resize-none"
-              placeholder="Write your message here — each recipient sees their own name and school branding automatically…"
-              value={staffMessage}
-              onChange={e => setStaffMessage(e.target.value)}
-            />
-          </div>
-
-          <div className="flex flex-wrap items-center gap-3">
-            <button
-              onClick={fetchStaffPreview}
-              disabled={staffPreviewLoading || staffSending}
-              className="flex items-center gap-2 bg-slate-100 hover:bg-slate-200 disabled:opacity-50 disabled:cursor-not-allowed text-slate-700 font-semibold px-4 py-2.5 rounded-xl transition-colors text-sm"
-            >
-              {staffPreviewLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Users className="w-4 h-4" />}
-              {staffPreviewLoading ? 'Loading recipients…' : staffPreview ? 'Refresh recipients' : 'Preview recipients'}
-            </button>
-
-            <button
-              onClick={sendStaffBroadcast}
-              disabled={!staffPreview || staffPreview.recipients.length === 0 || staffSending || !staffSubject.trim() || !staffMessage.trim()}
-              className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold px-5 py-2.5 rounded-xl transition-colors text-sm"
-            >
-              {staffSending
-                ? <Loader2 className="w-4 h-4 animate-spin" />
-                : <Send className="w-4 h-4" />}
-              {staffSending
-                ? `Sending… ${staffProgress?.sent ?? 0}/${staffProgress?.total ?? 0}`
-                : staffPreview
-                  ? `Send to ${staffPreview.recipients.length} recipient${staffPreview.recipients.length !== 1 ? 's' : ''}`
-                  : 'Preview recipients first'}
-            </button>
-          </div>
-
-          {staffPreview && !staffSending && (
-            <div className="border border-slate-200 rounded-xl overflow-hidden">
-              <div className="px-4 py-2.5 bg-slate-50 border-b border-slate-200 flex items-center justify-between text-xs">
-                <span className="font-semibold text-slate-700">
-                  {staffPreview.recipients.length} recipient{staffPreview.recipients.length !== 1 ? 's' : ''} across {Object.keys(staffPreview.bySchool).length} school{Object.keys(staffPreview.bySchool).length !== 1 ? 's' : ''}
-                </span>
-                {staffPreview.recipients.some(r => !r.hasLogo) && (
-                  <span className="flex items-center gap-1 text-amber-600 font-medium">
-                    <ImageIcon className="w-3.5 h-3.5" />
-                    {staffPreview.recipients.filter(r => !r.hasLogo).length} without a renderable logo (school name used instead)
-                  </span>
-                )}
-              </div>
-              <div className="max-h-48 overflow-y-auto divide-y divide-slate-100">
-                {Object.entries(staffPreview.bySchool).map(([school, info]: [string, { count: number; hasLogo: boolean }]) => (
-                  <div key={school} className="px-4 py-2 flex items-center justify-between text-xs">
-                    <span className="text-slate-700">{school}</span>
-                    <span className="flex items-center gap-2 text-slate-500">
-                      {info.count} recipient{info.count !== 1 ? 's' : ''}
-                      {!info.hasLogo && <span className="text-amber-600">no logo</span>}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {staffFailures.length > 0 && (
-            <div className="border border-red-200 rounded-xl overflow-hidden">
-              <div className="px-4 py-2.5 bg-red-50 border-b border-red-200 flex items-center gap-2 text-xs font-semibold text-red-700">
-                <AlertTriangle className="w-3.5 h-3.5" />
-                {staffFailures.length} failed to send
-              </div>
-              <div className="max-h-40 overflow-y-auto divide-y divide-red-100">
-                {staffFailures.map(f => (
-                  <div key={f.email} className="px-4 py-2 flex items-center justify-between text-xs">
-                    <span className="text-slate-700">{f.email}</span>
-                    <span className="text-red-600">{f.error}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* ── Message History (every send from either broadcast tool, from audit_log) ── */}
-      <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-sm">
-        <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <History className="w-4 h-4 text-indigo-600" />
-            <h2 className="font-semibold text-slate-800">Message History</h2>
-            <span className="text-xs text-slate-400 font-normal">— last 50 sends, most recent first</span>
-          </div>
-          <button
-            onClick={fetchMessageHistory}
-            disabled={historyLoading}
-            className="flex items-center gap-1.5 bg-slate-100 hover:bg-slate-200 disabled:opacity-50 text-slate-700 font-semibold px-3 py-1.5 rounded-lg transition-colors text-xs"
-          >
-            {historyLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <History className="w-3.5 h-3.5" />}
-            {historyLoading ? 'Loading…' : messageHistory ? 'Refresh' : 'Load history'}
-          </button>
-        </div>
-
-        {messageHistory === null ? (
-          <div className="p-8 text-center text-slate-400 text-sm">Click "Load history" to see recent sends</div>
-        ) : messageHistory.length === 0 ? (
-          <div className="p-8 text-center text-slate-400 text-sm">No emails sent yet</div>
-        ) : (
-          <div className="divide-y divide-slate-100 max-h-[32rem] overflow-y-auto">
-            {messageHistory.map(msg => {
-              const recipients = Array.isArray(msg.to) ? msg.to : [msg.to];
-              const isExpanded = expandedHistoryId === msg.id;
-              return (
-                <div key={msg.id} className="px-5 py-3">
-                  <button
-                    onClick={() => setExpandedHistoryId(isExpanded ? null : msg.id)}
-                    className="w-full flex items-start justify-between gap-4 text-left"
-                  >
-                    <div className="min-w-0">
-                      <p className="text-sm font-semibold text-slate-800 truncate">{msg.subject}</p>
-                      <p className="text-xs text-slate-500 mt-0.5">
-                        {recipients.length} recipient{recipients.length !== 1 ? 's' : ''} · {templateLabel(msg.template)} · sent by {msg.actorEmail ?? 'unknown'}
-                      </p>
-                    </div>
-                    <div className="flex items-center gap-2 shrink-0">
-                      <span className="text-xs text-slate-400 whitespace-nowrap">{formatDateTime(msg.createdAt)}</span>
-                      <ChevronDown className={`w-4 h-4 text-slate-400 transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
-                    </div>
-                  </button>
-                  {isExpanded && (
-                    <div className="mt-2 pl-1 flex flex-wrap gap-1.5">
-                      {recipients.map(r => (
-                        <span key={r} className="text-xs bg-slate-100 text-slate-600 px-2 py-0.5 rounded-md">{r}</span>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </div>
-
       {/* Recent schools table */}
       <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-sm">
         <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between">

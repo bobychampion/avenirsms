@@ -331,6 +331,34 @@
       ]
     },
     {
+      "collectionGroup": "comms_messages",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "status",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "createdAt",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "comms_messages",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "status",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "scheduledFor",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
       "collectionGroup": "cover_assignments",
       "queryScope": "COLLECTION",
       "fields": [

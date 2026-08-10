@@ -14,10 +14,11 @@ import {
   Building2, Users, CheckCircle2, CreditCard, Plus, ArrowRight,
   TrendingUp, AlertCircle, Clock, FileText, Zap, Bell, Mail,
   Phone, BookOpen, ChevronDown, CheckCheck, X, Inbox, Eye, EyeOff, Copy, KeyRound, Send, Loader2,
-  Image as ImageIcon, AlertTriangle,
+  Image as ImageIcon, AlertTriangle, Sparkles,
 } from 'lucide-react';
 import { sendDemoProvisioned, sendPlatformBroadcast, sendRaw } from '../../services/emailService';
 import { buildStaffBroadcastEmail } from '../../utils/staffBroadcastEmail';
+import { generateAnnouncementDraft } from '../../services/geminiService';
 
 interface DemoRequest {
   id: string;
@@ -80,6 +81,8 @@ export default function SuperAdminDashboard() {
   const [broadcastMessage, setBroadcastMessage] = useState('');
   const [broadcastFilter, setBroadcastFilter] = useState<'all' | 'active' | 'trial' | 'demo'>('all');
   const [broadcasting, setBroadcasting] = useState(false);
+  const [announcementTopic, setAnnouncementTopic] = useState('');
+  const [generatingAnnouncement, setGeneratingAnnouncement] = useState(false);
 
   // Staff broadcast (admins/teachers, personalized with each recipient's own school logo)
   const [staffAudience, setStaffAudience] = useState<{ admin: boolean; teacher: boolean }>({ admin: true, teacher: false });
@@ -91,6 +94,8 @@ export default function SuperAdminDashboard() {
   const [staffSending, setStaffSending] = useState(false);
   const [staffProgress, setStaffProgress] = useState<{ sent: number; failed: number; total: number } | null>(null);
   const [staffFailures, setStaffFailures] = useState<{ email: string; error: string }[]>([]);
+  const [staffTopic, setStaffTopic] = useState('');
+  const [generatingStaffDraft, setGeneratingStaffDraft] = useState(false);
 
   // Any change to who's targeted invalidates the last preview — the Send button
   // stays locked until a fresh preview is pulled for the current selection.
@@ -197,6 +202,26 @@ export default function SuperAdminDashboard() {
     }
   };
 
+  const handleGenerateAnnouncement = async () => {
+    if (!announcementTopic.trim()) {
+      toast.error('Describe what the announcement is about first');
+      return;
+    }
+    setGeneratingAnnouncement(true);
+    const tid = toast.loading('Drafting announcement with AI…');
+    try {
+      const draft = await generateAnnouncementDraft(announcementTopic, 'schools');
+      if (!draft.subject && !draft.message) throw new Error('empty draft');
+      setBroadcastSubject(draft.subject);
+      setBroadcastMessage(draft.message);
+      toast.success('Draft ready — review before sending', { id: tid });
+    } catch {
+      toast.error('Failed to generate draft', { id: tid });
+    } finally {
+      setGeneratingAnnouncement(false);
+    }
+  };
+
   const sendBroadcast = async () => {
     if (!broadcastSubject.trim() || !broadcastMessage.trim()) {
       toast.error('Subject and message are required');
@@ -227,6 +252,26 @@ export default function SuperAdminDashboard() {
       toast.error('Failed to send broadcast email');
     } finally {
       setBroadcasting(false);
+    }
+  };
+
+  const handleGenerateStaffDraft = async () => {
+    if (!staffTopic.trim()) {
+      toast.error('Describe what the announcement is about first');
+      return;
+    }
+    setGeneratingStaffDraft(true);
+    const tid = toast.loading('Drafting announcement with AI…');
+    try {
+      const draft = await generateAnnouncementDraft(staffTopic, 'staff');
+      if (!draft.subject && !draft.message) throw new Error('empty draft');
+      setStaffSubject(draft.subject);
+      setStaffMessage(draft.message);
+      toast.success('Draft ready — review before sending', { id: tid });
+    } catch {
+      toast.error('Failed to generate draft', { id: tid });
+    } finally {
+      setGeneratingStaffDraft(false);
     }
   };
 
@@ -584,6 +629,29 @@ export default function SuperAdminDashboard() {
             ))}
           </div>
           <div>
+            <label className="block text-sm font-semibold text-slate-700 mb-1.5">
+              <Sparkles className="w-3.5 h-3.5 text-violet-600 inline -mt-0.5 mr-1" />
+              Draft with AI <span className="font-normal text-slate-400">(optional — describe it, review before sending)</span>
+            </label>
+            <div className="flex gap-2">
+              <input
+                className="flex-1 px-3 py-2.5 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-violet-500 outline-none"
+                placeholder="e.g. scheduled maintenance this Saturday 2–4am, new report card feature launching"
+                value={announcementTopic}
+                onChange={e => setAnnouncementTopic(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') handleGenerateAnnouncement(); }}
+              />
+              <button
+                onClick={handleGenerateAnnouncement}
+                disabled={generatingAnnouncement || !announcementTopic.trim()}
+                className="flex items-center gap-1.5 bg-violet-600 hover:bg-violet-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold px-4 py-2.5 rounded-xl transition-colors text-sm whitespace-nowrap"
+              >
+                {generatingAnnouncement ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
+                Generate
+              </button>
+            </div>
+          </div>
+          <div>
             <label className="block text-sm font-semibold text-slate-700 mb-1.5">Subject</label>
             <input
               className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
@@ -640,6 +708,29 @@ export default function SuperAdminDashboard() {
             </div>
           </div>
 
+          <div>
+            <label className="block text-sm font-semibold text-slate-700 mb-1.5">
+              <Sparkles className="w-3.5 h-3.5 text-violet-600 inline -mt-0.5 mr-1" />
+              Draft with AI <span className="font-normal text-slate-400">(optional — describe it, review before sending)</span>
+            </label>
+            <div className="flex gap-2">
+              <input
+                className="flex-1 px-3 py-2.5 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-violet-500 outline-none"
+                placeholder="e.g. wishing staff a happy summer break, new term resumption date"
+                value={staffTopic}
+                onChange={e => setStaffTopic(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') handleGenerateStaffDraft(); }}
+              />
+              <button
+                onClick={handleGenerateStaffDraft}
+                disabled={generatingStaffDraft || !staffTopic.trim()}
+                className="flex items-center gap-1.5 bg-violet-600 hover:bg-violet-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold px-4 py-2.5 rounded-xl transition-colors text-sm whitespace-nowrap"
+              >
+                {generatingStaffDraft ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
+                Generate
+              </button>
+            </div>
+          </div>
           <div>
             <label className="block text-sm font-semibold text-slate-700 mb-1.5">Subject</label>
             <input

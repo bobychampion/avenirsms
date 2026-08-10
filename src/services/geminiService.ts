@@ -283,6 +283,42 @@ Write 2–3 short paragraphs. Include a call to action (contact the bursar or ma
 }
 
 /**
+ * Draft a platform announcement (subject + body) from a short topic description.
+ * Used by the super admin's broadcast tools — the sender still reviews and can
+ * edit the draft before anything is sent.
+ */
+export async function generateAnnouncementDraft(
+  topic: string,
+  audience: 'schools' | 'staff' = 'schools'
+): Promise<{ subject: string; message: string }> {
+  const ai = getAI();
+  const audienceText = audience === 'staff'
+    ? 'school administrators and teachers using the Avenir SIS platform'
+    : "school administrators (each school's primary contact) using the Avenir SIS platform";
+  const prompt = `You are drafting a platform-wide announcement email for Avenir SIS, a school management system used by schools across Nigeria. The audience is ${audienceText}.
+
+What the sender wants to announce: "${topic}"
+
+Write a clear, professional announcement. Return ONLY a JSON object with exactly this structure:
+{
+  "subject": "A concise, specific email subject line, under 70 characters",
+  "message": "The announcement body: 2-4 short paragraphs, plain text (no markdown, no bullet characters), professional but warm tone. Do not include a greeting like 'Dear...' or a sign-off — those are added automatically around this text."
+}`;
+
+  const response = await ai.models.generateContent({
+    model: 'gemini-2.5-flash',
+    contents: [{ parts: [{ text: prompt }] }],
+    config: { responseMimeType: 'application/json' },
+  });
+  try {
+    const parsed = JSON.parse(response.text || '{}');
+    return { subject: parsed.subject || '', message: parsed.message || '' };
+  } catch {
+    return { subject: '', message: response.text || '' };
+  }
+}
+
+/**
  * Given a list of raw CSV/Excel column headers, ask Gemini to map them
  * to known Student fields. Returns a JSON object like:
  * { "Full Name": "studentName", "Class": "currentClass", ... }

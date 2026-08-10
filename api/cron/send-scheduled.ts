@@ -1,6 +1,6 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { getFirestore } from '../_lib/admin.js';
-import { sendToRecipients } from '../_lib/comms.js';
+import { sendToRecipients } from '../comms.js';
 import { Timestamp } from 'firebase-admin/firestore';
 
 // Invoked by Vercel Cron hourly (schedule in vercel.json). Hourly rather than

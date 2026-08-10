@@ -1,8 +1,12 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { getFirestore } from '../_lib/admin.js';
 import { Timestamp } from 'firebase-admin/firestore';
+import { processDueMessages } from './send-scheduled.js';
 
-// Invoked by Vercel Cron every 6 hours (schedule in vercel.json).
+// Invoked by Vercel Cron daily at 00:00 UTC (schedule in vercel.json).
+// Also processes due Communications Hub scheduled sends — Vercel's Hobby plan
+// caps cron jobs at 2, so scheduled comms don't get their own dedicated cron
+// and are checked here instead (once daily rather than hourly).
 // Secured by CRON_SECRET env var — Vercel sets Authorization: Bearer <secret>.
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.headers.authorization !== `Bearer ${process.env.CRON_SECRET}`) {
@@ -18,17 +22,26 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     .where('subscriptionExpiresAt', '<=', now)
     .get();
 
-  if (expiredSnap.empty) {
+  let suspended = 0;
+  if (!expiredSnap.empty) {
+    const batch = db.batch();
+    for (const schoolDoc of expiredSnap.docs) {
+      batch.update(schoolDoc.ref, { status: 'suspended', autoSuspendedAt: now, updatedAt: now });
+    }
+    await batch.commit();
+    suspended = expiredSnap.size;
+    console.log(`[expireDemoSchools] Auto-suspended ${suspended} expired demo school(s).`);
+  } else {
     console.log('[expireDemoSchools] No expired demo schools found.');
-    return res.status(200).json({ ok: true, suspended: 0 });
   }
 
-  const batch = db.batch();
-  for (const schoolDoc of expiredSnap.docs) {
-    batch.update(schoolDoc.ref, { status: 'suspended', autoSuspendedAt: now, updatedAt: now });
+  let messagesProcessed = 0;
+  try {
+    const results = await processDueMessages(db);
+    messagesProcessed = results.length;
+  } catch (e) {
+    console.error('[expireDemoSchools] processDueMessages failed:', e);
   }
-  await batch.commit();
 
-  console.log(`[expireDemoSchools] Auto-suspended ${expiredSnap.size} expired demo school(s).`);
-  return res.status(200).json({ ok: true, suspended: expiredSnap.size });
+  return res.status(200).json({ ok: true, suspended, messagesProcessed });
 }

@@ -138,7 +138,7 @@ export async function sendDemoProvisioned(opts: {
 }
 
 export async function sendPlatformInvoice(opts: {
-  to: string;
+  to: string | string[];
   branding: BrandingData;
   adminName: string;
   invoiceNumber: string;

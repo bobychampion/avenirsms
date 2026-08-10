@@ -400,6 +400,7 @@ function CreateInvoiceModal({ schools, paymentAccounts, onClose, onCreated }: Cr
   const [useCustomAmount, setUseCustomAmount] = useState(false);
   const [customAmount, setCustomAmount] = useState<number>(0);
   const [emailInvoice, setEmailInvoice] = useState(true);
+  const [extraEmail, setExtraEmail] = useState('');
   const [receiverName, setReceiverName] = useState('');
   const [receiverVAT, setReceiverVAT] = useState('');
   const [receiverAddress, setReceiverAddress] = useState('');
@@ -466,8 +467,9 @@ function CreateInvoiceModal({ schools, paymentAccounts, onClose, onCreated }: Cr
       const ref = await addDoc(collection(db, 'platform_invoices'), inv);
       toast.success('Invoice created');
       if (emailInvoice && selectedSchool.adminEmail) {
+        const recipients = [selectedSchool.adminEmail, extraEmail.trim()].filter(Boolean) as string[];
         sendPlatformInvoice({
-          to: selectedSchool.adminEmail,
+          to: recipients,
           branding: { schoolName: selectedSchool.name },
           adminName: 'Administrator',
           invoiceNumber: inv.invoiceNumber,
@@ -692,7 +694,7 @@ function CreateInvoiceModal({ schools, paymentAccounts, onClose, onCreated }: Cr
         </div>
 
         {selectedSchool?.adminEmail && (
-          <div className="px-6 pb-2">
+          <div className="px-6 pb-2 space-y-2">
             <label className="flex items-center gap-2 text-sm text-slate-600 cursor-pointer">
               <input
                 type="checkbox"
@@ -703,6 +705,16 @@ function CreateInvoiceModal({ schools, paymentAccounts, onClose, onCreated }: Cr
               <Mail className="w-3.5 h-3.5 text-slate-400" />
               Email invoice to <span className="font-medium text-slate-800">{selectedSchool.adminEmail}</span>
             </label>
+            {emailInvoice && (
+              <input
+                type="email"
+                value={extraEmail}
+                onChange={e => setExtraEmail(e.target.value)}
+                placeholder="Also CC another email (optional)"
+                className="w-full ml-6 px-3 py-1.5 border border-slate-200 rounded-lg text-xs focus:ring-2 focus:ring-indigo-500 outline-none"
+                style={{ width: 'calc(100% - 1.5rem)' }}
+              />
+            )}
           </div>
         )}
 

@@ -55,7 +55,7 @@ export function buildStaffBroadcastEmail(
     <div style="margin:0 0 8px;">${bodyHtml}</div>
   </td></tr>
   <tr><td style="background:#f8fafc;padding:20px 40px;border-top:1px solid #e2e8f0;">
-    <p style="margin:0;font-size:12px;color:#94a3b8;line-height:1.6;">Sent to staff at <strong>${schoolName}</strong> via Avenir SIS.<br/>&copy; ${new Date().getFullYear()} Avenir SIS &middot; School Information System for Nigerian Schools</p>
+    <p style="margin:0;font-size:12px;color:#94a3b8;line-height:1.6;">Sent to staff at <strong>${schoolName}</strong> via Avenir SIS.<br/>&copy; ${new Date().getFullYear()} Avenir SIS &middot; School Information System</p>
   </td></tr>
 </table></td></tr></table></body></html>`;
 

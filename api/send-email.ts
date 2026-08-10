@@ -41,7 +41,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     const { data, error } = await resend.emails.send({
-      from: 'Avenir SIS <noreply@avenirsms.com>',
+      from: 'Avenir SIS <noreply@avenirsms.com.ng>',
       to: Array.isArray(to) ? to : [to],
       subject,
       html,

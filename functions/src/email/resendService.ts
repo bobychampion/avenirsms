@@ -33,7 +33,7 @@ export interface EmailPayload {
  * Replace with your verified Resend domain:
  *   Resend dashboard → Domains → verify your domain → use noreply@yourdomain.com
  */
-const DEFAULT_FROM = 'Avenir SIS <noreply@avenirsms.com>';
+const DEFAULT_FROM = 'Avenir SIS <noreply@avenirsms.com.ng>';
 
 /**
  * Send a transactional email via Resend.

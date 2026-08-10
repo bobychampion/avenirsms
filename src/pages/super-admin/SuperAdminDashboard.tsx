@@ -6,7 +6,7 @@
 
 import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { collection, getDocs, getDoc, query, orderBy, doc, updateDoc, where, getCountFromServer } from 'firebase/firestore';
+import { collection, getDocs, getDoc, query, orderBy, doc, updateDoc, where, limit, getCountFromServer } from 'firebase/firestore';
 import { db } from '../../firebase';
 import { School } from '../../types';
 import toast from 'react-hot-toast';
@@ -14,7 +14,7 @@ import {
   Building2, Users, CheckCircle2, CreditCard, Plus, ArrowRight,
   TrendingUp, AlertCircle, Clock, FileText, Zap, Bell, Mail,
   Phone, BookOpen, ChevronDown, CheckCheck, X, Inbox, Eye, EyeOff, Copy, KeyRound, Send, Loader2,
-  Image as ImageIcon, AlertTriangle, Sparkles,
+  Image as ImageIcon, AlertTriangle, Sparkles, History,
 } from 'lucide-react';
 import { sendDemoProvisioned, sendPlatformBroadcast, sendRaw } from '../../services/emailService';
 import { buildStaffBroadcastEmail } from '../../utils/staffBroadcastEmail';
@@ -96,6 +96,19 @@ export default function SuperAdminDashboard() {
   const [staffFailures, setStaffFailures] = useState<{ email: string; error: string }[]>([]);
   const [staffTopic, setStaffTopic] = useState('');
   const [generatingStaffDraft, setGeneratingStaffDraft] = useState(false);
+
+  // Message history — every send from either broadcast tool is logged to audit_log by /api/send-email.
+  type SentMessage = {
+    id: string;
+    subject: string;
+    to: string | string[];
+    template: string;
+    actorEmail: string | null;
+    createdAt: any;
+  };
+  const [messageHistory, setMessageHistory] = useState<SentMessage[] | null>(null);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [expandedHistoryId, setExpandedHistoryId] = useState<string | null>(null);
 
   // Any change to who's targeted invalidates the last preview — the Send button
   // stays locked until a fresh preview is pulled for the current selection.
@@ -199,6 +212,33 @@ export default function SuperAdminDashboard() {
       toast.error('Failed to send credentials email');
     } finally {
       setSendingCredentials(null);
+    }
+  };
+
+  const fetchMessageHistory = async () => {
+    setHistoryLoading(true);
+    try {
+      const snap = await getDocs(query(
+        collection(db, 'audit_log'),
+        where('action', '==', 'email.sent'),
+        orderBy('createdAt', 'desc'),
+        limit(50),
+      ));
+      setMessageHistory(snap.docs.map(d => {
+        const data = d.data() as any;
+        return {
+          id: d.id,
+          subject: data.details?.subject ?? '(no subject)',
+          to: data.details?.to ?? [],
+          template: data.details?.template ?? 'unknown',
+          actorEmail: data.actorEmail ?? null,
+          createdAt: data.createdAt,
+        };
+      }));
+    } catch {
+      toast.error('Failed to load message history');
+    } finally {
+      setHistoryLoading(false);
     }
   };
 
@@ -410,6 +450,17 @@ export default function SuperAdminDashboard() {
     if (!ts) return '—';
     const d = ts.toDate ? ts.toDate() : new Date(ts);
     return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+  };
+
+  const formatDateTime = (ts: any) => {
+    if (!ts) return '—';
+    const d = ts.toDate ? ts.toDate() : new Date(ts);
+    return d.toLocaleString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+  };
+
+  const templateLabel = (template: string) => {
+    if (template === 'raw') return 'Custom';
+    return template.replace(/([A-Z])/g, ' $1').replace(/^./, c => c.toUpperCase()).trim();
   };
 
   return (
@@ -820,6 +871,64 @@ export default function SuperAdminDashboard() {
             </div>
           )}
         </div>
+      </div>
+
+      {/* ── Message History (every send from either broadcast tool, from audit_log) ── */}
+      <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-sm">
+        <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <History className="w-4 h-4 text-indigo-600" />
+            <h2 className="font-semibold text-slate-800">Message History</h2>
+            <span className="text-xs text-slate-400 font-normal">— last 50 sends, most recent first</span>
+          </div>
+          <button
+            onClick={fetchMessageHistory}
+            disabled={historyLoading}
+            className="flex items-center gap-1.5 bg-slate-100 hover:bg-slate-200 disabled:opacity-50 text-slate-700 font-semibold px-3 py-1.5 rounded-lg transition-colors text-xs"
+          >
+            {historyLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <History className="w-3.5 h-3.5" />}
+            {historyLoading ? 'Loading…' : messageHistory ? 'Refresh' : 'Load history'}
+          </button>
+        </div>
+
+        {messageHistory === null ? (
+          <div className="p-8 text-center text-slate-400 text-sm">Click "Load history" to see recent sends</div>
+        ) : messageHistory.length === 0 ? (
+          <div className="p-8 text-center text-slate-400 text-sm">No emails sent yet</div>
+        ) : (
+          <div className="divide-y divide-slate-100 max-h-[32rem] overflow-y-auto">
+            {messageHistory.map(msg => {
+              const recipients = Array.isArray(msg.to) ? msg.to : [msg.to];
+              const isExpanded = expandedHistoryId === msg.id;
+              return (
+                <div key={msg.id} className="px-5 py-3">
+                  <button
+                    onClick={() => setExpandedHistoryId(isExpanded ? null : msg.id)}
+                    className="w-full flex items-start justify-between gap-4 text-left"
+                  >
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold text-slate-800 truncate">{msg.subject}</p>
+                      <p className="text-xs text-slate-500 mt-0.5">
+                        {recipients.length} recipient{recipients.length !== 1 ? 's' : ''} · {templateLabel(msg.template)} · sent by {msg.actorEmail ?? 'unknown'}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <span className="text-xs text-slate-400 whitespace-nowrap">{formatDateTime(msg.createdAt)}</span>
+                      <ChevronDown className={`w-4 h-4 text-slate-400 transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
+                    </div>
+                  </button>
+                  {isExpanded && (
+                    <div className="mt-2 pl-1 flex flex-wrap gap-1.5">
+                      {recipients.map(r => (
+                        <span key={r} className="text-xs bg-slate-100 text-slate-600 px-2 py-0.5 rounded-md">{r}</span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       {/* Recent schools table */}

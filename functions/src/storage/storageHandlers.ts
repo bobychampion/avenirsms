@@ -8,15 +8,15 @@
  * fetch the caller's users/{uid} doc, require super_admin OR
  * (admin/School_admin scoped to the target schoolId).
  */
-import { HttpsError } from '../compat/httpsError';
+import { HttpsError } from '../compat/httpsError.js';
 import { getFirestore } from 'firebase-admin/firestore';
 import {
   testCloudinaryCredentials,
   generateSignedUploadParams,
   deleteCloudinaryAsset,
   CloudinaryCredentials,
-} from './cloudinaryAdapter';
-import { encryptSecret, decryptSecret } from './secretCrypto';
+} from './cloudinaryAdapter.js';
+import { encryptSecret, decryptSecret } from './secretCrypto.js';
 
 async function requireSchoolAdmin(authUid: string, schoolId: string) {
   const db = getFirestore();

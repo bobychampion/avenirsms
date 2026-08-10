@@ -5,7 +5,7 @@
  * Uses the school's connected Google Workspace access token via googleTokenService.
  */
 
-import { getValidAccessToken } from './googleTokenService';
+import { getValidAccessToken } from './googleTokenService.js';
 
 const CALENDAR_BASE = 'https://www.googleapis.com/calendar/v3';
 

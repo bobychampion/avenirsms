@@ -1,6 +1,6 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { getAuth, getFirestore } from './_lib/admin';
-import { requireAuth, AppError, errorResponse } from './_lib/auth';
+import { getAuth, getFirestore } from './_lib/admin.js';
+import { requireAuth, AppError, errorResponse } from './_lib/auth.js';
 
 export const maxDuration = 300; // 5 min — school deletion touches 40+ collections
 

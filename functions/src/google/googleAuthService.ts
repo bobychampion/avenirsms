@@ -9,7 +9,7 @@
  * @module functions/google/googleAuthService
  */
 
-import { OAuthState } from './types';
+import { OAuthState } from './types.js';
 
 /**
  * Google OAuth 2.0 endpoints

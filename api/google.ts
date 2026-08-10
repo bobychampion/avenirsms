@@ -1,9 +1,9 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { getFirestore } from './_lib/admin';
-import { requireAuth, AppError, errorResponse, isSuperAdmin, isSchoolAdmin } from './_lib/auth';
-import { parseState, validateState, exchangeCodeForTokens, revokeTokens } from '../functions/src/google/googleAuthService';
-import { storeTokens, getValidAccessToken, clearTokens } from '../functions/src/google/googleTokenService';
-import { verifyConnection } from '../functions/src/google/googleVerificationService';
+import { getFirestore } from './_lib/admin.js';
+import { requireAuth, AppError, errorResponse, isSuperAdmin, isSchoolAdmin } from './_lib/auth.js';
+import { parseState, validateState, exchangeCodeForTokens, revokeTokens } from '../functions/src/google/googleAuthService.js';
+import { storeTokens, getValidAccessToken, clearTokens } from '../functions/src/google/googleTokenService.js';
+import { verifyConnection } from '../functions/src/google/googleVerificationService.js';
 
 // Handles: connect / disconnect / verify / refresh  (pass ?action=xxx)
 export default async function handler(req: VercelRequest, res: VercelResponse) {

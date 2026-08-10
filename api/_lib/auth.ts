@@ -1,5 +1,5 @@
 import type { IncomingMessage } from 'http';
-import { getAuth, getFirestore } from './admin';
+import { getAuth, getFirestore } from './admin.js';
 
 export interface CallerContext {
   uid: string;

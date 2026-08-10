@@ -7,12 +7,12 @@
  * @module functions/google
  */
 
-export * from './types';
-export * from './googleAuthService';
-export * from './googleTokenService';
-export * from './googleVerificationService';
-export * from './googleApiClient';
-export * from './googleDriveService';
-export * from './googleCalendarService';
-export * from './googleClassroomService';
-export * from './googleGmailService';
+export * from './types.js';
+export * from './googleAuthService.js';
+export * from './googleTokenService.js';
+export * from './googleVerificationService.js';
+export * from './googleApiClient.js';
+export * from './googleDriveService.js';
+export * from './googleCalendarService.js';
+export * from './googleClassroomService.js';
+export * from './googleGmailService.js';

@@ -1,6 +1,6 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { getFirestore } from './_lib/admin';
-import { requireAuth, AppError, errorResponse } from './_lib/auth';
+import { getFirestore } from './_lib/admin.js';
+import { requireAuth, AppError, errorResponse } from './_lib/auth.js';
 import crypto from 'crypto';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {

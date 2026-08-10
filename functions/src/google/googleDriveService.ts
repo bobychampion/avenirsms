@@ -17,7 +17,7 @@
  * @module functions/google/googleDriveService
  */
 
-import { getValidAccessToken } from './googleTokenService';
+import { getValidAccessToken } from './googleTokenService.js';
 
 /**
  * List files in Google Drive (Placeholder)

@@ -17,7 +17,7 @@
  * @module functions/google/googleGmailService
  */
 
-import { getValidAccessToken } from './googleTokenService';
+import { getValidAccessToken } from './googleTokenService.js';
 
 /**
  * Send email via Gmail (Placeholder)

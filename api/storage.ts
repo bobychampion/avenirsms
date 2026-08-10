@@ -1,12 +1,12 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { requireAuth, errorResponse, AppError } from './_lib/auth';
+import { requireAuth, errorResponse, AppError } from './_lib/auth.js';
 import {
   testStorageConnectionHandler,
   connectStorageProviderHandler,
   disconnectStorageProviderHandler,
   deleteStorageFileHandler,
   verifyStorageConnectionHandler,
-} from '../functions/src/storage/storageHandlers';
+} from '../functions/src/storage/storageHandlers.js';
 
 // Handles: test / connect / disconnect / delete-file / verify  (pass ?action=xxx)
 export default async function handler(req: VercelRequest, res: VercelResponse) {

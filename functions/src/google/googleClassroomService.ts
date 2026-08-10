@@ -6,7 +6,7 @@
  * school's connected Google Workspace access token.
  */
 
-import { getValidAccessToken } from './googleTokenService';
+import { getValidAccessToken } from './googleTokenService.js';
 
 const CLASSROOM_BASE = 'https://classroom.googleapis.com/v1';
 

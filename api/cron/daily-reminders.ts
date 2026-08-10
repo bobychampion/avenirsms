@@ -1,5 +1,5 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { getFirestore, getMessaging } from '../_lib/admin';
+import { getFirestore, getMessaging } from '../_lib/admin.js';
 import { Timestamp } from 'firebase-admin/firestore';
 
 // Invoked by Vercel Cron at 06:00 UTC daily (schedule in vercel.json).

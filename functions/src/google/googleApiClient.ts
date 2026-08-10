@@ -7,7 +7,7 @@
  * @module functions/google/googleApiClient
  */
 
-import { getValidAccessToken } from './googleTokenService';
+import { getValidAccessToken } from './googleTokenService.js';
 
 /**
  * Retry configuration for API requests

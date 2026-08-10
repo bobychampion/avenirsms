@@ -8,8 +8,8 @@
  */
 
 import { getFirestore, Timestamp } from 'firebase-admin/firestore';
-import { getValidAccessToken } from './googleTokenService';
-import { ServiceVerificationResult, VerifyGoogleConnectionResponse } from './types';
+import { getValidAccessToken } from './googleTokenService.js';
+import { ServiceVerificationResult, VerifyGoogleConnectionResponse } from './types.js';
 
 /**
  * Verify Google Drive API access

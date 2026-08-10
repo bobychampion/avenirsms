@@ -1,7 +1,7 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { getFirestore } from './_lib/admin';
-import { requireAuth, AppError, errorResponse, isSuperAdmin, isSchoolAdmin } from './_lib/auth';
-import { createCourse, updateCourse, archiveCourse } from '../functions/src/google/googleClassroomService';
+import { getFirestore } from './_lib/admin.js';
+import { requireAuth, AppError, errorResponse, isSuperAdmin, isSchoolAdmin } from './_lib/auth.js';
+import { createCourse, updateCourse, archiveCourse } from '../functions/src/google/googleClassroomService.js';
 
 // Handles: sync / archive  (pass ?action=xxx)
 export default async function handler(req: VercelRequest, res: VercelResponse) {

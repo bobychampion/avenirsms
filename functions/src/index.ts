@@ -20,8 +20,8 @@ import { initializeApp } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 import { getFirestore, Timestamp } from 'firebase-admin/firestore';
 import { getMessaging } from 'firebase-admin/messaging';
-import { sendEmail, resendApiKey } from './email/resendService';
-import * as templates from './email/emailTemplates';
+import { sendEmail, resendApiKey } from './email/resendService.js';
+import * as templates from './email/emailTemplates.js';
 import {
   ConnectGoogleWorkspaceRequest,
   ConnectGoogleWorkspaceResponse,
@@ -31,17 +31,17 @@ import {
   DisconnectGoogleWorkspaceResponse,
   VerifyGoogleConnectionRequest,
   VerifyGoogleConnectionResponse,
-} from './google/types';
+} from './google/types.js';
 import {
   parseState,
   validateState,
   exchangeCodeForTokens,
   revokeTokens,
-} from './google/googleAuthService';
-import { storeTokens, getValidAccessToken, clearTokens } from './google/googleTokenService';
-import { verifyConnection } from './google/googleVerificationService';
-import { createEvent, updateEvent, deleteEvent } from './google/googleCalendarService';
-import { createCourse, updateCourse, archiveCourse } from './google/googleClassroomService';
+} from './google/googleAuthService.js';
+import { storeTokens, getValidAccessToken, clearTokens } from './google/googleTokenService.js';
+import { verifyConnection } from './google/googleVerificationService.js';
+import { createEvent, updateEvent, deleteEvent } from './google/googleCalendarService.js';
+import { createCourse, updateCourse, archiveCourse } from './google/googleClassroomService.js';
 import {
   TestStorageConnectionRequest,
   TestStorageConnectionResponse,
@@ -58,7 +58,7 @@ import {
   getUploadSignatureHandler,
   deleteStorageFileHandler,
   verifyStorageConnectionHandler,
-} from './storage/storageHandlers';
+} from './storage/storageHandlers.js';
 
 initializeApp();
 

@@ -1,7 +1,7 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { getFirestore } from './_lib/admin';
-import { requireAuth, AppError, errorResponse, isSuperAdmin, isSchoolAdmin } from './_lib/auth';
-import { createEvent, updateEvent, deleteEvent } from '../functions/src/google/googleCalendarService';
+import { getFirestore } from './_lib/admin.js';
+import { requireAuth, AppError, errorResponse, isSuperAdmin, isSchoolAdmin } from './_lib/auth.js';
+import { createEvent, updateEvent, deleteEvent } from '../functions/src/google/googleCalendarService.js';
 
 // Handles: sync / delete  (pass ?action=xxx)
 export default async function handler(req: VercelRequest, res: VercelResponse) {

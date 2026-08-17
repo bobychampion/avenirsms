@@ -6,15 +6,17 @@
 
 import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { collection, getDocs, query, orderBy, doc, updateDoc, where, getCountFromServer } from 'firebase/firestore';
+import { collection, getDocs, addDoc, query, orderBy, doc, updateDoc, where, getCountFromServer, Timestamp } from 'firebase/firestore';
 import { db } from '../../firebase';
-import { School } from '../../types';
+import { School, CommandTask } from '../../types';
+import { useAuth } from '../../components/FirebaseProvider';
+import { PLAN_PRICES } from '../../utils/pricing';
 import toast from 'react-hot-toast';
 import {
-  Building2, Users, CheckCircle2, CreditCard, Plus, ArrowRight,
-  TrendingUp, AlertCircle, Clock, FileText, Zap, Bell, Mail,
-  Phone, BookOpen, ChevronDown, CheckCheck, X, Inbox, Eye, EyeOff, Copy, KeyRound, Send, Loader2,
-  MessageSquare,
+  Building2, Users, CheckCircle2, Plus, ArrowRight,
+  TrendingUp, AlertCircle, Clock, FileText, Mail,
+  Phone, BookOpen, CheckCheck, X, Inbox, Eye, EyeOff, Copy, KeyRound, Send, Loader2,
+  MessageSquare, Target, CheckSquare, DollarSign, ChevronRight,
 } from 'lucide-react';
 import { sendDemoProvisioned } from '../../services/emailService';
 
@@ -42,6 +44,9 @@ interface DemoRequest {
   urlSlug?: string;
   review?: string;
   createdAt: any;
+  // CRM extensions (see Leads.tsx) — optional, undefined on older records.
+  source?: string;
+  nextFollowUpAt?: string;
 }
 
 interface PlatformStats {
@@ -64,7 +69,15 @@ const DEMO_STATUS_CONFIG: Record<DemoRequest['status'], { label: string; color: 
 };
 
 export default function SuperAdminDashboard() {
+  const { user, profile } = useAuth();
   const [schools, setSchools] = useState<School[]>([]);
+  const [tasks, setTasks] = useState<CommandTask[]>([]);
+  const [tasksLoading, setTasksLoading] = useState(true);
+  const [quickAddLead, setQuickAddLead] = useState(false);
+  const [quickAddTask, setQuickAddTask] = useState(false);
+  const [quickSaving, setQuickSaving] = useState(false);
+  const [leadForm, setLeadForm] = useState({ schoolName: '', contactName: '', email: '', phone: '', source: 'Direct' });
+  const [taskForm, setTaskForm] = useState({ title: '', category: 'Internal' as CommandTask['category'], priority: 'Medium' as CommandTask['priority'], dueDate: '' });
   const [stats, setStats] = useState<PlatformStats>({
     totalSchools: 0, activeSchools: 0, suspendedSchools: 0,
     trialSchools: 0, demoSchools: 0, totalStudents: 0, loading: true,
@@ -149,6 +162,68 @@ export default function SuperAdminDashboard() {
       .catch(() => setDemoLoading(false));
   }, []);
 
+  useEffect(() => {
+    getDocs(query(collection(db, 'tasks'), orderBy('createdAt', 'desc')))
+      .then(snap => {
+        setTasks(snap.docs.map(d => ({ id: d.id, ...d.data() } as CommandTask)));
+        setTasksLoading(false);
+      })
+      .catch(() => setTasksLoading(false));
+  }, []);
+
+  const quickAddLeadSubmit = async () => {
+    if (!leadForm.schoolName.trim() || !leadForm.email.trim()) { toast.error('School name and email are required'); return; }
+    setQuickSaving(true);
+    try {
+      await addDoc(collection(db, 'demo_requests'), {
+        schoolName: leadForm.schoolName.trim(), contactName: leadForm.contactName.trim(),
+        email: leadForm.email.trim(), phone: leadForm.phone.trim(),
+        source: leadForm.source, status: 'pending', createdAt: Timestamp.now(),
+      });
+      toast.success('Lead added');
+      setQuickAddLead(false);
+      setLeadForm({ schoolName: '', contactName: '', email: '', phone: '', source: 'Direct' });
+      getDocs(query(collection(db, 'demo_requests'), orderBy('createdAt', 'desc')))
+        .then(snap => setDemoRequests(snap.docs.map(d => ({ id: d.id, ...d.data() } as DemoRequest))));
+    } catch {
+      toast.error('Failed to add lead');
+    } finally {
+      setQuickSaving(false);
+    }
+  };
+
+  const quickAddTaskSubmit = async () => {
+    if (!taskForm.title.trim()) { toast.error('Title is required'); return; }
+    setQuickSaving(true);
+    try {
+      await addDoc(collection(db, 'tasks'), {
+        title: taskForm.title.trim(), category: taskForm.category, priority: taskForm.priority,
+        status: 'To Do', dueDate: taskForm.dueDate || undefined,
+        assigneeName: profile?.displayName || user?.email || '',
+        createdBy: profile?.displayName || user?.email || 'unknown', createdAt: Timestamp.now(),
+      });
+      toast.success('Task created');
+      setQuickAddTask(false);
+      setTaskForm({ title: '', category: 'Internal', priority: 'Medium', dueDate: '' });
+      getDocs(query(collection(db, 'tasks'), orderBy('createdAt', 'desc')))
+        .then(snap => setTasks(snap.docs.map(d => ({ id: d.id, ...d.data() } as CommandTask))));
+    } catch {
+      toast.error('Failed to create task');
+    } finally {
+      setQuickSaving(false);
+    }
+  };
+
+  const toggleTaskComplete = async (t: CommandTask) => {
+    const nextStatus: CommandTask['status'] = t.status === 'Completed' ? 'To Do' : 'Completed';
+    try {
+      await updateDoc(doc(db, 'tasks', t.id!), { status: nextStatus, completedAt: nextStatus === 'Completed' ? Timestamp.now() : null });
+      setTasks(prev => prev.map(x => x.id === t.id ? { ...x, status: nextStatus } : x));
+    } catch {
+      toast.error('Failed to update task');
+    }
+  };
+
   const updateDemoStatus = async (id: string, status: DemoRequest['status']) => {
     setUpdatingId(id);
     try {
@@ -198,13 +273,54 @@ export default function SuperAdminDashboard() {
     }
   };
 
+  // ── Business KPIs — every number here is computed from real data already
+  // loaded (schools + demo_requests); nothing fabricated. Estimated MRR is
+  // explicitly labeled as an estimate (active schools' plan tier x published
+  // pricing), not actual collected revenue — that requires platform_invoices
+  // data, which is Phase 3 (Finance).
+  const newLeads30d = demoRequests.filter(r => {
+    const created = r.createdAt?.toDate?.();
+    return created && (Date.now() - created.getTime()) <= 30 * 86400000;
+  }).length;
+  const convertedCount = demoRequests.filter(r => r.status === 'converted').length;
+  const conversionRate = demoRequests.length > 0 ? Math.round((convertedCount / demoRequests.length) * 100) : null;
+  const estimatedMRR = schools
+    .filter(s => s.status === 'active')
+    .reduce((sum, s) => sum + (PLAN_PRICES[s.subscriptionPlan]?.yearly ?? 0) / 12, 0);
+
   const kpiCards = [
-    { label: 'Total Schools',   value: stats.totalSchools,   icon: Building2,    color: 'bg-indigo-600', sub: `${stats.activeSchools} active` },
-    { label: 'Active Schools',  value: stats.activeSchools,  icon: CheckCircle2, color: 'bg-emerald-600', sub: `${stats.suspendedSchools} suspended` },
-    { label: 'Trial Schools',   value: stats.trialSchools,   icon: Clock,        color: 'bg-amber-500',  sub: 'Pending conversion' },
-    { label: 'Demo Schools',    value: stats.demoSchools,    icon: Zap,          color: 'bg-violet-500', sub: '7-day auto-provisioned' },
-    { label: 'Total Students',  value: stats.totalStudents,  icon: Users,        color: 'bg-purple-600', sub: 'Across all schools' },
+    { label: 'Total Schools',    value: stats.totalSchools,   icon: Building2,    color: 'bg-indigo-600',  sub: `${stats.activeSchools} active`, fmt: 'int' as const },
+    { label: 'Active Schools',   value: stats.activeSchools,  icon: CheckCircle2, color: 'bg-emerald-600', sub: `${stats.suspendedSchools} suspended`, fmt: 'int' as const },
+    { label: 'Total Students',   value: stats.totalStudents,  icon: Users,        color: 'bg-purple-600',  sub: 'Across all schools', fmt: 'int' as const },
+    { label: 'New Leads',        value: newLeads30d,          icon: Target,       color: 'bg-blue-600',    sub: 'Last 30 days', fmt: 'int' as const },
+    { label: 'Active Trials',    value: stats.trialSchools,   icon: Clock,        color: 'bg-amber-500',   sub: `+${stats.demoSchools} in demo`, fmt: 'int' as const },
+    {
+      label: 'Conversion Rate', value: conversionRate, icon: TrendingUp, color: 'bg-violet-500',
+      sub: `${convertedCount} of ${demoRequests.length} leads`, fmt: 'pct' as const,
+    },
+    {
+      label: 'Estimated MRR', value: estimatedMRR, icon: DollarSign, color: 'bg-emerald-700',
+      sub: 'Active plans x list price — not billed revenue', fmt: 'ngn' as const,
+    },
   ];
+
+  const greeting = (() => {
+    const h = new Date().getHours();
+    return h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening';
+  })();
+  const firstName = (profile?.displayName || '').split(' ')[0] || null;
+
+  // ── My Tasks widget ────────────────────────────────────────────────────────
+  const myTasks = tasks.filter(t => t.assigneeName === (profile?.displayName || user?.email));
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const overdueTasks = myTasks.filter(t => t.status !== 'Completed' && t.dueDate && t.dueDate < todayStr);
+  const dueTodayTasks = myTasks.filter(t => t.status !== 'Completed' && t.dueDate === todayStr);
+  const upcomingTasks = myTasks.filter(t => t.status !== 'Completed' && t.dueDate && t.dueDate > todayStr);
+  const recentlyCompletedTasks = myTasks.filter(t => t.status === 'Completed').slice(0, 5);
+
+  // All overdue tasks platform-wide (not just mine) feed Needs Attention.
+  const allOverdueTasks = tasks.filter(t => t.status !== 'Completed' && t.dueDate && t.dueDate < todayStr);
+  const leadsNeedingFollowUp = demoRequests.filter(r => r.nextFollowUpAt && r.nextFollowUpAt <= todayStr && r.status !== 'converted' && r.status !== 'dismissed');
 
   const planBadge = (plan: School['subscriptionPlan']) => {
     const colors: Record<string, string> = {
@@ -278,17 +394,149 @@ export default function SuperAdminDashboard() {
   return (
     <div className="p-6 space-y-8 max-w-6xl mx-auto">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between flex-wrap gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900">Platform Dashboard</h1>
-          <p className="text-slate-500 text-sm mt-1">Manage all schools on the Avenir platform</p>
+          <h1 className="text-2xl font-bold text-slate-900">{greeting}{firstName ? `, ${firstName}` : ''} 👋</h1>
+          <p className="text-slate-500 text-sm mt-1">Here's what's happening across Avenir today.</p>
         </div>
-        <Link
-          to="/super-admin/schools/new"
-          className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold px-4 py-2.5 rounded-xl shadow-lg shadow-indigo-200 transition-colors text-sm"
-        >
-          <Plus className="w-4 h-4" /> Add School
-        </Link>
+        <div className="flex items-center gap-2">
+          <button onClick={() => setQuickAddTask(true)}
+            className="flex items-center gap-2 bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 font-semibold px-4 py-2.5 rounded-xl transition-colors text-sm"
+          >
+            <CheckSquare className="w-4 h-4" /> Create Task
+          </button>
+          <button onClick={() => setQuickAddLead(true)}
+            className="flex items-center gap-2 bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 font-semibold px-4 py-2.5 rounded-xl transition-colors text-sm"
+          >
+            <Target className="w-4 h-4" /> Add Lead
+          </button>
+          <Link
+            to="/super-admin/schools/new"
+            className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold px-4 py-2.5 rounded-xl shadow-lg shadow-indigo-200 transition-colors text-sm"
+          >
+            <Plus className="w-4 h-4" /> Add School
+          </Link>
+        </div>
+      </div>
+
+      {/* Needs Attention — aggregates school health issues, leads overdue for
+          follow-up, and overdue tasks. Each item is clickable to its record. */}
+      {(needsAttention.length > 0 || leadsNeedingFollowUp.length > 0 || allOverdueTasks.length > 0) && (
+        <div className="bg-white border border-amber-200 rounded-2xl p-5 shadow-sm">
+          <div className="flex items-center gap-2 mb-3">
+            <AlertCircle className="w-4 h-4 text-amber-600" />
+            <h2 className="font-semibold text-slate-800 text-sm">Needs Attention</h2>
+          </div>
+          <div className="space-y-1.5">
+            {needsAttention.slice(0, 3).map(({ school, reason }) => (
+              <Link key={school.id} to={`/super-admin/schools/${school.id}`}
+                className="flex items-center justify-between gap-3 px-3 py-2 rounded-xl hover:bg-amber-50 transition-colors group">
+                <span className="text-sm text-slate-700">🔴 <strong>{school.name}</strong> — {reason}</span>
+                <ChevronRight className="w-4 h-4 text-slate-300 group-hover:text-amber-600 shrink-0" />
+              </Link>
+            ))}
+            {leadsNeedingFollowUp.slice(0, 3).map(lead => (
+              <Link key={lead.id} to="/super-admin/leads"
+                className="flex items-center justify-between gap-3 px-3 py-2 rounded-xl hover:bg-amber-50 transition-colors group">
+                <span className="text-sm text-slate-700">🟡 Follow up with <strong>{lead.schoolName}</strong> — due {lead.nextFollowUpAt}</span>
+                <ChevronRight className="w-4 h-4 text-slate-300 group-hover:text-amber-600 shrink-0" />
+              </Link>
+            ))}
+            {allOverdueTasks.slice(0, 3).map(t => (
+              <Link key={t.id} to="/super-admin/tasks"
+                className="flex items-center justify-between gap-3 px-3 py-2 rounded-xl hover:bg-amber-50 transition-colors group">
+                <span className="text-sm text-slate-700">🔴 Overdue task: <strong>{t.title}</strong>{t.assigneeName ? ` (${t.assigneeName})` : ''}</span>
+                <ChevronRight className="w-4 h-4 text-slate-300 group-hover:text-amber-600 shrink-0" />
+              </Link>
+            ))}
+            {(needsAttention.length + leadsNeedingFollowUp.length + allOverdueTasks.length) > 9 && (
+              <p className="text-xs text-slate-400 px-3 pt-1">
+                +{needsAttention.length + leadsNeedingFollowUp.length + allOverdueTasks.length - 9} more across schools, leads, and tasks
+              </p>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Business KPI row */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        {kpiCards.map(card => (
+          <div key={card.label} className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm">
+            <div className="flex items-center justify-between mb-3">
+              <p className="text-sm font-medium text-slate-500">{card.label}</p>
+              <div className={`${card.color} p-2 rounded-xl`}>
+                <card.icon className="w-4 h-4 text-white" />
+              </div>
+            </div>
+            <p className="text-3xl font-bold text-slate-900">
+              {stats.loading || card.value === null ? '—' :
+                card.fmt === 'pct' ? `${card.value}%` :
+                card.fmt === 'ngn' ? `₦${Math.round(card.value).toLocaleString()}` :
+                card.value.toLocaleString()}
+            </p>
+            <p className="text-xs text-slate-400 mt-1">{card.sub}</p>
+          </div>
+        ))}
+      </div>
+
+      {/* My Tasks + Sales Pipeline snapshot */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <CheckSquare className="w-4 h-4 text-indigo-600" />
+              <h2 className="font-semibold text-slate-800 text-sm">My Tasks</h2>
+            </div>
+            <Link to="/super-admin/tasks" className="text-xs font-semibold text-indigo-600 hover:text-indigo-700">View all →</Link>
+          </div>
+          {tasksLoading ? (
+            <p className="text-sm text-slate-400 py-4 text-center">Loading…</p>
+          ) : (
+            <>
+              <p className="text-xs text-slate-500 mb-3">
+                <span className={overdueTasks.length > 0 ? 'text-red-600 font-semibold' : ''}>{overdueTasks.length} overdue</span>
+                {' · '}{dueTodayTasks.length} due today{' · '}{upcomingTasks.length} upcoming
+              </p>
+              {[...overdueTasks, ...dueTodayTasks, ...upcomingTasks].slice(0, 5).length === 0 && recentlyCompletedTasks.length === 0 ? (
+                <p className="text-sm text-slate-400 py-2">No tasks assigned to you yet.</p>
+              ) : (
+                <div className="space-y-1.5">
+                  {[...overdueTasks, ...dueTodayTasks, ...upcomingTasks].slice(0, 5).map(t => (
+                    <div key={t.id} className="flex items-center gap-2.5 px-1 py-1">
+                      <button onClick={() => toggleTaskComplete(t)} className="w-4 h-4 rounded border border-slate-300 hover:border-indigo-400 shrink-0" />
+                      <span className="text-sm text-slate-700 truncate flex-1">{t.title}</span>
+                      {t.dueDate && <span className={`text-xs shrink-0 ${t.dueDate < todayStr ? 'text-red-500 font-medium' : 'text-slate-400'}`}>{t.dueDate}</span>}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+
+        <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <Target className="w-4 h-4 text-indigo-600" />
+              <h2 className="font-semibold text-slate-800 text-sm">Sales Pipeline</h2>
+            </div>
+            <Link to="/super-admin/leads" className="text-xs font-semibold text-indigo-600 hover:text-indigo-700">View all →</Link>
+          </div>
+          {demoLoading ? (
+            <p className="text-sm text-slate-400 py-4 text-center">Loading…</p>
+          ) : demoRequests.length === 0 ? (
+            <p className="text-sm text-slate-400 py-2">No leads yet.</p>
+          ) : (
+            <div className="grid grid-cols-3 gap-2">
+              {(['pending', 'contacted', 'provisioned', 'conversion_requested', 'converted', 'dismissed'] as const).map(s => (
+                <div key={s} className="text-center bg-slate-50 rounded-xl py-2.5">
+                  <p className="text-xl font-bold text-slate-800">{demoRequests.filter(r => r.status === s).length}</p>
+                  <p className="text-[10px] text-slate-500 mt-0.5">{DEMO_STATUS_CONFIG[s].label}</p>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
 
       {/* School Health */}
@@ -354,22 +602,6 @@ export default function SuperAdminDashboard() {
             )}
           </div>
         )}
-      </div>
-
-      {/* KPI Cards */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        {kpiCards.map(card => (
-          <div key={card.label} className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm">
-            <div className="flex items-center justify-between mb-3">
-              <p className="text-sm font-medium text-slate-500">{card.label}</p>
-              <div className={`${card.color} p-2 rounded-xl`}>
-                <card.icon className="w-4 h-4 text-white" />
-              </div>
-            </div>
-            <p className="text-3xl font-bold text-slate-900">{stats.loading ? '—' : card.value.toLocaleString()}</p>
-            <p className="text-xs text-slate-400 mt-1">{card.sub}</p>
-          </div>
-        ))}
       </div>
 
       {/* Quick actions */}
@@ -596,6 +828,61 @@ export default function SuperAdminDashboard() {
           </div>
         )}
       </div>
+
+      {quickAddLead && (
+        <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" onClick={() => setQuickAddLead(false)}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100">
+              <h2 className="font-bold text-slate-900 text-lg flex items-center gap-2"><Target className="w-5 h-5 text-indigo-500" /> Add Lead</h2>
+              <button onClick={() => setQuickAddLead(false)} className="p-1.5 hover:bg-slate-100 rounded-lg"><X className="w-4 h-4 text-slate-500" /></button>
+            </div>
+            <div className="p-6 space-y-3">
+              <input className="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm" placeholder="School name *" value={leadForm.schoolName} onChange={e => setLeadForm({ ...leadForm, schoolName: e.target.value })} />
+              <input className="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm" placeholder="Contact name" value={leadForm.contactName} onChange={e => setLeadForm({ ...leadForm, contactName: e.target.value })} />
+              <input className="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm" placeholder="Email *" value={leadForm.email} onChange={e => setLeadForm({ ...leadForm, email: e.target.value })} />
+              <input className="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm" placeholder="Phone" value={leadForm.phone} onChange={e => setLeadForm({ ...leadForm, phone: e.target.value })} />
+              <select className="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm" value={leadForm.source} onChange={e => setLeadForm({ ...leadForm, source: e.target.value })}>
+                {['Direct', 'Website', 'Referral', 'WhatsApp', 'Facebook', 'Instagram', 'Google', 'Other'].map(s => <option key={s} value={s}>{s}</option>)}
+              </select>
+            </div>
+            <div className="px-6 pb-6 flex gap-3">
+              <button onClick={() => setQuickAddLead(false)} className="flex-1 py-2.5 rounded-xl border border-slate-200 text-slate-600 text-sm font-semibold hover:bg-slate-50">Cancel</button>
+              <button onClick={quickAddLeadSubmit} disabled={quickSaving} className="flex-1 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white text-sm font-semibold flex items-center justify-center gap-2">
+                {quickSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : null} Add Lead
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {quickAddTask && (
+        <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" onClick={() => setQuickAddTask(false)}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100">
+              <h2 className="font-bold text-slate-900 text-lg flex items-center gap-2"><CheckSquare className="w-5 h-5 text-indigo-500" /> Create Task</h2>
+              <button onClick={() => setQuickAddTask(false)} className="p-1.5 hover:bg-slate-100 rounded-lg"><X className="w-4 h-4 text-slate-500" /></button>
+            </div>
+            <div className="p-6 space-y-3">
+              <input className="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm" placeholder="Title *" value={taskForm.title} onChange={e => setTaskForm({ ...taskForm, title: e.target.value })} />
+              <div className="grid grid-cols-2 gap-3">
+                <select className="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm" value={taskForm.category} onChange={e => setTaskForm({ ...taskForm, category: e.target.value as CommandTask['category'] })}>
+                  {(['Sales', 'Marketing', 'School Support', 'Onboarding', 'Billing', 'Technical', 'Content', 'Product', 'Internal'] as const).map(c => <option key={c} value={c}>{c}</option>)}
+                </select>
+                <select className="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm" value={taskForm.priority} onChange={e => setTaskForm({ ...taskForm, priority: e.target.value as CommandTask['priority'] })}>
+                  {(['Low', 'Medium', 'High', 'Urgent'] as const).map(p => <option key={p} value={p}>{p}</option>)}
+                </select>
+              </div>
+              <input type="date" className="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm" value={taskForm.dueDate} onChange={e => setTaskForm({ ...taskForm, dueDate: e.target.value })} />
+            </div>
+            <div className="px-6 pb-6 flex gap-3">
+              <button onClick={() => setQuickAddTask(false)} className="flex-1 py-2.5 rounded-xl border border-slate-200 text-slate-600 text-sm font-semibold hover:bg-slate-50">Cancel</button>
+              <button onClick={quickAddTaskSubmit} disabled={quickSaving} className="flex-1 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white text-sm font-semibold flex items-center justify-center gap-2">
+                {quickSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : null} Create Task
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

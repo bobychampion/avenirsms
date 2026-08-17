@@ -15,7 +15,7 @@ import {
   Clock, Award, Briefcase, CreditCard, Map, Menu, X, Bell,
   ArrowUpRight, Key, MessageSquare, FileSpreadsheet, Database,
   HelpCircle, Building2, ShieldCheck, LogIn, MapPin, WifiOff, Chrome, Package, Sparkles,
-  NotebookPen, Activity,
+  NotebookPen, Activity, Target, CheckSquare,
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { db } from '../firebase';
@@ -113,11 +113,34 @@ function isLightColor(hex: string): boolean {
 
 const superAdminNavGroups = [
   {
-    label: 'Platform',
+    label: 'Overview',
     items: [
-      { to: '/super-admin', label: 'Platform Dashboard', icon: LayoutDashboard, exact: true },
-      { to: '/super-admin/schools', label: 'Schools', icon: Building2 },
+      { to: '/super-admin', label: 'Dashboard', icon: LayoutDashboard, exact: true },
+    ],
+  },
+  {
+    label: 'Growth',
+    items: [
+      { to: '/super-admin/leads', label: 'Leads', icon: Target },
       { to: '/super-admin/communications', label: 'Communications', icon: MessageSquare },
+    ],
+  },
+  {
+    label: 'Customers',
+    items: [
+      { to: '/super-admin/schools', label: 'Schools', icon: Building2 },
+    ],
+  },
+  {
+    label: 'Operations',
+    items: [
+      { to: '/super-admin/tasks', label: 'Tasks', icon: CheckSquare },
+    ],
+  },
+  {
+    label: 'Finance',
+    items: [
+      { to: '/super-admin/invoices', label: 'Invoices', icon: CreditCard },
     ],
   },
   {

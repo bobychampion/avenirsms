@@ -85,6 +85,8 @@ const SchoolDetail = lazy(() => import('./pages/super-admin/SchoolDetail'));
 const InvoiceGenerator = lazy(() => import('./pages/super-admin/InvoiceGenerator'));
 const CommunicationsHub = lazy(() => import('./pages/super-admin/CommunicationsHub'));
 const SystemStatus = lazy(() => import('./pages/super-admin/SystemStatus'));
+const Tasks = lazy(() => import('./pages/super-admin/Tasks'));
+const Leads = lazy(() => import('./pages/super-admin/Leads'));
 const DataMigration = lazy(() => import('./pages/DataMigration'));
 
 // Roles that have access to admin-level finance/payroll/analytics routes
@@ -300,6 +302,8 @@ function AppContent() {
           <Route path="/super-admin/invoices" element={<Layout><ProtectedRoute superAdminOnly><InvoiceGenerator /></ProtectedRoute></Layout>} />
           <Route path="/super-admin/communications" element={<Layout><ProtectedRoute superAdminOnly><CommunicationsHub /></ProtectedRoute></Layout>} />
           <Route path="/super-admin/status" element={<Layout><ProtectedRoute superAdminOnly><SystemStatus /></ProtectedRoute></Layout>} />
+          <Route path="/super-admin/tasks" element={<Layout><ProtectedRoute superAdminOnly><Tasks /></ProtectedRoute></Layout>} />
+          <Route path="/super-admin/leads" element={<Layout><ProtectedRoute superAdminOnly><Leads /></ProtectedRoute></Layout>} />
 
           {/* Admin routes */}
           <Route path="/admin" element={<Layout><ProtectedRoute role="admin"><AdminDashboard /></ProtectedRoute></Layout>} />

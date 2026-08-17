@@ -27,6 +27,7 @@ import {
   Calendar, RefreshCw, Filter, Mail,
 } from 'lucide-react';
 import { sendPlatformInvoice } from '../../services/emailService';
+import { PLAN_PRICES } from '../../utils/pricing';
 import toast from 'react-hot-toast';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -132,13 +133,8 @@ interface PlatformInvoice {
 }
 
 // ─── Constants ───────────────────────────────────────────────────────────────
-
-const PLAN_PRICES: Record<School['subscriptionPlan'], { termly: number; yearly: number; label: string }> = {
-  free:       { termly: 0,       yearly: 0,        label: 'Free' },
-  starter:    { termly: 30000,   yearly: 90000,    label: 'Basic / Starter' },
-  pro:        { termly: 60000,   yearly: 180000,   label: 'Professional' },
-  enterprise: { termly: 100000,  yearly: 300000,   label: 'College / Enterprise' },
-};
+// PLAN_PRICES lives in src/utils/pricing.ts — shared with the dashboard's
+// Estimated MRR calculation so both stay in sync off one source of truth.
 
 const PLAN_FEATURES: Record<School['subscriptionPlan'], string[]> = {
   free:       ['Student Management', 'Attendance Tracking', 'Basic Reports'],

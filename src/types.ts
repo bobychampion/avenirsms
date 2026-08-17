@@ -1072,3 +1072,31 @@ export interface LessonCoverage {
   /** curriculum_items doc ID that this lesson is linked to, null if free-text entry */
   curriculumItemId?: string | null;
 }
+
+// ─── Command Center: Tasks (super admin ops) ──────────────────────────────────
+
+export type TaskCategory = 'Sales' | 'Marketing' | 'School Support' | 'Onboarding' | 'Billing' | 'Technical' | 'Content' | 'Product' | 'Internal';
+export type TaskPriority = 'Low' | 'Medium' | 'High' | 'Urgent';
+export type TaskStatus = 'Backlog' | 'To Do' | 'In Progress' | 'Waiting' | 'Completed';
+
+export interface CommandTask {
+  id?: string;
+  title: string;
+  description?: string;
+  category: TaskCategory;
+  priority: TaskPriority;
+  status: TaskStatus;
+  assigneeUid?: string;
+  assigneeName?: string;
+  /** ISO date string: YYYY-MM-DD */
+  dueDate?: string;
+  relatedSchoolId?: string;
+  relatedSchoolName?: string;
+  relatedLeadId?: string;
+  relatedLeadName?: string;
+  notes?: string;
+  createdBy: string;
+  createdAt: any;
+  updatedAt?: any;
+  completedAt?: any;
+}

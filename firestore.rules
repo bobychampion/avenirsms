@@ -866,6 +866,12 @@ service cloud.firestore {
       allow read, write: if isSuperAdmin();
     }
 
+    // ─── Command Center: Tasks (internal ops, super_admin only for now — ─────
+    // Phase 3 Team module will widen this to assigned staff roles) ────────────
+    match /tasks/{taskId} {
+      allow read, write: if isSuperAdmin();
+    }
+
     // ─── WhatsApp logs ────────────────────────────────────────────────────────
 
     match /whatsapp_logs/{logId} {

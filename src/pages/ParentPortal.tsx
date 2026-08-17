@@ -213,18 +213,32 @@ export default function ParentPortal() {
       where('guardianUserId', '==', user.uid)
     );
 
-    // Merge both result sets, de-duplicate by student document ID
-    const mergeChildren = (byEmail: Student[], byUid: Student[]): Student[] => {
+    // ── Strategy 3 & 4: same as above but for secondary guardian
+    const qByEmail2 = query(
+      collection(db, 'students'),
+      where('schoolId', '==', schoolId!),
+      where('guardian2Email', '==', user.email)
+    );
+    const qByUid2 = query(
+      collection(db, 'students'),
+      where('schoolId', '==', schoolId!),
+      where('guardian2UserId', '==', user.uid)
+    );
+
+    // Merge all result sets, de-duplicate by student document ID
+    const mergeChildren = (...sets: Student[][]): Student[] => {
       const map = new Map<string, Student>();
-      [...byEmail, ...byUid].forEach(s => { if (s.id) map.set(s.id, s); });
+      sets.flat().forEach(s => { if (s.id) map.set(s.id, s); });
       return Array.from(map.values());
     };
 
     let emailResults: Student[] = [];
     let uidResults: Student[] = [];
+    let email2Results: Student[] = [];
+    let uid2Results: Student[] = [];
 
     const updateChildren = () => {
-      const merged = mergeChildren(emailResults, uidResults);
+      const merged = mergeChildren(emailResults, uidResults, email2Results, uid2Results);
       setChildren(merged);
       if (merged.length > 0) {
         setSelectedChild(prev => {
@@ -254,9 +268,25 @@ export default function ParentPortal() {
         uidResults = snap.docs.map(d => ({ id: d.id, ...d.data() } as Student));
         updateChildren();
       },
-      err => {
-        // Non-fatal: email query may still return results
-      }
+      err => { /* Non-fatal: other queries may still return results */ }
+    );
+
+    const unsubByEmail2 = onSnapshot(
+      qByEmail2,
+      snap => {
+        email2Results = snap.docs.map(d => ({ id: d.id, ...d.data() } as Student));
+        updateChildren();
+      },
+      err => { /* Non-fatal */ }
+    );
+
+    const unsubByUid2 = onSnapshot(
+      qByUid2,
+      snap => {
+        uid2Results = snap.docs.map(d => ({ id: d.id, ...d.data() } as Student));
+        updateChildren();
+      },
+      err => { /* Non-fatal */ }
     );
 
     const qNotif = query(
@@ -318,7 +348,7 @@ export default function ParentPortal() {
       }
     );
 
-    return () => { unsubByEmail(); unsubByUid(); unsubNotif(); unsubMsgs(); unsubSent(); };
+    return () => { unsubByEmail(); unsubByUid(); unsubByEmail2(); unsubByUid2(); unsubNotif(); unsubMsgs(); unsubSent(); };
   }, [user, schoolId]);
 
   useEffect(() => {

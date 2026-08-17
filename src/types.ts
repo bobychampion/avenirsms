@@ -170,6 +170,7 @@ export interface Student {
   guardian2Phone?: string;
   guardian2Relationship?: string;
   guardian2Email?: string;
+  guardian2UserId?: string;  // linked Firebase Auth UID of secondary guardian
   // Sibling links
   siblingIds?: string[];     // array of Student document IDs
   // Academic history

@@ -86,6 +86,47 @@ export default function StudentProfile() {
     setIsDirty(true);
   };
 
+  const [linkingG2, setLinkingG2] = useState(false);
+
+  const handleLinkGuardian2 = async () => {
+    if (!id || !formData.guardian2Email) return;
+    setLinkingG2(true);
+    try {
+      const email = formData.guardian2Email.trim().toLowerCase();
+      const snap = await getDocs(query(collection(db, 'users'),
+        where('schoolId', '==', schoolId!),
+        where('role', 'in', ['parent', 'guardian']),
+        where('email', '==', email)
+      ));
+      if (snap.empty) {
+        toast.error('No parent portal account found with that email. Save the email — they can still log in by email match.');
+        return;
+      }
+      const uid = snap.docs[0].id;
+      await updateDoc(doc(db, 'students', id), { guardian2UserId: uid, updatedAt: serverTimestamp() });
+      setFormData(prev => ({ ...prev, guardian2UserId: uid }));
+      toast.success('Secondary guardian linked to portal account.');
+    } catch {
+      toast.error('Failed to link account.');
+    } finally {
+      setLinkingG2(false);
+    }
+  };
+
+  const handleUnlinkGuardian2 = async () => {
+    if (!id) return;
+    setLinkingG2(true);
+    try {
+      await updateDoc(doc(db, 'students', id), { guardian2UserId: null, updatedAt: serverTimestamp() });
+      setFormData(prev => ({ ...prev, guardian2UserId: undefined }));
+      toast.success('Secondary guardian portal link removed.');
+    } catch {
+      toast.error('Failed to unlink.');
+    } finally {
+      setLinkingG2(false);
+    }
+  };
+
   const handleSave = async () => {
     if (!id) return;
     setSaving(true);
@@ -425,6 +466,63 @@ export default function StudentProfile() {
                   className="w-full px-4 py-2 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none"
                 />
               </div>
+            </div>
+          </section>
+
+          {/* Secondary Guardian */}
+          <section className="bg-white rounded-3xl shadow-sm border border-slate-200 p-8">
+            <h3 className="text-lg font-bold text-slate-900 mb-1 flex items-center">
+              <Users className="w-5 h-5 mr-3 text-emerald-600" />
+              Secondary Guardian
+            </h3>
+            <p className="text-xs text-slate-400 mb-6">Optional — this guardian can also access the Parent Portal independently.</p>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div className="space-y-2">
+                <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">Full Name</label>
+                <input type="text" name="guardian2Name" value={formData.guardian2Name || ''} onChange={handleInputChange}
+                  className="w-full px-4 py-2 rounded-xl border border-slate-200 focus:ring-2 focus:ring-emerald-500 outline-none" />
+              </div>
+              <div className="space-y-2">
+                <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">Relationship</label>
+                <input type="text" name="guardian2Relationship" value={formData.guardian2Relationship || ''} onChange={handleInputChange}
+                  className="w-full px-4 py-2 rounded-xl border border-slate-200 focus:ring-2 focus:ring-emerald-500 outline-none" />
+              </div>
+              <div className="space-y-2">
+                <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">Email</label>
+                <input type="email" name="guardian2Email" value={formData.guardian2Email || ''} onChange={handleInputChange}
+                  className="w-full px-4 py-2 rounded-xl border border-slate-200 focus:ring-2 focus:ring-emerald-500 outline-none"
+                  placeholder="guardian2@example.com" />
+              </div>
+              <div className="space-y-2">
+                <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">Phone</label>
+                <input type="text" name="guardian2Phone" value={formData.guardian2Phone || ''} onChange={handleInputChange}
+                  className="w-full px-4 py-2 rounded-xl border border-slate-200 focus:ring-2 focus:ring-emerald-500 outline-none" />
+              </div>
+            </div>
+
+            {/* Portal link status */}
+            <div className="mt-6 pt-5 border-t border-slate-100 flex items-center gap-3 flex-wrap">
+              {formData.guardian2UserId ? (
+                <>
+                  <span className="flex items-center gap-1.5 text-xs font-semibold text-emerald-700 bg-emerald-50 px-3 py-1.5 rounded-full">
+                    <CheckCircle2 className="w-3.5 h-3.5" /> Linked to portal account
+                  </span>
+                  <button onClick={handleUnlinkGuardian2} disabled={linkingG2}
+                    className="text-xs font-semibold text-rose-600 hover:text-rose-700 disabled:opacity-50">
+                    {linkingG2 ? 'Unlinking…' : 'Unlink'}
+                  </button>
+                </>
+              ) : (
+                <>
+                  <span className="text-xs text-slate-400">No portal account linked yet.</span>
+                  <button onClick={handleLinkGuardian2} disabled={linkingG2 || !formData.guardian2Email}
+                    className="flex items-center gap-1.5 text-xs font-semibold bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 text-white px-3 py-1.5 rounded-lg transition-colors">
+                    {linkingG2 ? <Loader2 className="w-3 h-3 animate-spin" /> : <Heart className="w-3 h-3" />}
+                    {linkingG2 ? 'Linking…' : 'Link portal account'}
+                  </button>
+                  <span className="text-xs text-slate-400">Saves guardian2Email as the portal login even without linking.</span>
+                </>
+              )}
             </div>
           </section>
 

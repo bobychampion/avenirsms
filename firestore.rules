@@ -104,7 +104,9 @@ service cloud.firestore {
       let student = get(/databases/$(database)/documents/students/$(studentId)).data;
       return isActiveAccount() &&
         (student.get('guardianEmail', '') == request.auth.token.email ||
-         student.get('guardianUserId', '') == request.auth.uid);
+         student.get('guardianUserId', '') == request.auth.uid ||
+         student.get('guardian2Email', '') == request.auth.token.email ||
+         student.get('guardian2UserId', '') == request.auth.uid);
     }
 
     function isValidEmail(email) {

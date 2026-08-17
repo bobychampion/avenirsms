@@ -48,17 +48,28 @@ export default function ParentMobileHome() {
   useEffect(() => {
     if (!schoolId) return;
     if (!profile?.linkedStudentIds?.length) {
-      // Fallback: load by guardianUserId
-      const unsub = onSnapshot(
-        query(collection(db, 'students'), where('schoolId', '==', schoolId!), where('guardianUserId', '==', profile?.uid ?? '')),
-        snap => {
-          const kids = snap.docs.map(d => ({ id: d.id, ...d.data() } as Student & { id: string }));
-          setChildren(kids);
-          if (kids.length > 0 && !selectedChild) setSelectedChild(kids[0]);
-        },
+      // Fallback: match by primary or secondary guardian UID
+      const uid = profile?.uid ?? '';
+      let g1Kids: (Student & { id: string })[] = [];
+      let g2Kids: (Student & { id: string })[] = [];
+      const merge = () => {
+        const map = new Map<string, Student & { id: string }>();
+        [...g1Kids, ...g2Kids].forEach(s => map.set(s.id, s));
+        const kids = Array.from(map.values());
+        setChildren(kids);
+        if (kids.length > 0 && !selectedChild) setSelectedChild(kids[0]);
+      };
+      const unsub1 = onSnapshot(
+        query(collection(db, 'students'), where('schoolId', '==', schoolId!), where('guardianUserId', '==', uid)),
+        snap => { g1Kids = snap.docs.map(d => ({ id: d.id, ...d.data() } as Student & { id: string })); merge(); },
         (error) => handleFirestoreError(error, OperationType.LIST, 'students')
       );
-      return () => unsub();
+      const unsub2 = onSnapshot(
+        query(collection(db, 'students'), where('schoolId', '==', schoolId!), where('guardian2UserId', '==', uid)),
+        snap => { g2Kids = snap.docs.map(d => ({ id: d.id, ...d.data() } as Student & { id: string })); merge(); },
+        () => { /* non-fatal */ }
+      );
+      return () => { unsub1(); unsub2(); };
     }
 
     const unsub = onSnapshot(

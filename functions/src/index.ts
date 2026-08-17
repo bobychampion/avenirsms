@@ -1,12 +1,16 @@
 /**
  * Admin-only Cloud Functions for AvenirSMS.
  *
- * Currently exposes a single callable: `setStudentPassword`. This exists
- * because synthetic student logins use non-deliverable emails
+ * Exposes `setStudentPassword` and `setParentPassword`. `setStudentPassword`
+ * exists because synthetic student logins use non-deliverable emails
  * (e.g. `stu-001@students.slug.local`), so Firebase's self-service
- * password-reset email flow doesn't work for them. An admin in the same
- * school triggers this function to mint a new temp password, which the
- * student then changes on first sign-in via `mustChangePassword`.
+ * password-reset email flow doesn't work for them. `setParentPassword` gives
+ * admins the same direct-set capability for parent accounts — parents have
+ * real emails and can already self-service via `sendPasswordResetEmail`, but
+ * an admin sometimes needs to hand a parent a working password directly
+ * (unreachable/wrong email on file, in-person handoff, etc). Both mint a new
+ * temp password which the user then changes on first sign-in via
+ * `mustChangePassword`.
  *
  * Deploy:
  *   cd functions && npm install && npm run deploy
@@ -104,6 +108,60 @@ export const setStudentPassword = onCall<SetStudentPasswordPayload>(async (reque
     actorEmail: actor.email ?? null,
     actorRole: actor.role ?? null,
     action: 'password.reset',
+    targetUserId: targetUid,
+    targetUserEmail: target.email ?? null,
+    createdAt: new Date(),
+  });
+
+  return { ok: true };
+});
+
+interface SetParentPasswordPayload {
+  targetUid: string;
+  newPassword: string;
+}
+
+export const setParentPassword = onCall<SetParentPasswordPayload>(async (request) => {
+  const { auth, data } = request;
+  if (!auth) throw new HttpsError('unauthenticated', 'Sign-in required.');
+  const { targetUid, newPassword } = data ?? ({} as SetParentPasswordPayload);
+  if (!targetUid || !newPassword) {
+    throw new HttpsError('invalid-argument', 'targetUid and newPassword are required.');
+  }
+  if (typeof newPassword !== 'string' || newPassword.length < 8) {
+    throw new HttpsError('invalid-argument', 'Password must be at least 8 characters.');
+  }
+
+  const db = getFirestore();
+  const [actorSnap, targetSnap] = await Promise.all([
+    db.doc(`users/${auth.uid}`).get(),
+    db.doc(`users/${targetUid}`).get(),
+  ]);
+  const actor = actorSnap.data();
+  const target = targetSnap.data();
+  if (!actor || !target) throw new HttpsError('not-found', 'User profile missing.');
+
+  if (target.role !== 'parent') {
+    throw new HttpsError('failed-precondition', 'This function can only reset passwords for parent accounts.');
+  }
+
+  const isSuperAdmin = actor.role === 'super_admin';
+  const isSchoolAdmin =
+    (actor.role === 'admin' || actor.role === 'School_admin') &&
+    actor.schoolId && actor.schoolId === target.schoolId;
+  if (!isSuperAdmin && !isSchoolAdmin) {
+    throw new HttpsError('permission-denied', 'Only admins in the target parent\'s school may reset this password.');
+  }
+
+  await getAuth().updateUser(targetUid, { password: newPassword });
+  await db.doc(`users/${targetUid}`).update({ mustChangePassword: true });
+
+  await db.collection('audit_log').add({
+    schoolId: target.schoolId ?? null,
+    actorId: auth.uid,
+    actorEmail: actor.email ?? null,
+    actorRole: actor.role ?? null,
+    action: 'parent_password.reset',
     targetUserId: targetUid,
     targetUserEmail: target.email ?? null,
     createdAt: new Date(),

@@ -857,7 +857,7 @@ export default function LandingPage() {
             </div>
             <div>
               <p className="font-extrabold text-slate-900 leading-none text-sm">Avenir SIS</p>
-              <p className="text-slate-400 text-xs">by Jabpatech</p>
+              <p className="text-slate-400 text-xs">by Collab Tech Innovation</p>
             </div>
           </div>
 
@@ -1373,15 +1373,15 @@ export default function LandingPage() {
         </div>
       </section>
 
-      {/* ─── ABOUT JABPATECH ─── */}
+      {/* ─── ABOUT COLLAB TECH INNOVATION ─── */}
       <section id="about" className="py-24 bg-white">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="grid lg:grid-cols-2 gap-16 items-center">
             <motion.div initial={{ opacity: 0, x: -20 }} whileInView={{ opacity: 1, x: 0 }} viewport={{ once: true }}>
               <SectionLabel><Globe className="w-3.5 h-3.5" /> About Us</SectionLabel>
-              <h2 className="text-4xl font-extrabold text-slate-900 mb-6">Built by Jabpatech</h2>
+              <h2 className="text-4xl font-extrabold text-slate-900 mb-6">Built by Collab Tech Innovation</h2>
               <p className="text-slate-600 text-lg mb-6 leading-relaxed">
-                <strong>Jabpatech</strong> is a Nigerian software development company dedicated to building practical, locally-relevant technology solutions for African businesses and institutions.
+                <strong>Collab Tech Innovation</strong> is a Nigerian software development company dedicated to building practical, locally-relevant technology solutions for African businesses and institutions.
               </p>
               <p className="text-slate-500 mb-6 leading-relaxed">
                 We specialize in custom software development, enterprise management systems, mobile applications, and cloud-based platforms. Avenir SIS is our flagship product in the EdTech space — born from real interactions with Nigerian school administrators who needed a better way to manage their institutions.
@@ -1411,7 +1411,7 @@ export default function LandingPage() {
                   </div>
                   <div>
                     <p className="font-extrabold text-lg">Avenir SIS</p>
-                    <p className="text-indigo-200 text-sm">by Jabpatech</p>
+                    <p className="text-indigo-200 text-sm">by Collab Tech Innovation</p>
                   </div>
                 </div>
                 <p className="text-indigo-100/80 mb-6 leading-relaxed">
@@ -1470,9 +1470,9 @@ export default function LandingPage() {
           </div>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6 max-w-4xl mx-auto">
             {[
-              { icon: Mail, label: 'Email Us', value: 'info@jabpatech.com', sub: 'We reply within 24 hours' },
+              { icon: Mail, label: 'Email Us', value: 'info@avenirsms.com.ng', sub: 'We reply within 24 hours' },
               { icon: Phone, label: 'Call / WhatsApp', value: '+234 800 000 0000', sub: 'Mon–Fri, 8am–6pm WAT' },
-              { icon: Globe, label: 'Website', value: 'www.jabpatech.com', sub: 'Learn more about us' },
+              { icon: Globe, label: 'Website', value: 'avenirsms.com.ng', sub: 'Learn more about us' },
             ].map((c, i) => (
               <div key={i} className="bg-slate-50 rounded-2xl p-6 text-center border border-slate-200">
                 <div className="w-12 h-12 bg-indigo-100 rounded-xl flex items-center justify-center mx-auto mb-4">
@@ -1504,7 +1504,7 @@ export default function LandingPage() {
                 </div>
                 <div>
                   <p className="font-extrabold text-white text-sm">Avenir SIS</p>
-                  <p className="text-slate-500 text-xs">by Jabpatech</p>
+                  <p className="text-slate-500 text-xs">by Collab Tech Innovation</p>
                 </div>
               </div>
               <p className="text-slate-400 text-sm leading-relaxed">
@@ -1530,7 +1530,7 @@ export default function LandingPage() {
             <div>
               <p className="text-xs font-bold uppercase tracking-widest text-slate-500 mb-4">Company</p>
               <ul className="space-y-2 text-sm">
-                {['About Jabpatech', 'Contact Us', 'Privacy Policy', 'Terms of Service'].map(l => (
+                {['About Collab Tech Innovation', 'Contact Us', 'Privacy Policy', 'Terms of Service'].map(l => (
                   <li key={l}><span className="text-slate-400">{l}</span></li>
                 ))}
               </ul>
@@ -1545,7 +1545,7 @@ export default function LandingPage() {
           </div>
           <div className="border-t border-slate-800 pt-8 flex flex-col sm:flex-row items-center justify-between gap-4">
             <p className="text-slate-500 text-xs">
-              &copy; {new Date().getFullYear()} Jabpatech. All rights reserved. Avenir SIS is a product of Jabpatech.
+              &copy; {new Date().getFullYear()} Collab Tech Innovation. All rights reserved. Avenir SIS is a product of Collab Tech Innovation.
             </p>
             <div className="flex items-center gap-4">
               {[

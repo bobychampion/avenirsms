@@ -529,12 +529,9 @@ function DirectAdmitModal({
       // 6. Update each sibling to add this new student to their siblingIds
       for (const sib of selectedSiblings) {
         if (!sib.id) continue;
-        const currentSiblings = sib.siblingIds || [];
-        if (!currentSiblings.includes(studentRef.id)) {
-          batch.update(doc(db, 'students', sib.id), {
-            siblingIds: [...currentSiblings, studentRef.id],
-          });
-        }
+        batch.update(doc(db, 'students', sib.id), {
+          siblingIds: arrayUnion(studentRef.id),
+        });
       }
 
       // 7. (Parent linking is now handled in step 5a above — no duplicate block)

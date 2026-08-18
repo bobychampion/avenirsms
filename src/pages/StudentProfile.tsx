@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { db, handleFirestoreError, OperationType } from '../firebase';
-import { doc, onSnapshot, updateDoc, serverTimestamp, collection, query, where, getDocs } from 'firebase/firestore';
+import { doc, onSnapshot, updateDoc, serverTimestamp, collection, query, where, getDocs, arrayUnion, arrayRemove } from 'firebase/firestore';
 import { Student, SCHOOL_CLASSES, SchoolClass, Grade, CURRENT_SESSION, TERMS } from '../types';
 import { motion, AnimatePresence } from 'motion/react';
 import toast from 'react-hot-toast';
@@ -124,6 +124,71 @@ export default function StudentProfile() {
       toast.error('Failed to unlink.');
     } finally {
       setLinkingG2(false);
+    }
+  };
+
+  // ── Siblings ─────────────────────────────────────────────────────────────
+  const [siblings, setSiblings] = useState<{ id: string; fullName: string; currentClass?: string }[]>([]);
+  const [siblingQuery, setSiblingQuery] = useState('');
+  const [siblingResults, setSiblingResults] = useState<{ id: string; fullName: string; currentClass?: string }[]>([]);
+  const [searchingSiblings, setSearchingSiblings] = useState(false);
+  const [removingSibling, setRemovingSibling] = useState<string | null>(null);
+
+  const siblingIdsKey = (student?.siblingIds ?? []).join(',');
+  useEffect(() => {
+    const ids: string[] = student?.siblingIds ?? [];
+    if (ids.length === 0) { setSiblings([]); return; }
+    Promise.all(ids.map(sid =>
+      getDocs(query(collection(db, 'students'), where('__name__', '==', sid))).then(s =>
+        s.empty ? null : { id: sid, fullName: s.docs[0].data().fullName || '—', currentClass: s.docs[0].data().currentClass }
+      )
+    )).then(results => setSiblings(results.filter(Boolean) as typeof siblings));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [siblingIdsKey]);
+
+  const searchSiblings = async (q: string) => {
+    setSiblingQuery(q);
+    if (q.trim().length < 2 || !schoolId) { setSiblingResults([]); return; }
+    setSearchingSiblings(true);
+    try {
+      const snap = await getDocs(query(collection(db, 'students'),
+        where('schoolId', '==', schoolId),
+        where('fullName', '>=', q),
+        where('fullName', '<=', q + '')
+      ));
+      const existing = new Set([id!, ...(student?.siblingIds ?? [])]);
+      setSiblingResults(snap.docs
+        .filter(d => !existing.has(d.id))
+        .map(d => ({ id: d.id, fullName: d.data().fullName, currentClass: d.data().currentClass }))
+        .slice(0, 6)
+      );
+    } finally {
+      setSearchingSiblings(false);
+    }
+  };
+
+  const handleAddSibling = async (sib: { id: string; fullName: string }) => {
+    if (!id) return;
+    await Promise.all([
+      updateDoc(doc(db, 'students', id), { siblingIds: arrayUnion(sib.id) }),
+      updateDoc(doc(db, 'students', sib.id), { siblingIds: arrayUnion(id) }),
+    ]);
+    setSiblingResults([]);
+    setSiblingQuery('');
+    toast.success(`${sib.fullName} linked as sibling.`);
+  };
+
+  const handleRemoveSibling = async (sibId: string) => {
+    if (!id) return;
+    setRemovingSibling(sibId);
+    try {
+      await Promise.all([
+        updateDoc(doc(db, 'students', id), { siblingIds: arrayRemove(sibId) }),
+        updateDoc(doc(db, 'students', sibId), { siblingIds: arrayRemove(id) }),
+      ]);
+      toast.success('Sibling removed.');
+    } finally {
+      setRemovingSibling(null);
     }
   };
 
@@ -522,6 +587,59 @@ export default function StudentProfile() {
                   </button>
                   <span className="text-xs text-slate-400">Saves guardian2Email as the portal login even without linking.</span>
                 </>
+              )}
+            </div>
+          </section>
+
+          {/* Siblings */}
+          <section className="bg-white rounded-3xl shadow-sm border border-slate-200 p-8">
+            <h3 className="text-lg font-bold text-slate-900 mb-1 flex items-center">
+              <Users className="w-5 h-5 mr-3 text-violet-600" />
+              Siblings
+            </h3>
+            <p className="text-xs text-slate-400 mb-5">Link siblings so their records are connected. Changes save immediately.</p>
+
+            {/* Current siblings */}
+            <div className="flex flex-wrap gap-2 mb-5 min-h-[2rem]">
+              {siblings.length === 0 && <span className="text-sm text-slate-400 italic">No siblings linked yet.</span>}
+              {siblings.map(sib => (
+                <span key={sib.id} className="inline-flex items-center gap-1.5 bg-violet-50 border border-violet-200 text-violet-800 text-xs font-semibold px-3 py-1.5 rounded-full">
+                  {sib.fullName}{sib.currentClass ? ` · ${sib.currentClass}` : ''}
+                  <button
+                    onClick={() => handleRemoveSibling(sib.id)}
+                    disabled={removingSibling === sib.id}
+                    className="ml-1 text-violet-400 hover:text-rose-600 transition-colors disabled:opacity-40"
+                    title="Remove sibling link"
+                  >
+                    {removingSibling === sib.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <X className="w-3 h-3" />}
+                  </button>
+                </span>
+              ))}
+            </div>
+
+            {/* Search to add */}
+            <div className="relative max-w-sm">
+              <input
+                value={siblingQuery}
+                onChange={e => searchSiblings(e.target.value)}
+                placeholder="Search student name to link…"
+                className="w-full px-4 py-2 rounded-xl border border-slate-200 focus:ring-2 focus:ring-violet-500 outline-none text-sm"
+              />
+              {searchingSiblings && <Loader2 className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 animate-spin" />}
+              {siblingResults.length > 0 && (
+                <ul className="absolute z-10 mt-1 w-full bg-white border border-slate-200 rounded-xl shadow-lg overflow-hidden">
+                  {siblingResults.map(r => (
+                    <li key={r.id}>
+                      <button
+                        onClick={() => handleAddSibling(r)}
+                        className="w-full text-left px-4 py-2.5 text-sm hover:bg-violet-50 transition-colors flex items-center justify-between"
+                      >
+                        <span className="font-medium text-slate-800">{r.fullName}</span>
+                        {r.currentClass && <span className="text-xs text-slate-400">{r.currentClass}</span>}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
               )}
             </div>
           </section>

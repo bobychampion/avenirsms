@@ -652,12 +652,9 @@ export default function ApplicationDetail() {
           // Update siblings to include this new student
           for (const sib of selectedSiblings) {
             if (!sib.id) continue;
-            const existingSibIds = sib.siblingIds || [];
-            if (!existingSibIds.includes(studentRef.id)) {
-              batch.update(doc(db, 'students', sib.id), {
-                siblingIds: [...existingSibIds, studentRef.id],
-              });
-            }
+            batch.update(doc(db, 'students', sib.id), {
+              siblingIds: arrayUnion(studentRef.id),
+            });
           }
 
           // ── Applicant → Student role upgrade ──────────────────────────

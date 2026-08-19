@@ -12,6 +12,7 @@ import { Application, ApplicationStatus, NIGERIAN_REGULATIONS, Student, Guardian
 import { generateStudentId } from '../services/firestoreService';
 import { stripUndefined } from '../utils/firestoreSanitize';
 import { assertNotSuperAdminEmail } from '../utils/superAdminGuard';
+import { resolveGuardianAccount, normalizeGuardianEmail } from '../services/guardianAccountService';
 import { useSchoolSettings } from './SchoolSettings';
 import { motion, AnimatePresence } from 'motion/react';
 import {
@@ -615,6 +616,26 @@ export default function ApplicationDetail() {
             }
           }
 
+          // ── Secondary guardian ───────────────────────────────────────────
+          // Link to an EXISTING portal account when the email already has one.
+          // Deliberately no account creation here: the secondary guardian is
+          // optional and often just a contact, so credentials are only ever
+          // generated on explicit request via "Link to portal account" on the
+          // student profile (which also covers guardians added later).
+          const normalizedG2Email = normalizeGuardianEmail(guardianForm.g2Email);
+          let resolvedGuardian2UserId: string | undefined;
+          if (normalizedG2Email && effectiveSchoolId) {
+            try {
+              const g2 = await resolveGuardianAccount({
+                email: normalizedG2Email, schoolId: effectiveSchoolId, allowCreate: false,
+              });
+              resolvedGuardian2UserId = g2.uid;
+            } catch (e: any) {
+              // A reserved/invalid address shouldn't block the admission.
+              console.warn('Secondary guardian link skipped:', e?.message ?? e);
+            }
+          }
+
           const studentRef = doc(collection(db, 'students'));
           const newStudent: Omit<Student, 'id'> = {
             studentName: application.applicantName,
@@ -639,7 +660,8 @@ export default function ApplicationDetail() {
             guardian2Name: guardianForm.g2Name || undefined,
             guardian2Phone: guardianForm.g2Phone || undefined,
             guardian2Relationship: guardianForm.g2Relationship || undefined,
-            guardian2Email: guardianForm.g2Email || undefined,
+            guardian2Email: normalizedG2Email || undefined,
+            guardian2UserId: resolvedGuardian2UserId,
             siblingIds: siblingIds.length ? siblingIds : undefined,
           };
           batch.set(studentRef, stripUndefined(newStudent as Record<string, unknown>) as Omit<Student, 'id'>);

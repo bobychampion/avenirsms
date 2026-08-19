@@ -18,6 +18,7 @@ import {
   Sparkles, TrendingUp, TrendingDown, Minus, AlertTriangle,
   CreditCard, Printer, X, CheckCircle2, ChevronRight, Camera, Activity
 } from 'lucide-react';
+import { resolveGuardianAccount, attachChildToGuardianProfile, normalizeGuardianEmail } from '../services/guardianAccountService';
 import { DOCUMENT_TITLE_DEFAULT } from '../constants/appMeta';
 import { useUnsavedChanges } from '../hooks/useUnsavedChanges';
 import UnsavedChangesDialog from '../components/UnsavedChangesDialog';
@@ -88,84 +89,95 @@ export default function StudentProfile() {
 
   const [linkingG1, setLinkingG1] = useState(false);
   const [linkingG2, setLinkingG2] = useState(false);
+  // Shown once after this page creates a brand-new portal login, so the admin
+  // can pass the temporary password on. Not persisted anywhere.
+  const [createdAccount, setCreatedAccount] = useState<{ email: string; tempPassword: string } | null>(null);
 
-  const handleLinkGuardian1 = async () => {
-    if (!id || !formData.guardianEmail) return;
-    setLinkingG1(true);
+  /**
+   * Links a guardian slot to a portal account, CREATING the account when none
+   * exists yet. Creation is on-demand by design: a guardian added long after
+   * admission (typically the secondary one, who never gets an account at
+   * admission) can still be given portal access from here.
+   */
+  const linkGuardian = async (slot: 1 | 2) => {
+    if (!id || !student || !schoolId) return;
+    const email = slot === 1 ? formData.guardianEmail : formData.guardian2Email;
+    const name = slot === 1 ? formData.guardianName : formData.guardian2Name;
+    const phone = slot === 1 ? formData.guardianPhone : formData.guardian2Phone;
+    if (!email) { toast.error('Add and save the guardian email first.'); return; }
+    const setBusy = slot === 1 ? setLinkingG1 : setLinkingG2;
+    const uidField = slot === 1 ? 'guardianUserId' : 'guardian2UserId';
+
+    setBusy(true);
+    setCreatedAccount(null);
+    const tid = toast.loading('Linking portal account…');
     try {
-      const email = formData.guardianEmail.trim().toLowerCase();
-      const snap = await getDocs(query(collection(db, 'users'),
-        where('schoolId', '==', schoolId!),
-        where('role', 'in', ['parent', 'guardian']),
-        where('email', '==', email)
-      ));
-      if (snap.empty) {
-        toast.error('No parent portal account found with that email. Save the email — they can still log in by email match.');
+      const result = await resolveGuardianAccount({
+        email, schoolId, phone, displayName: name, allowCreate: true,
+      });
+      if (!result.uid) {
+        toast.error(result.warning || 'Could not link this guardian.', { id: tid, duration: 6000 });
         return;
       }
-      const uid = snap.docs[0].id;
-      await updateDoc(doc(db, 'students', id), { guardianUserId: uid, updatedAt: serverTimestamp() });
-      setFormData(prev => ({ ...prev, guardianUserId: uid }));
-      toast.success('Guardian linked to portal account.');
-    } catch {
-      toast.error('Failed to link account.');
+
+      await updateDoc(doc(db, 'students', id), {
+        [uidField]: result.uid,
+        // Store the normalised address alongside the uid so the email-match
+        // path keeps working too.
+        [slot === 1 ? 'guardianEmail' : 'guardian2Email']: normalizeGuardianEmail(email),
+        updatedAt: serverTimestamp(),
+      });
+      await attachChildToGuardianProfile({
+        uid: result.uid,
+        isNew: result.created,
+        email,
+        displayName: name || email,
+        schoolId,
+        student: {
+          id,
+          studentName: student.studentName,
+          currentClass: formData.currentClass || student.currentClass,
+        },
+      });
+
+      setFormData(prev => ({
+        ...prev,
+        [uidField]: result.uid,
+        [slot === 1 ? 'guardianEmail' : 'guardian2Email']: normalizeGuardianEmail(email),
+      }));
+      if (result.created && result.tempPassword) {
+        setCreatedAccount({ email: normalizeGuardianEmail(email), tempPassword: result.tempPassword });
+        toast.success('Portal account created and linked.', { id: tid });
+      } else {
+        toast.success('Guardian linked to their existing portal account.', { id: tid });
+      }
+    } catch (err: any) {
+      toast.error(err?.message || 'Failed to link account.', { id: tid });
     } finally {
-      setLinkingG1(false);
+      setBusy(false);
     }
   };
 
-  const handleUnlinkGuardian1 = async () => {
+  const unlinkGuardian = async (slot: 1 | 2) => {
     if (!id) return;
-    setLinkingG1(true);
+    const setBusy = slot === 1 ? setLinkingG1 : setLinkingG2;
+    const uidField = slot === 1 ? 'guardianUserId' : 'guardian2UserId';
+    setBusy(true);
     try {
-      await updateDoc(doc(db, 'students', id), { guardianUserId: null, updatedAt: serverTimestamp() });
-      setFormData(prev => ({ ...prev, guardianUserId: undefined }));
-      toast.success('Guardian portal link removed.');
+      await updateDoc(doc(db, 'students', id), { [uidField]: null, updatedAt: serverTimestamp() });
+      setFormData(prev => ({ ...prev, [uidField]: undefined }));
+      toast.success('Portal link removed.');
     } catch {
       toast.error('Failed to unlink.');
     } finally {
-      setLinkingG1(false);
+      setBusy(false);
     }
   };
 
-  const handleLinkGuardian2 = async () => {
-    if (!id || !formData.guardian2Email) return;
-    setLinkingG2(true);
-    try {
-      const email = formData.guardian2Email.trim().toLowerCase();
-      const snap = await getDocs(query(collection(db, 'users'),
-        where('schoolId', '==', schoolId!),
-        where('role', 'in', ['parent', 'guardian']),
-        where('email', '==', email)
-      ));
-      if (snap.empty) {
-        toast.error('No parent portal account found with that email. Save the email — they can still log in by email match.');
-        return;
-      }
-      const uid = snap.docs[0].id;
-      await updateDoc(doc(db, 'students', id), { guardian2UserId: uid, updatedAt: serverTimestamp() });
-      setFormData(prev => ({ ...prev, guardian2UserId: uid }));
-      toast.success('Secondary guardian linked to portal account.');
-    } catch {
-      toast.error('Failed to link account.');
-    } finally {
-      setLinkingG2(false);
-    }
-  };
-
-  const handleUnlinkGuardian2 = async () => {
-    if (!id) return;
-    setLinkingG2(true);
-    try {
-      await updateDoc(doc(db, 'students', id), { guardian2UserId: null, updatedAt: serverTimestamp() });
-      setFormData(prev => ({ ...prev, guardian2UserId: undefined }));
-      toast.success('Secondary guardian portal link removed.');
-    } catch {
-      toast.error('Failed to unlink.');
-    } finally {
-      setLinkingG2(false);
-    }
-  };
+  const handleLinkGuardian1 = () => linkGuardian(1);
+  const handleUnlinkGuardian1 = () => unlinkGuardian(1);
+  const handleLinkGuardian2 = () => linkGuardian(2);
+  const handleUnlinkGuardian2 = () => unlinkGuardian(2);
 
   // ── Siblings ─────────────────────────────────────────────────────────────
   const [siblings, setSiblings] = useState<{ id: string; fullName: string; currentClass?: string }[]>([]);
@@ -264,6 +276,10 @@ export default function StudentProfile() {
     try {
       await updateDoc(doc(db, 'students', id), {
         ...formData,
+        // Normalised so the guardian email-match path stays reliable —
+        // Firestore equality is case-sensitive.
+        ...(formData.guardianEmail ? { guardianEmail: normalizeGuardianEmail(formData.guardianEmail) } : {}),
+        ...(formData.guardian2Email ? { guardian2Email: normalizeGuardianEmail(formData.guardian2Email) } : {}),
         updatedAt: serverTimestamp()
       });
       setIsDirty(false);
@@ -599,6 +615,39 @@ export default function StudentProfile() {
               </div>
             </div>
 
+            {/* One-time temp password for an account just created from this page. */}
+            {createdAccount && (
+              <div className="mt-6 rounded-2xl border border-emerald-200 bg-emerald-50 p-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="text-sm font-bold text-emerald-900">Portal account created</p>
+                    <p className="text-xs text-emerald-700 mt-1">
+                      Give these details to the guardian — this password is shown once and is not stored anywhere.
+                    </p>
+                    <div className="mt-2 space-y-1 text-sm">
+                      <p className="text-emerald-900"><span className="font-semibold">Email:</span> {createdAccount.email}</p>
+                      <p className="text-emerald-900 font-mono"><span className="font-semibold font-sans">Password:</span> {createdAccount.tempPassword}</p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1 shrink-0">
+                    <button
+                      onClick={() => {
+                        navigator.clipboard.writeText(`Email: ${createdAccount.email}
+Password: ${createdAccount.tempPassword}`)
+                          .then(() => toast.success('Login details copied.'));
+                      }}
+                      className="text-xs font-semibold text-emerald-700 hover:text-emerald-900 px-2 py-1 rounded-lg hover:bg-emerald-100"
+                    >
+                      Copy
+                    </button>
+                    <button onClick={() => setCreatedAccount(null)} className="p-1 text-emerald-500 hover:text-emerald-800 rounded-lg hover:bg-emerald-100">
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
             {/* Portal link status — this is what actually determines whether the
                 guardian sees this child when they log into the Parent Portal
                 (ParentPortal.tsx matches on guardianUserId, falling back to an
@@ -617,7 +666,7 @@ export default function StudentProfile() {
                 </>
               ) : (
                 <>
-                  <span className="text-xs text-slate-400">No portal account linked yet — this guardian won't see this child until linked.</span>
+                  <span className="text-xs text-slate-400">No portal account linked yet — this guardian won't see this child until linked. An account is created if they don't have one.</span>
                   <button onClick={handleLinkGuardian1} disabled={linkingG1 || !formData.guardianEmail}
                     className="flex items-center gap-1.5 text-xs font-semibold bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 text-white px-3 py-1.5 rounded-lg transition-colors">
                     {linkingG1 ? <Loader2 className="w-3 h-3 animate-spin" /> : <Heart className="w-3 h-3" />}
@@ -673,7 +722,7 @@ export default function StudentProfile() {
                 </>
               ) : (
                 <>
-                  <span className="text-xs text-slate-400">No portal account linked yet.</span>
+                  <span className="text-xs text-slate-400">No portal account linked yet — an account is created if they don't have one.</span>
                   <button onClick={handleLinkGuardian2} disabled={linkingG2 || !formData.guardian2Email}
                     className="flex items-center gap-1.5 text-xs font-semibold bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 text-white px-3 py-1.5 rounded-lg transition-colors">
                     {linkingG2 ? <Loader2 className="w-3 h-3 animate-spin" /> : <Heart className="w-3 h-3" />}

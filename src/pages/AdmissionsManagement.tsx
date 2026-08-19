@@ -22,6 +22,7 @@ import {
 import { Application, ApplicationStatus, Student, Guardian, CURRENT_SESSION, formatDate } from '../types';
 import { useSchool } from '../components/SchoolContext';
 import { stripUndefined } from '../utils/firestoreSanitize';
+import { resolveGuardianAccount, normalizeGuardianEmail } from '../services/guardianAccountService';
 import { assertNotSuperAdminEmail } from '../utils/superAdminGuard';
 import { differenceInYears, parseISO } from 'date-fns';
 import { useAuth } from '../components/FirebaseProvider';
@@ -445,6 +446,23 @@ function DirectAdmitModal({
       const siblingIds = selectedSiblings.map(s => s.id!).filter(Boolean);
 
       // 4. Create student record
+      // Secondary guardian: link to an existing portal account only. Account
+      // creation stays on-demand via "Link to portal account" on the student
+      // profile (see guardianAccountService), so an optional contact never
+      // silently gets credentials generated for them.
+      const normalizedG2Email = normalizeGuardianEmail(form.g2Email);
+      let resolvedGuardian2UserId: string | undefined;
+      if (normalizedG2Email && schoolId) {
+        try {
+          const g2 = await resolveGuardianAccount({
+            email: normalizedG2Email, schoolId, allowCreate: false,
+          });
+          resolvedGuardian2UserId = g2.uid;
+        } catch (e: any) {
+          console.warn('Secondary guardian link skipped:', e?.message ?? e);
+        }
+      }
+
       const studentRef = doc(collection(db, 'students'));
       const studentData: Omit<Student, 'id'> = {
         studentName: form.studentName,
@@ -465,7 +483,8 @@ function DirectAdmitModal({
         guardian2Name: form.g2Name || undefined,
         guardian2Phone: form.g2Phone || undefined,
         guardian2Relationship: form.g2Relationship || undefined,
-        guardian2Email: form.g2Email || undefined,
+        guardian2Email: normalizedG2Email || undefined,
+        guardian2UserId: resolvedGuardian2UserId,
         siblingIds: siblingIds.length ? siblingIds : undefined,
         previousSchool: form.previousSchool,
         bloodGroup: form.bloodGroup,

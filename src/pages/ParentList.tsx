@@ -11,7 +11,7 @@ import { db } from '../firebase';
 import { callApi } from '../services/api';
 import { useSchool } from '../components/SchoolContext';
 import { UserProfile } from '../types';
-import { Users, Search, Mail, Phone, ArrowLeft, Baby, SendHorizonal, KeyRound, ChevronRight, Lock, Copy, Check, X, Loader2 } from 'lucide-react';
+import { Users, Search, Mail, Phone, ArrowLeft, Baby, SendHorizonal, KeyRound, ChevronRight, Lock, Copy, Check, X, Loader2, Pencil } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 interface ParentRow extends UserProfile {
@@ -117,12 +117,97 @@ function SetPasswordModal({ parent, onClose }: { parent: ParentRow; onClose: () 
   );
 }
 
+// ─── Edit Parent Modal ─────────────────────────────────────────────────────
+// Corrects a mistyped name or login email. The email change goes through the
+// Admin SDK (it rewrites the actual Firebase Auth credential) and cascades onto
+// any linked student records, so the guardian email-match path doesn't go stale.
+
+function EditParentModal({ parent, onClose }: { parent: ParentRow; onClose: () => void }) {
+  const [displayName, setDisplayName] = useState(parent.displayName || '');
+  const [email, setEmail] = useState(parent.email || '');
+  const [saving, setSaving] = useState(false);
+
+  const nameChanged = displayName.trim() !== (parent.displayName || '').trim();
+  const emailChanged = email.trim().toLowerCase() !== (parent.email || '').toLowerCase();
+
+  const handleSave = async () => {
+    if (!displayName.trim()) { toast.error('Name cannot be empty.'); return; }
+    if (!emailChanged && !nameChanged) { onClose(); return; }
+    setSaving(true);
+    const tid = toast.loading('Saving changes…');
+    try {
+      const result = await callApi<{ ok: boolean; studentsUpdated: number }>(
+        '/api/set-parent-password?action=update-profile',
+        {
+          targetUid: parent.uid,
+          ...(nameChanged ? { displayName: displayName.trim() } : {}),
+          ...(emailChanged ? { newEmail: email.trim().toLowerCase() } : {}),
+        },
+      );
+      toast.success(
+        result.studentsUpdated > 0
+          ? `Saved — also updated ${result.studentsUpdated} student record${result.studentsUpdated !== 1 ? 's' : ''}.`
+          : 'Saved.',
+        { id: tid },
+      );
+      onClose();
+    } catch (err: any) {
+      toast.error(err?.message || 'Could not save changes.', { id: tid, duration: 6000 });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100">
+          <h2 className="font-bold text-slate-900 flex items-center gap-2">
+            <Pencil className="w-4 h-4 text-indigo-500" /> Edit Parent
+          </h2>
+          <button onClick={onClose} className="p-1.5 hover:bg-slate-100 rounded-lg transition-colors">
+            <X className="w-4 h-4 text-slate-500" />
+          </button>
+        </div>
+        <div className="p-6 space-y-3">
+          <div>
+            <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">Full name</label>
+            <input value={displayName} onChange={e => setDisplayName(e.target.value)}
+              className="w-full px-3 py-2.5 rounded-xl border border-slate-200 text-sm focus:ring-2 focus:ring-indigo-500 outline-none" />
+          </div>
+          <div>
+            <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">Login email</label>
+            <input type="email" value={email} onChange={e => setEmail(e.target.value)}
+              className="w-full px-3 py-2.5 rounded-xl border border-slate-200 text-sm focus:ring-2 focus:ring-indigo-500 outline-none" />
+            {emailChanged && (
+              <p className="mt-1.5 text-[11px] text-amber-700 bg-amber-50 border border-amber-100 rounded-lg px-2.5 py-1.5">
+                This changes the address they sign in with. Linked student records are updated to match.
+              </p>
+            )}
+          </div>
+        </div>
+        <div className="px-6 pb-6 flex gap-3">
+          <button onClick={onClose} className="flex-1 py-2.5 rounded-xl border border-slate-200 text-slate-600 text-sm font-semibold hover:bg-slate-50">
+            Cancel
+          </button>
+          <button onClick={handleSave} disabled={saving}
+            className="flex-1 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white text-sm font-semibold">
+            {saving ? 'Saving…' : 'Save changes'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function ParentList() {
   const { schoolId } = useSchool();
   const [parents, setParents] = useState<ParentRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [passwordTarget, setPasswordTarget] = useState<ParentRow | null>(null);
+  const [editTarget, setEditTarget] = useState<ParentRow | null>(null);
+  const [showDeleted, setShowDeleted] = useState(false);
 
   useEffect(() => {
     if (!schoolId) return;
@@ -137,14 +222,25 @@ export default function ParentList() {
     return () => unsub();
   }, [schoolId]);
 
+  // A deleted account is kept as a disabled tombstone (see UserManagement's
+  // delete: displayName becomes "Deleted User" and deletedAt is stamped) rather
+  // than being removed, because the Firebase Auth credential can't be deleted
+  // client-side. Those shouldn't sit in the directory looking like live parents
+  // offering password resets, so they're hidden unless explicitly asked for.
+  const deletedCount = useMemo(
+    () => parents.filter(p => p.deletedAt || p.disabled).length,
+    [parents],
+  );
+
   const filtered = useMemo(() => {
     const q = search.toLowerCase().trim();
-    if (!q) return parents;
-    return parents.filter(p =>
+    const base = showDeleted ? parents : parents.filter(p => !p.deletedAt && !p.disabled);
+    if (!q) return base;
+    return base.filter(p =>
       p.displayName?.toLowerCase().includes(q) ||
       p.email?.toLowerCase().includes(q)
     );
-  }, [parents, search]);
+  }, [parents, search, showDeleted]);
 
   const sendPasswordReset = async (parent: ParentRow) => {
     try {
@@ -174,8 +270,8 @@ export default function ParentList() {
           </p>
         </div>
         <div className="shrink-0 text-right">
-          <p className="text-2xl font-extrabold text-slate-900">{parents.length}</p>
-          <p className="text-xs text-slate-500">total parents</p>
+          <p className="text-2xl font-extrabold text-slate-900">{parents.length - deletedCount}</p>
+          <p className="text-xs text-slate-500">active parents</p>
         </div>
       </div>
 
@@ -188,6 +284,19 @@ export default function ParentList() {
           className="w-full max-w-md pl-9 pr-3 py-2.5 rounded-xl border border-slate-200 text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
         />
       </div>
+
+      {deletedCount > 0 && (
+        <div className="-mt-3 mb-6">
+          <button
+            onClick={() => setShowDeleted(v => !v)}
+            className="text-xs font-semibold text-slate-500 hover:text-slate-700"
+          >
+            {showDeleted
+              ? `Hide ${deletedCount} deleted/disabled account${deletedCount !== 1 ? 's' : ''}`
+              : `Show ${deletedCount} deleted/disabled account${deletedCount !== 1 ? 's' : ''}`}
+          </button>
+        </div>
+      )}
 
       {loading ? (
         <div className="text-center py-20 text-slate-400">Loading parents...</div>
@@ -208,7 +317,14 @@ export default function ParentList() {
                   {(parent.displayName || parent.email || '?').charAt(0).toUpperCase()}
                 </div>
                 <div className="min-w-0">
-                  <p className="font-bold text-slate-900 truncate">{parent.displayName || '—'}</p>
+                  <p className="font-bold text-slate-900 truncate flex items-center gap-1.5">
+                    {parent.displayName || '—'}
+                    {(parent.deletedAt || parent.disabled) && (
+                      <span className="shrink-0 text-[10px] font-bold uppercase tracking-wider text-rose-700 bg-rose-50 border border-rose-200 rounded-full px-1.5 py-0.5">
+                        {parent.deletedAt ? 'Deleted' : 'Disabled'}
+                      </span>
+                    )}
+                  </p>
                   <p className="text-xs text-slate-500 truncate">{parent.email}</p>
                 </div>
               </div>
@@ -252,12 +368,21 @@ export default function ParentList() {
                     <Lock className="w-3.5 h-3.5" /> Set Password
                   </button>
                 </div>
-                <a
-                  href={`mailto:${parent.email}`}
-                  className="w-full inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl border border-slate-200 text-xs font-bold text-slate-600 hover:bg-slate-50"
-                >
-                  <Mail className="w-3.5 h-3.5" /> Email
-                </a>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => setEditTarget(parent)}
+                    className="flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl border border-slate-200 text-xs font-bold text-slate-600 hover:bg-slate-50"
+                    title="Correct a mistyped name or login email"
+                  >
+                    <Pencil className="w-3.5 h-3.5" /> Edit
+                  </button>
+                  <a
+                    href={`mailto:${parent.email}`}
+                    className="flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl border border-slate-200 text-xs font-bold text-slate-600 hover:bg-slate-50"
+                  >
+                    <Mail className="w-3.5 h-3.5" /> Email
+                  </a>
+                </div>
               </div>
             </div>
           ))}
@@ -266,6 +391,9 @@ export default function ParentList() {
 
       {passwordTarget && (
         <SetPasswordModal parent={passwordTarget} onClose={() => setPasswordTarget(null)} />
+      )}
+      {editTarget && (
+        <EditParentModal parent={editTarget} onClose={() => setEditTarget(null)} />
       )}
     </div>
   );

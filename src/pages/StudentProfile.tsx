@@ -86,7 +86,47 @@ export default function StudentProfile() {
     setIsDirty(true);
   };
 
+  const [linkingG1, setLinkingG1] = useState(false);
   const [linkingG2, setLinkingG2] = useState(false);
+
+  const handleLinkGuardian1 = async () => {
+    if (!id || !formData.guardianEmail) return;
+    setLinkingG1(true);
+    try {
+      const email = formData.guardianEmail.trim().toLowerCase();
+      const snap = await getDocs(query(collection(db, 'users'),
+        where('schoolId', '==', schoolId!),
+        where('role', 'in', ['parent', 'guardian']),
+        where('email', '==', email)
+      ));
+      if (snap.empty) {
+        toast.error('No parent portal account found with that email. Save the email — they can still log in by email match.');
+        return;
+      }
+      const uid = snap.docs[0].id;
+      await updateDoc(doc(db, 'students', id), { guardianUserId: uid, updatedAt: serverTimestamp() });
+      setFormData(prev => ({ ...prev, guardianUserId: uid }));
+      toast.success('Guardian linked to portal account.');
+    } catch {
+      toast.error('Failed to link account.');
+    } finally {
+      setLinkingG1(false);
+    }
+  };
+
+  const handleUnlinkGuardian1 = async () => {
+    if (!id) return;
+    setLinkingG1(true);
+    try {
+      await updateDoc(doc(db, 'students', id), { guardianUserId: null, updatedAt: serverTimestamp() });
+      setFormData(prev => ({ ...prev, guardianUserId: undefined }));
+      toast.success('Guardian portal link removed.');
+    } catch {
+      toast.error('Failed to unlink.');
+    } finally {
+      setLinkingG1(false);
+    }
+  };
 
   const handleLinkGuardian2 = async () => {
     if (!id || !formData.guardian2Email) return;
@@ -531,6 +571,34 @@ export default function StudentProfile() {
                   className="w-full px-4 py-2 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none"
                 />
               </div>
+            </div>
+
+            {/* Portal link status — this is what actually determines whether the
+                guardian sees this child when they log into the Parent Portal
+                (ParentPortal.tsx matches on guardianUserId, falling back to an
+                exact guardianEmail match). Save the email above first if it's
+                just been changed, then link. */}
+            <div className="mt-6 pt-5 border-t border-slate-100 flex items-center gap-3 flex-wrap">
+              {formData.guardianUserId ? (
+                <>
+                  <span className="flex items-center gap-1.5 text-xs font-semibold text-emerald-700 bg-emerald-50 px-3 py-1.5 rounded-full">
+                    <CheckCircle2 className="w-3.5 h-3.5" /> Linked to portal account
+                  </span>
+                  <button onClick={handleUnlinkGuardian1} disabled={linkingG1}
+                    className="text-xs font-semibold text-rose-600 hover:text-rose-700 disabled:opacity-50">
+                    {linkingG1 ? 'Unlinking…' : 'Unlink'}
+                  </button>
+                </>
+              ) : (
+                <>
+                  <span className="text-xs text-slate-400">No portal account linked yet — this guardian won't see this child until linked.</span>
+                  <button onClick={handleLinkGuardian1} disabled={linkingG1 || !formData.guardianEmail}
+                    className="flex items-center gap-1.5 text-xs font-semibold bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 text-white px-3 py-1.5 rounded-lg transition-colors">
+                    {linkingG1 ? <Loader2 className="w-3 h-3 animate-spin" /> : <Heart className="w-3 h-3" />}
+                    {linkingG1 ? 'Linking…' : 'Link to portal account'}
+                  </button>
+                </>
+              )}
             </div>
           </section>
 

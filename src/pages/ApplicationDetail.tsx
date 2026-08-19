@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { db, handleFirestoreError, OperationType } from '../firebase';
 import { initializeApp, getApps } from 'firebase/app';
@@ -374,6 +374,8 @@ export default function ApplicationDetail() {
   const [parentUsers, setParentUsers] = useState<{ uid: string; displayName: string; email: string }[]>([]);
   const [linkExistingParent, setLinkExistingParent] = useState(false);
   const [linkedUserId, setLinkedUserId] = useState('');
+  const [savingDraft, setSavingDraft] = useState(false);
+  const siblingsRestoredRef = useRef(false);
 
   useEffect(() => {
     if (!id) return;
@@ -382,14 +384,24 @@ export default function ApplicationDetail() {
         const data = snapshot.data() as Application;
         setApplication({ id: snapshot.id, ...data });
         setNotes(data.reviewerNotes || '');
-        // Pre-fill guardian from application form submission (if collected via public apply form)
+        // Pre-fill guardian form: current in-memory edits win, then a saved
+        // draft (from the Save Draft button), then the applicant's own
+        // public-form submission. Only ever fills empty fields, so this is
+        // safe to run on every snapshot (including the one triggered by our
+        // own draft save) without clobbering active edits.
+        const draft = data.draftGuardianForm ?? {};
         setGuardianForm(prev => ({
           ...prev,
-          classAssignment: data.classApplyingFor,
-          g1Name: prev.g1Name || data.guardianName || '',
-          g1Phone: prev.g1Phone || data.guardianPhone || '',
-          g1Email: prev.g1Email || data.guardianEmail || '',
-          g1Relationship: prev.g1Relationship || data.guardianRelationship || 'father',
+          classAssignment: prev.classAssignment || data.classApplyingFor,
+          g1Name: prev.g1Name || draft.g1Name || data.guardianName || '',
+          g1Phone: prev.g1Phone || draft.g1Phone || data.guardianPhone || '',
+          g1Email: prev.g1Email || draft.g1Email || data.guardianEmail || '',
+          g1Relationship: prev.g1Relationship || draft.g1Relationship || data.guardianRelationship || 'father',
+          g1Occupation: prev.g1Occupation || draft.g1Occupation || '',
+          g2Name: prev.g2Name || draft.g2Name || '',
+          g2Phone: prev.g2Phone || draft.g2Phone || '',
+          g2Email: prev.g2Email || draft.g2Email || '',
+          g2Relationship: prev.g2Relationship || draft.g2Relationship || 'mother',
         }));
       }
       setLoading(false);
@@ -454,6 +466,38 @@ export default function ApplicationDetail() {
 
     return () => unsubscribe();
   }, [id, schoolId]);
+
+  // Restore selected siblings from a saved draft once the student list has
+  // loaded (draftSiblingIds and existingStudents populate via two separate
+  // async effects above, so this can't just live inline with either one).
+  // Runs once only — siblingsRestoredRef stops it from re-firing and
+  // overwriting the admin's own subsequent add/remove clicks.
+  useEffect(() => {
+    if (siblingsRestoredRef.current) return;
+    if (!application?.draftSiblingIds?.length || existingStudents.length === 0) return;
+    const restored = existingStudents.filter(s => application.draftSiblingIds!.includes(s.id!));
+    if (restored.length > 0) {
+      setSelectedSiblings(restored);
+      siblingsRestoredRef.current = true;
+    }
+  }, [application, existingStudents]);
+
+  const saveDraft = async () => {
+    if (!id) return;
+    setSavingDraft(true);
+    try {
+      const { siblingSearch, ...formToSave } = guardianForm;
+      await updateDoc(doc(db, 'applications', id), {
+        draftGuardianForm: formToSave,
+        draftSiblingIds: selectedSiblings.map(s => s.id).filter(Boolean),
+      });
+      toast.success('Draft saved — safe to reload now');
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, `applications/${id}`);
+    } finally {
+      setSavingDraft(false);
+    }
+  };
 
   const handleStatusUpdate = async (newStatus: ApplicationStatus) => {
     if (!id || !application) return;
@@ -923,6 +967,13 @@ export default function ApplicationDetail() {
                       linkedUserId={linkedUserId}
                       onLinkedUserChange={setLinkedUserId}
                     />
+                    <div className="flex justify-end mt-4 pt-4 border-t border-slate-100">
+                      <button onClick={saveDraft} disabled={savingDraft}
+                        className="flex items-center px-5 py-2 bg-indigo-50 text-indigo-700 font-bold rounded-lg hover:bg-indigo-100 transition-all disabled:opacity-50 text-sm">
+                        {savingDraft ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Save className="w-4 h-4 mr-2" />}
+                        Save Draft
+                      </button>
+                    </div>
                   </div>
                 </motion.div>
               )}

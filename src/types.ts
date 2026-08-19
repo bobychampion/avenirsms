@@ -27,6 +27,14 @@ export interface Application {
   guardianEmail?: string;
   guardianRelationship?: string;
   guardianAddress?: string;
+  /**
+   * In-progress admin edits to the Guardian & Sibling Linking panel, saved via
+   * its "Save Draft" button so the selection survives a reload before the
+   * application is actually approved (approval itself persists the real
+   * students/guardians/users records — these two fields are draft-only).
+   */
+  draftGuardianForm?: Record<string, string>;
+  draftSiblingIds?: string[];
 }
 
 export interface UserProfile {

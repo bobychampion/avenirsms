@@ -105,13 +105,13 @@ export function MobileShell({ children, role }: MobileShellProps) {
               Install
             </button>
           )}
-          {/* Avatar */}
-          <div className={cn(
+          {/* Avatar — links to /profile (change password, etc.) */}
+          <Link to="/profile" title="My Profile" className={cn(
             'w-8 h-8 rounded-full flex items-center justify-center text-white text-sm font-bold flex-shrink-0 bg-gradient-to-br',
             accentColor
           )}>
             {initial}
-          </div>
+          </Link>
           {/* Logout */}
           <button
             onClick={handleLogout}

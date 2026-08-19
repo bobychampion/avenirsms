@@ -651,10 +651,13 @@ export function Layout({ children }: { children: React.ReactNode }) {
                 <div className="h-6 w-px bg-slate-200" />
                 <NotificationBell />
                 <div className="flex items-center space-x-3">
-                  <div className="text-right hidden sm:block">
-                    <p className="text-sm font-semibold text-slate-900">{effectiveProfile?.displayName}</p>
-                    <p className="text-xs text-slate-500 capitalize">{effectiveProfile?.role}</p>
-                  </div>
+                  <Link to="/profile" title="My Profile" className="flex items-center space-x-3 group">
+                    <div className="text-right hidden sm:block">
+                      <p className="text-sm font-semibold text-slate-900 group-hover:text-indigo-600 transition-colors">{effectiveProfile?.displayName}</p>
+                      <p className="text-xs text-slate-500 capitalize">{effectiveProfile?.role}</p>
+                    </div>
+                    <Avatar photoUrl={isImpersonating ? undefined : profile?.photoUrl} name={effectiveProfile?.displayName ?? ''} fallbackChar="P" size="xs" rounded="full" gradientFrom="from-sky-500" gradientTo="to-blue-600" />
+                  </Link>
                   <button onClick={handleLogout} className="p-2 text-slate-400 hover:text-red-500 transition-colors" title="Logout">
                     <LogOut className="w-5 h-5" />
                   </button>

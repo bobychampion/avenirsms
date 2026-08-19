@@ -422,6 +422,17 @@ service cloud.firestore {
       allow update: if isSuperAdmin() || (isAdmin() && docBelongsToCallerSchool());
     }
 
+    // ─── Pickup/Drop-off Logs (parent-logged, no GPS/geofence — a simple timeline) ──
+    match /pickup_dropoff_logs/{logId} {
+      allow read: if isSuperAdmin() ||
+        (isAdmin() && docBelongsToCallerSchool()) ||
+        (isTeacher() && docBelongsToCallerSchool()) ||
+        isOwner(resource.data.get('parentUid', ''));
+      allow create: if isAuthenticated() && newDocBelongsToCallerSchool() &&
+        request.resource.data.parentUid == request.auth.uid;
+      allow update, delete: if false; // immutable log
+    }
+
     // ─── Subject Attendance (per-lesson exceptions — independent of daily `attendance`) ──
     // Tighter than the `attendance` rule above: a teacher may only create/update a record
     // they are attributed on (request.resource.data.recordedBy == their own uid), not just

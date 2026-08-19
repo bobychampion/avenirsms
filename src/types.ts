@@ -992,6 +992,18 @@ export interface TeacherCheckIn {
   schoolId: string;
 }
 
+/** Parent-logged drop-off/pickup event — a simple timestamped log, no GPS/geofence. */
+export interface PickupDropoffLog {
+  id?: string;
+  schoolId: string;
+  parentUid: string;
+  parentName: string;
+  type: 'dropoff' | 'pickup';
+  childIds: string[];
+  childNames: string[];
+  timestamp: any;
+}
+
 export function formatDate(dateStr: string): string {
   if (!dateStr) return '';
   const [y, m, d] = dateStr.split('-');

@@ -180,11 +180,37 @@ export default function StudentProfile() {
     if (ids.length === 0) { setSiblings([]); return; }
     Promise.all(ids.map(sid =>
       getDocs(query(collection(db, 'students'), where('__name__', '==', sid))).then(s =>
-        s.empty ? null : { id: sid, fullName: s.docs[0].data().fullName || '—', currentClass: s.docs[0].data().currentClass }
+        s.empty ? null : { id: sid, fullName: s.docs[0].data().studentName || '—', currentClass: s.docs[0].data().currentClass }
       )
     )).then(results => setSiblings(results.filter(Boolean) as typeof siblings));
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [siblingIdsKey]);
+
+  // Guardian-detected siblings -- any other student sharing this one's
+  // guardianUserId/guardianEmail/guardian2UserId/guardian2Email. Purely
+  // computed at display time (no writes, nothing to get out of sync): a
+  // parent linked to 2+ children just sees them connected automatically.
+  const [guardianSiblings, setGuardianSiblings] = useState<{ id: string; fullName: string; currentClass?: string }[]>([]);
+  useEffect(() => {
+    if (!id || !schoolId || !student) { setGuardianSiblings([]); return; }
+    const values = [student.guardianUserId, student.guardianEmail, student.guardian2UserId, student.guardian2Email].filter(Boolean) as string[];
+    if (values.length === 0) { setGuardianSiblings([]); return; }
+    const fields = ['guardianUserId', 'guardianEmail', 'guardian2UserId', 'guardian2Email'];
+    const queries = values.flatMap(value =>
+      fields.map(field => query(collection(db, 'students'), where('schoolId', '==', schoolId), where(field, '==', value)))
+    );
+    Promise.all(queries.map(q => getDocs(q))).then(snaps => {
+      const map = new Map<string, { id: string; fullName: string; currentClass?: string }>();
+      snaps.forEach(snap => snap.docs.forEach(d => {
+        if (d.id === id) return;
+        map.set(d.id, { id: d.id, fullName: d.data().studentName || '—', currentClass: d.data().currentClass });
+      }));
+      setGuardianSiblings(Array.from(map.values()));
+    }).catch(() => setGuardianSiblings([]));
+  }, [id, schoolId, student?.guardianUserId, student?.guardianEmail, student?.guardian2UserId, student?.guardian2Email]);
+
+  const explicitSiblingIds = new Set(siblings.map(s => s.id));
+  const autoOnlySiblings = guardianSiblings.filter(s => !explicitSiblingIds.has(s.id));
 
   const searchSiblings = async (q: string) => {
     setSiblingQuery(q);
@@ -193,13 +219,13 @@ export default function StudentProfile() {
     try {
       const snap = await getDocs(query(collection(db, 'students'),
         where('schoolId', '==', schoolId),
-        where('fullName', '>=', q),
-        where('fullName', '<=', q + '')
+        where('studentName', '>=', q),
+        where('studentName', '<=', q + '')
       ));
       const existing = new Set([id!, ...(student?.siblingIds ?? [])]);
       setSiblingResults(snap.docs
         .filter(d => !existing.has(d.id))
-        .map(d => ({ id: d.id, fullName: d.data().fullName, currentClass: d.data().currentClass }))
+        .map(d => ({ id: d.id, fullName: d.data().studentName, currentClass: d.data().currentClass }))
         .slice(0, 6)
       );
     } finally {
@@ -681,6 +707,13 @@ export default function StudentProfile() {
                   >
                     {removingSibling === sib.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <X className="w-3 h-3" />}
                   </button>
+                </span>
+              ))}
+              {autoOnlySiblings.map(sib => (
+                <span key={sib.id} title="Detected automatically because they share a linked guardian"
+                  className="inline-flex items-center gap-1.5 bg-slate-50 border border-slate-200 text-slate-600 text-xs font-semibold px-3 py-1.5 rounded-full">
+                  {sib.fullName}{sib.currentClass ? ` · ${sib.currentClass}` : ''}
+                  <span className="text-slate-400 font-normal">(same guardian)</span>
                 </span>
               ))}
             </div>

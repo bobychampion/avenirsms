@@ -801,6 +801,24 @@
       ]
     },
     {
+      "collectionGroup": "pickup_dropoff_logs",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "schoolId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "parentUid",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "timestamp",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
       "collectionGroup": "question_bank",
       "queryScope": "COLLECTION",
       "fields": [
@@ -993,28 +1011,6 @@
         {
           "fieldPath": "attendanceDate",
           "order": "ASCENDING"
-        }
-      ]
-    },
-    {
-      "collectionGroup": "subjectAttendance",
-      "queryScope": "COLLECTION",
-      "fields": [
-        {
-          "fieldPath": "schoolId",
-          "order": "ASCENDING"
-        },
-        {
-          "fieldPath": "classId",
-          "order": "ASCENDING"
-        },
-        {
-          "fieldPath": "subjectName",
-          "order": "ASCENDING"
-        },
-        {
-          "fieldPath": "attendanceDate",
-          "order": "ASCENDING"
         },
         {
           "fieldPath": "timetablePeriodId",
@@ -1031,37 +1027,15 @@
           "order": "ASCENDING"
         },
         {
-          "fieldPath": "studentId",
-          "order": "ASCENDING"
-        },
-        {
-          "fieldPath": "attendanceDate",
-          "order": "ASCENDING"
-        }
-      ]
-    },
-    {
-      "collectionGroup": "subjectAttendance",
-      "queryScope": "COLLECTION",
-      "fields": [
-        {
-          "fieldPath": "schoolId",
-          "order": "ASCENDING"
-        },
-        {
-          "fieldPath": "studentId",
-          "order": "ASCENDING"
-        },
-        {
-          "fieldPath": "attendanceDate",
-          "order": "ASCENDING"
-        },
-        {
           "fieldPath": "classId",
           "order": "ASCENDING"
         },
         {
           "fieldPath": "subjectName",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "attendanceDate",
           "order": "ASCENDING"
         }
       ]
@@ -1092,6 +1066,50 @@
         },
         {
           "fieldPath": "timetablePeriodId",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "subjectAttendance",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "schoolId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "studentId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "attendanceDate",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "classId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "subjectName",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "subjectAttendance",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "schoolId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "studentId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "attendanceDate",
           "order": "ASCENDING"
         }
       ]

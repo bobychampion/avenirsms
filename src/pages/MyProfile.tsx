@@ -16,6 +16,7 @@ import Avatar from '../components/Avatar';
 import toast from 'react-hot-toast';
 import { Camera, Loader2, CloudOff, Save, User as UserIcon, ArrowLeft, KeyRound, Bell, CheckCircle, MapPin } from 'lucide-react';
 import StaffClockWidget from '../components/StaffClockWidget';
+import ParentCheckInWidget from '../components/ParentCheckInWidget';
 
 export default function MyProfile() {
   const { user, profile } = useAuth();
@@ -227,13 +228,23 @@ export default function MyProfile() {
         </form>
       </div>
 
-      {/* Staff Attendance Clock-In (shown for all roles — teachers also benefit from the profile shortcut) */}
-      <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 sm:p-8 mt-6">
-        <h2 className="text-sm font-bold text-slate-900 flex items-center gap-2 mb-4">
-          <MapPin className="w-4 h-4 text-emerald-600" /> Attendance Clock-In
-        </h2>
-        <StaffClockWidget />
-      </div>
+      {/* Attendance / Check-In — a GPS-geofenced work clock-in for staff roles,
+          or a simple drop-off/pickup log for parents. Doesn't apply to student/applicant. */}
+      {profile.role === 'parent' ? (
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 sm:p-8 mt-6">
+          <h2 className="text-sm font-bold text-slate-900 flex items-center gap-2 mb-4">
+            <MapPin className="w-4 h-4 text-sky-600" /> Drop-off / Pickup
+          </h2>
+          <ParentCheckInWidget />
+        </div>
+      ) : profile.role !== 'student' && profile.role !== 'applicant' ? (
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 sm:p-8 mt-6">
+          <h2 className="text-sm font-bold text-slate-900 flex items-center gap-2 mb-4">
+            <MapPin className="w-4 h-4 text-emerald-600" /> Attendance Clock-In
+          </h2>
+          <StaffClockWidget />
+        </div>
+      ) : null}
 
       {/* Notification Preferences */}
       <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 sm:p-8 mt-6">

@@ -18,6 +18,7 @@ import PaymentMethodModal from '../components/PaymentMethodModal';
 import { initFCMForUser, onForegroundMessage, showFcmPushNotification } from '../services/notificationService';
 import { DOCUMENT_TITLE_DEFAULT } from '../constants/appMeta';
 import { useSchoolId } from '../hooks/useSchoolId';
+import { useLinkedChildren } from '../hooks/useLinkedChildren';
 import { useSchool } from '../components/SchoolContext';
 import { formatCurrency } from '../utils/formatCurrency';
 import Avatar from '../components/Avatar';
@@ -38,7 +39,10 @@ export default function ParentPortal() {
   const navigate = useNavigate();
   const schoolId = useSchoolId();
   const { getGradingForClass, locale, currency, schoolName, logoUrl, reportShowLogo, reportFooterText, attendanceMode, currentSession } = useSchool();
-  const [children, setChildren] = useState<Student[]>([]);
+  // Children come from the shared useLinkedChildren hook so this page, the
+  // mobile home, and the drop-off/pickup widget can never disagree about who
+  // a guardian is linked to (primary and secondary alike).
+  const { children, loading: childrenLoading } = useLinkedChildren();
   const [selectedChild, setSelectedChild] = useState<Student | null>(null);
   const [grades, setGrades] = useState<Grade[]>([]);
   const [attendance, setAttendance] = useState<Attendance[]>([]);
@@ -46,7 +50,7 @@ export default function ParentPortal() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [notifications, setNotifications] = useState<Notification[]>([]);
-  const [loading, setLoading] = useState(true);
+  const loading = childrenLoading;
   const [activeTab, setActiveTab] = useState<TabType>('progress');
   const [filterTerm, setFilterTerm] = useState<string>(TERMS[0]);
   const [attendanceMonth, setAttendanceMonth] = useState<string>(''); // '' = all months
@@ -195,99 +199,17 @@ export default function ParentPortal() {
     return () => unsub?.();
   }, [user?.uid]);
 
+  // Keep the selected child valid as the linked-children list resolves/changes:
+  // preserve the current pick if it's still linked, otherwise fall back to the
+  // first. (Previously handled inside the four bespoke student listeners.)
+  useEffect(() => {
+    if (children.length === 0) { setSelectedChild(null); return; }
+    setSelectedChild(prev => (prev && children.find(c => c.id === prev.id)) ? prev : children[0]);
+  }, [children]);
+
   useEffect(() => {
     if (!user) return;
     if (!schoolId) return;
-
-    // ── Strategy 1: match by guardianEmail (email typed by admin during enrollment)
-    const qByEmail = query(
-      collection(db, 'students'),
-      where('schoolId', '==', schoolId!),
-      where('guardianEmail', '==', user.email)
-    );
-
-    // ── Strategy 2: match by guardianUserId (UID written when admin selected "Link to existing parent account")
-    const qByUid = query(
-      collection(db, 'students'),
-      where('schoolId', '==', schoolId!),
-      where('guardianUserId', '==', user.uid)
-    );
-
-    // ── Strategy 3 & 4: same as above but for secondary guardian
-    const qByEmail2 = query(
-      collection(db, 'students'),
-      where('schoolId', '==', schoolId!),
-      where('guardian2Email', '==', user.email)
-    );
-    const qByUid2 = query(
-      collection(db, 'students'),
-      where('schoolId', '==', schoolId!),
-      where('guardian2UserId', '==', user.uid)
-    );
-
-    // Merge all result sets, de-duplicate by student document ID
-    const mergeChildren = (...sets: Student[][]): Student[] => {
-      const map = new Map<string, Student>();
-      sets.flat().forEach(s => { if (s.id) map.set(s.id, s); });
-      return Array.from(map.values());
-    };
-
-    let emailResults: Student[] = [];
-    let uidResults: Student[] = [];
-    let email2Results: Student[] = [];
-    let uid2Results: Student[] = [];
-
-    const updateChildren = () => {
-      const merged = mergeChildren(emailResults, uidResults, email2Results, uid2Results);
-      setChildren(merged);
-      if (merged.length > 0) {
-        setSelectedChild(prev => {
-          // Keep current selection if still in the list; else pick first
-          if (prev && merged.find(s => s.id === prev.id)) return prev;
-          return merged[0];
-        });
-      }
-      setLoading(false);
-    };
-
-    const unsubByEmail = onSnapshot(
-      qByEmail,
-      snap => {
-        emailResults = snap.docs.map(d => ({ id: d.id, ...d.data() } as Student));
-        updateChildren();
-      },
-      err => {
-        handleFirestoreError(err, OperationType.LIST, 'students[guardianEmail]');
-        setLoading(false);
-      }
-    );
-
-    const unsubByUid = onSnapshot(
-      qByUid,
-      snap => {
-        uidResults = snap.docs.map(d => ({ id: d.id, ...d.data() } as Student));
-        updateChildren();
-      },
-      err => { /* Non-fatal: other queries may still return results */ }
-    );
-
-    const unsubByEmail2 = onSnapshot(
-      qByEmail2,
-      snap => {
-        email2Results = snap.docs.map(d => ({ id: d.id, ...d.data() } as Student));
-        updateChildren();
-      },
-      err => { /* Non-fatal */ }
-    );
-
-    const unsubByUid2 = onSnapshot(
-      qByUid2,
-      snap => {
-        uid2Results = snap.docs.map(d => ({ id: d.id, ...d.data() } as Student));
-        updateChildren();
-      },
-      err => { /* Non-fatal */ }
-    );
 
     const qNotif = query(
       collection(db, 'notifications'),
@@ -348,7 +270,7 @@ export default function ParentPortal() {
       }
     );
 
-    return () => { unsubByEmail(); unsubByUid(); unsubByEmail2(); unsubByUid2(); unsubNotif(); unsubMsgs(); unsubSent(); };
+    return () => {     unsubNotif(); unsubMsgs(); unsubSent(); };
   }, [user, schoolId]);
 
   useEffect(() => {
@@ -717,6 +639,30 @@ export default function ParentPortal() {
                 Viewing: <span className="text-indigo-600">{selectedChild.studentName}</span>
                 <span className="ml-2 text-xs font-normal text-slate-400">({selectedChild.currentClass} · {selectedChild.studentId})</span>
               </p>
+            </div>
+          )}
+          {/* Guardians on record — so each guardian can see the other is linked
+              to this child, and that both have portal access. */}
+          {selectedChild && (selectedChild.guardianName || selectedChild.guardian2Name) && (
+            <div className="flex flex-wrap items-center gap-2 mb-6">
+              <span className="text-xs font-bold text-slate-400 uppercase tracking-wider mr-1">Guardians</span>
+              {([
+                { name: selectedChild.guardianName, email: selectedChild.guardianEmail, uid: selectedChild.guardianUserId, role: 'Primary' },
+                { name: selectedChild.guardian2Name, email: selectedChild.guardian2Email, uid: selectedChild.guardian2UserId, role: 'Secondary' },
+              ] as const).filter(g => g.name).map(g => {
+                const isYou = (!!g.uid && g.uid === user?.uid) ||
+                  (!!g.email && !!user?.email && g.email.toLowerCase() === user.email.toLowerCase());
+                return (
+                  <span key={g.role}
+                    className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold border ${
+                      isYou ? 'bg-indigo-50 border-indigo-200 text-indigo-800' : 'bg-slate-50 border-slate-200 text-slate-600'
+                    }`}>
+                    {g.name}
+                    <span className="font-normal opacity-70">{g.role}{isYou ? ' · you' : ''}</span>
+                    {g.uid && <span title="Has portal access" className="text-emerald-600">✓</span>}
+                  </span>
+                );
+              })}
             </div>
           )}
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">

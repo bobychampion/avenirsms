@@ -312,11 +312,21 @@ service cloud.firestore {
     // ─── Students ─────────────────────────────────────────────────────────────
 
     match /students/{studentId} {
+      // Secondary guardians get exactly the same read access as primary ones.
+      // The guardian2 clauses were missing here, which denied a secondary
+      // guardian any read of their own child's record — and, because Firestore
+      // rejects a query it can't prove safe, also denied every
+      // where('guardian2Email'/'guardian2UserId', ...) query outright, even for
+      // a primary guardian running it. This now mirrors isGuardianOfStudent(),
+      // which grades/attendance/invoices already use, so the students
+      // collection is no longer the odd one out.
       allow read: if isSuperAdmin() ||
                     ((isAdmin() || isTeacher()) && docBelongsToCallerSchool()) ||
                     (isActiveAccount() && (
                       resource.data.get('guardianEmail', '') == request.auth.token.email ||
-                      resource.data.get('guardianUserId', '') == request.auth.uid
+                      resource.data.get('guardianUserId', '') == request.auth.uid ||
+                      resource.data.get('guardian2Email', '') == request.auth.token.email ||
+                      resource.data.get('guardian2UserId', '') == request.auth.uid
                     ));
       allow create: if (isSuperAdmin() || (isAdmin() && newDocBelongsToCallerSchool())) &&
                     !isSuperAdminReservedEmail(request.resource.data.get('email', '').lower()) &&

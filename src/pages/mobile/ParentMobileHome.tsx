@@ -12,6 +12,7 @@ import { Link } from 'react-router-dom';
 import { cn } from '../../lib/utils';
 import { format, subDays } from 'date-fns';
 import { useSchoolId } from '../../hooks/useSchoolId';
+import { useLinkedChildren } from '../../hooks/useLinkedChildren';
 import { useSchool } from '../../components/SchoolContext';
 import { formatCurrency } from '../../utils/formatCurrency';
 
@@ -31,7 +32,7 @@ export default function ParentMobileHome() {
   const { profile } = useAuth();
   const schoolId = useSchoolId();
   const { locale, currency } = useSchool();
-  const [children, setChildren] = useState<(Student & { id: string })[]>([]);
+  const { children } = useLinkedChildren();
   const [selectedChild, setSelectedChild] = useState<(Student & { id: string }) | null>(null);
   const [weekAttendance, setWeekAttendance] = useState<Record<string, Attendance>>({});
   const [pendingBalance, setPendingBalance] = useState(0);
@@ -44,45 +45,14 @@ export default function ParentMobileHome() {
     return format(d, 'yyyy-MM-dd');
   });
 
-  // Load linked children
+  // Linked children come from the shared useLinkedChildren hook (see
+  // src/hooks/useLinkedChildren.ts). This screen previously matched on
+  // guardianUserId/guardian2UserId only — missing every parent linked by
+  // email alone — and preferred a possibly-stale profile.linkedStudentIds.
   useEffect(() => {
-    if (!schoolId) return;
-    if (!profile?.linkedStudentIds?.length) {
-      // Fallback: match by primary or secondary guardian UID
-      const uid = profile?.uid ?? '';
-      let g1Kids: (Student & { id: string })[] = [];
-      let g2Kids: (Student & { id: string })[] = [];
-      const merge = () => {
-        const map = new Map<string, Student & { id: string }>();
-        [...g1Kids, ...g2Kids].forEach(s => map.set(s.id, s));
-        const kids = Array.from(map.values());
-        setChildren(kids);
-        if (kids.length > 0 && !selectedChild) setSelectedChild(kids[0]);
-      };
-      const unsub1 = onSnapshot(
-        query(collection(db, 'students'), where('schoolId', '==', schoolId!), where('guardianUserId', '==', uid)),
-        snap => { g1Kids = snap.docs.map(d => ({ id: d.id, ...d.data() } as Student & { id: string })); merge(); },
-        (error) => handleFirestoreError(error, OperationType.LIST, 'students')
-      );
-      const unsub2 = onSnapshot(
-        query(collection(db, 'students'), where('schoolId', '==', schoolId!), where('guardian2UserId', '==', uid)),
-        snap => { g2Kids = snap.docs.map(d => ({ id: d.id, ...d.data() } as Student & { id: string })); merge(); },
-        () => { /* non-fatal */ }
-      );
-      return () => { unsub1(); unsub2(); };
-    }
-
-    const unsub = onSnapshot(
-      query(collection(db, 'students'), where('schoolId', '==', schoolId!), where('__name__', 'in', profile.linkedStudentIds.slice(0, 10))),
-      snap => {
-        const kids = snap.docs.map(d => ({ id: d.id, ...d.data() } as Student & { id: string }));
-        setChildren(kids);
-        if (kids.length > 0 && !selectedChild) setSelectedChild(kids[0]);
-      },
-      (error) => handleFirestoreError(error, OperationType.LIST, 'students')
-    );
-    return () => unsub();
-  }, [profile?.uid, schoolId]);
+    if (children.length === 0) { setSelectedChild(null); return; }
+    setSelectedChild(prev => (prev && children.find(c => c.id === prev.id)) ? prev : children[0]);
+  }, [children]);
 
   // Load attendance for selected child (last 7 days)
   useEffect(() => {

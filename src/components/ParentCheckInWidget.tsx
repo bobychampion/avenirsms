@@ -5,39 +5,31 @@
  * the staff GPS attendance_checkins collection, which this has nothing to
  * do with).
  */
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { collection, addDoc, getDocs, query, where, orderBy, limit as fbLimit, serverTimestamp } from 'firebase/firestore';
 import { db } from '../firebase';
 import { useAuth } from './FirebaseProvider';
 import { useSchoolId } from '../hooks/useSchoolId';
-import { Student, PickupDropoffLog } from '../types';
+import { useLinkedChildren } from '../hooks/useLinkedChildren';
+import { PickupDropoffLog } from '../types';
 import { Car, Footprints, Loader2, Clock, Check } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 export default function ParentCheckInWidget() {
   const { user, profile } = useAuth();
   const schoolId = useSchoolId();
-  const [children, setChildren] = useState<Student[]>([]);
+  const { children, loading: childrenLoading, failed: childrenFailed } = useLinkedChildren();
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [recentLogs, setRecentLogs] = useState<PickupDropoffLog[]>([]);
   const [loading, setLoading] = useState<'dropoff' | 'pickup' | null>(null);
 
+  // Default to all children selected; keep any manual de-selection intact as
+  // the realtime listener re-publishes.
+  const childIdsKey = children.map(c => c.id).join(',');
   useEffect(() => {
-    if (!user || !schoolId) return;
-    const strategies = [
-      query(collection(db, 'students'), where('schoolId', '==', schoolId), where('guardianEmail', '==', user.email)),
-      query(collection(db, 'students'), where('schoolId', '==', schoolId), where('guardianUserId', '==', user.uid)),
-      query(collection(db, 'students'), where('schoolId', '==', schoolId), where('guardian2Email', '==', user.email)),
-      query(collection(db, 'students'), where('schoolId', '==', schoolId), where('guardian2UserId', '==', user.uid)),
-    ];
-    Promise.all(strategies.map(q => getDocs(q))).then(snaps => {
-      const map = new Map<string, Student>();
-      snaps.forEach(snap => snap.docs.forEach(d => map.set(d.id, { id: d.id, ...d.data() } as Student)));
-      const all = Array.from(map.values());
-      setChildren(all);
-      setSelectedIds(new Set(all.map(c => c.id!)));
-    }).catch(() => {});
-  }, [user?.uid, user?.email, schoolId]);
+    setSelectedIds(new Set(children.map(c => c.id!)));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [childIdsKey]);
 
   useEffect(() => {
     if (!user || !schoolId) return;
@@ -91,11 +83,24 @@ export default function ParentCheckInWidget() {
     return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   };
 
+  if (childrenLoading) {
+    return (
+      <div className="rounded-2xl border border-slate-200 bg-white p-5 flex items-center gap-3">
+        <Loader2 className="w-4 h-4 text-slate-400 animate-spin shrink-0" />
+        <p className="text-sm text-slate-400">Loading your children…</p>
+      </div>
+    );
+  }
+
   if (children.length === 0) {
     return (
       <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-5 flex items-center gap-3">
         <Car className="w-5 h-5 text-slate-300 shrink-0" />
-        <p className="text-sm text-slate-400">No linked children found yet — once a child is linked to your account, you can register their drop-off/pickup here.</p>
+        <p className="text-sm text-slate-400">
+          {childrenFailed
+            ? 'Could not load your children right now — please refresh. If this persists, ask the school to check your account link.'
+            : 'No linked children found yet — once a child is linked to your account, you can register their drop-off/pickup here.'}
+        </p>
       </div>
     );
   }

@@ -22,6 +22,7 @@ export function useDomainSchool() {
 function isPlatformHostname(hostname: string): boolean {
   return (
     hostname === 'localhost' ||
+    hostname.endsWith('.vercel.app') ||
     hostname.endsWith('.web.app') ||
     hostname.endsWith('.firebaseapp.com')
   );

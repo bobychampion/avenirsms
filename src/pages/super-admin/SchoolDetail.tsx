@@ -309,20 +309,23 @@ export default function SchoolDetail() {
             <p className="font-semibold text-slate-800">Two steps left to go live:</p>
             <ol className="list-decimal list-inside space-y-1">
               <li>
-                The school's DNS admin adds a <span className="font-mono bg-white px-1.5 py-0.5 rounded border border-slate-200">CNAME</span> record:{' '}
+                The school&apos;s DNS admin adds a <span className="font-mono bg-white px-1.5 py-0.5 rounded border border-slate-200">CNAME</span> record:{' '}
                 <span className="font-mono bg-white px-1.5 py-0.5 rounded border border-slate-200">{customDomain}</span>
                 {' '}&rarr;{' '}
-                <span className="font-mono bg-white px-1.5 py-0.5 rounded border border-slate-200">avenir-33ab7.web.app</span>
+                <span className="font-mono bg-white px-1.5 py-0.5 rounded border border-slate-200">cname.vercel-dns.com</span>
+                {' '}(use whatever target the Vercel dashboard shows for this domain — it varies by account).
               </li>
               <li>
-                In the Firebase Console &rarr; Hosting &rarr; Add custom domain, add{' '}
-                <span className="font-mono bg-white px-1.5 py-0.5 rounded border border-slate-200">{customDomain}</span> and complete the
-                TXT-record ownership check Firebase gives you. SSL is issued automatically once verified — this step can't be automated via CLI.
+                In the Vercel dashboard &rarr; this project &rarr; Settings &rarr; Domains, add{' '}
+                <span className="font-mono bg-white px-1.5 py-0.5 rounded border border-slate-200">{customDomain}</span>. SSL is issued
+                automatically once DNS resolves. Do <strong>not</strong> point school domains at Firebase Hosting — the
+                <span className="font-mono"> /api </span> routes only exist on Vercel, so a Firebase-hosted domain loads the app but
+                silently fails on email, passwords, uploads and Google sync.
               </li>
               <li>
                 Also add <span className="font-mono bg-white px-1.5 py-0.5 rounded border border-slate-200">{customDomain}</span> under
                 Firebase Console &rarr; Authentication &rarr; Settings &rarr; Authorized domains — otherwise Google Sign-In will fail with
-                an "unauthorized domain" error on this domain even after Hosting is connected.
+                an &quot;unauthorized domain&quot; error on this domain even after the domain is connected.
               </li>
             </ol>
           </div>

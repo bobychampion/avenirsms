@@ -151,6 +151,14 @@ export interface ClassSubject {
   academicSession?: string;
   term?: string;
   status?: 'active' | 'inactive';
+  /**
+   * Elective support: which students in the class actually take this subject.
+   * Undefined or empty means the WHOLE class takes it — that's the default and
+   * keeps every pre-existing assignment working unchanged. Populate it only for
+   * optional subjects, where a class shares a common core but individual
+   * students pick different extras.
+   */
+  enrolledStudentIds?: string[];
 }
 
 export interface Student {

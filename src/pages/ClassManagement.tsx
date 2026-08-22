@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { db, handleFirestoreError, OperationType } from '../firebase';
 import { collection, query, onSnapshot, addDoc, updateDoc, doc, deleteDoc, where, getDocs } from 'firebase/firestore';
 import { callApi } from '../services/api';
-import { SchoolClass, ClassSubject, SUBJECTS, UserProfile } from '../types';
+import { SchoolClass, ClassSubject, SUBJECTS, UserProfile, Student } from '../types';
 import { useSchool } from '../components/SchoolContext';
 import { useSchoolId } from '../hooks/useSchoolId';
 import { motion, AnimatePresence } from 'motion/react';
@@ -55,6 +55,15 @@ export default function ClassManagement() {
   // locked there, same as before).
   const [selectedSubjects, setSelectedSubjects] = useState<string[]>([]);
 
+  // ── Electives ──────────────────────────────────────────────────────────────
+  // A class shares a common core, but individual students may take different
+  // optional subjects. 'all' writes no roster (whole class takes it, the
+  // long-standing behaviour); 'selected' writes enrolledStudentIds so only
+  // those students are graded/registered for it.
+  const [classStudents, setClassStudents] = useState<Student[]>([]);
+  const [enrolmentMode, setEnrolmentMode] = useState<'all' | 'selected'>('all');
+  const [enrolledIds, setEnrolledIds] = useState<string[]>([]);
+
   // Google Classroom integration status
   const [classroomStatus, setClassroomStatus] = useState<ClassroomStatus>('loading');
   const [syncingId, setSyncingId] = useState<string | null>(null);
@@ -88,6 +97,27 @@ export default function ClassManagement() {
       unsubscribeSubjects();
     };
   }, [schoolId]);
+
+  // Students of the class whose subject modal is open — only needed for the
+  // elective roster picker, so it's scoped to the selected class rather than
+  // loading the whole school.
+  useEffect(() => {
+    if (!schoolId || !selectedClass?.name) { setClassStudents([]); return; }
+    const q = query(
+      collection(db, 'students'),
+      where('schoolId', '==', schoolId),
+      where('currentClass', '==', selectedClass.name),
+    );
+    const unsub = onSnapshot(q, snap => {
+      setClassStudents(
+        snap.docs
+          .map(d => ({ id: d.id, ...d.data() } as Student))
+          .filter(s => s.admissionStatus !== 'withdrawn')
+          .sort((a, b) => (a.studentName || '').localeCompare(b.studentName || '')),
+      );
+    }, () => setClassStudents([]));
+    return () => unsub();
+  }, [schoolId, selectedClass?.name]);
 
   // ── Load Google Classroom connection status ────────────────────────────────
   useEffect(() => {
@@ -235,6 +265,8 @@ export default function ClassManagement() {
             teacherId: subjectFormData.teacherId,
             teacherName: teacher?.displayName || 'Not Assigned',
             schoolId: schoolId ?? 'main',
+            // Empty array = whole class, matching the pre-elective behaviour.
+            enrolledStudentIds: enrolmentMode === 'selected' ? enrolledIds : [],
           };
           const existing = classSubjects.find(s => s.classId === selectedClass.id && s.subjectName === subjectName);
           if (existing) {
@@ -247,6 +279,8 @@ export default function ClassManagement() {
       }
       setSubjectFormData({ subjectName: schoolSubjects[0] ?? SUBJECTS[0], teacherId: '' });
       setSelectedSubjects([]);
+      setEnrolmentMode('all');
+      setEnrolledIds([]);
     } catch (error) {
       handleFirestoreError(error, OperationType.WRITE, 'class_subjects');
     }
@@ -657,6 +691,84 @@ export default function ClassManagement() {
                           </div>
                         )}
                       </div>
+
+                      {/* Who takes it — only meaningful for a new assignment. */}
+                      {!editingSubject && (
+                        <div className="space-y-2">
+                          <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">Who takes this?</label>
+                          <div className="flex gap-2">
+                            <button
+                              type="button"
+                              onClick={() => setEnrolmentMode('all')}
+                              className={`flex-1 px-3 py-2 rounded-xl text-xs font-bold border transition-colors ${
+                                enrolmentMode === 'all'
+                                  ? 'bg-indigo-600 text-white border-indigo-600'
+                                  : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300'
+                              }`}
+                            >
+                              Whole class
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setEnrolmentMode('selected')}
+                              className={`flex-1 px-3 py-2 rounded-xl text-xs font-bold border transition-colors ${
+                                enrolmentMode === 'selected'
+                                  ? 'bg-indigo-600 text-white border-indigo-600'
+                                  : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300'
+                              }`}
+                            >
+                              Selected students
+                            </button>
+                          </div>
+
+                          {enrolmentMode === 'selected' && (
+                            <div className="border border-slate-200 rounded-xl p-3 max-h-48 overflow-y-auto space-y-1">
+                              {classStudents.length === 0 ? (
+                                <p className="text-xs text-slate-400 py-2 text-center">
+                                  No students found in {selectedClass?.name}.
+                                </p>
+                              ) : (
+                                <>
+                                  <div className="flex items-center justify-between pb-2 mb-1 border-b border-slate-100">
+                                    <span className="text-[11px] font-bold text-slate-500">
+                                      {enrolledIds.length} of {classStudents.length} selected
+                                    </span>
+                                    <button
+                                      type="button"
+                                      onClick={() => setEnrolledIds(
+                                        enrolledIds.length === classStudents.length ? [] : classStudents.map(s => s.id!)
+                                      )}
+                                      className="text-[11px] font-bold text-indigo-600 hover:text-indigo-700"
+                                    >
+                                      {enrolledIds.length === classStudents.length ? 'Clear all' : 'Select all'}
+                                    </button>
+                                  </div>
+                                  {classStudents.map(st => (
+                                    <label key={st.id} className="flex items-center gap-2 py-1 cursor-pointer">
+                                      <input
+                                        type="checkbox"
+                                        checked={enrolledIds.includes(st.id!)}
+                                        onChange={() => setEnrolledIds(prev =>
+                                          prev.includes(st.id!) ? prev.filter(i => i !== st.id) : [...prev, st.id!]
+                                        )}
+                                        className="rounded border-slate-300"
+                                      />
+                                      <span className="text-sm text-slate-700">{st.studentName}</span>
+                                      <span className="text-[11px] text-slate-400 ml-auto">{st.studentId}</span>
+                                    </label>
+                                  ))}
+                                </>
+                              )}
+                            </div>
+                          )}
+                          <p className="text-[11px] text-slate-400">
+                            {enrolmentMode === 'all'
+                              ? 'Every student in this class takes this subject.'
+                              : 'Only the students you tick will be graded and registered for this subject.'}
+                          </p>
+                        </div>
+                      )}
+
                       <div className="space-y-2">
                         <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">Subject Teacher</label>
                         <select
@@ -707,7 +819,14 @@ export default function ClassManagement() {
                         classSubjects.filter(s => s.classId === selectedClass.id).map(s => (
                           <div key={s.id} className="p-4 bg-slate-50 rounded-2xl border border-slate-100 flex justify-between items-center group">
                             <div>
-                              <p className="font-bold text-slate-900 text-sm">{s.subjectName}</p>
+                              <p className="font-bold text-slate-900 text-sm flex items-center gap-1.5">
+                                {s.subjectName}
+                                {(s.enrolledStudentIds?.length ?? 0) > 0 && (
+                                  <span className="text-[10px] font-bold uppercase tracking-wider text-amber-700 bg-amber-50 border border-amber-200 rounded-full px-1.5 py-0.5">
+                                    {s.enrolledStudentIds!.length} student{s.enrolledStudentIds!.length !== 1 ? 's' : ''}
+                                  </span>
+                                )}
+                              </p>
                               <p className="text-xs text-slate-500">{s.teacherName}</p>
                             </div>
                             <div className="flex space-x-1">

@@ -26,7 +26,7 @@ const GRADE_COLORS: Record<string, string> = {
 
 export default function Gradebook() {
   const classSelectOptions = useClassSelectOptions();
-  const { getGradingForClass, subjects: allSubjects } = useSchool();
+  const { getGradingForClass, subjects: allSubjects, classes } = useSchool();
   const schoolId = useSchoolId();
   const { profile } = useAuth();
   const [students, setStudents] = useState<Student[]>([]);
@@ -40,6 +40,27 @@ export default function Gradebook() {
   const [session] = useState(CURRENT_SESSION);
   const [aiLoading, setAiLoading] = useState<string | null>(null);
 
+  // Elective roster for the selected class+subject. A class_subjects doc with a
+  // non-empty enrolledStudentIds means only those students take the subject;
+  // absent/empty means the whole class does (the default).
+  const [subjectRoster, setSubjectRoster] = useState<string[] | null>(null);
+  useEffect(() => {
+    if (!schoolId || !selectedClass || !selectedSubject) { setSubjectRoster(null); return; }
+    const cls = classes.find(c => c.name === selectedClass);
+    if (!cls?.id) { setSubjectRoster(null); return; }
+    const q = query(
+      collection(db, 'class_subjects'),
+      where('schoolId', '==', schoolId),
+      where('classId', '==', cls.id),
+      where('subjectName', '==', selectedSubject),
+    );
+    const unsub = onSnapshot(q, snap => {
+      const ids = snap.docs[0]?.data()?.enrolledStudentIds as string[] | undefined;
+      setSubjectRoster(ids && ids.length > 0 ? ids : null);
+    }, () => setSubjectRoster(null));
+    return () => unsub();
+  }, [schoolId, selectedClass, selectedSubject, classes]);
+
   useEffect(() => {
     if (!schoolId) return;
     setLoading(true);
@@ -47,11 +68,13 @@ export default function Gradebook() {
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const data = snapshot.docs
         .map(d => ({ id: d.id, ...d.data() } as Student))
-        .filter(s => s.admissionStatus !== 'withdrawn');
+        .filter(s => s.admissionStatus !== 'withdrawn')
+        // Electives: show only the students actually enrolled in this subject.
+        .filter(s => !subjectRoster || subjectRoster.includes(s.id!));
       setStudents(data);
     }, (error) => handleFirestoreError(error, OperationType.LIST, 'students'));
     return () => unsubscribe();
-  }, [selectedClass, schoolId]);
+  }, [selectedClass, schoolId, subjectRoster]);
 
   useEffect(() => {
     if (students.length === 0) { setLoading(false); return; }

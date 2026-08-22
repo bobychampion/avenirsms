@@ -20,6 +20,12 @@ export default function ClassManagement() {
   const navigate = useNavigate();
   const schoolId = useSchoolId();
   const { schoolLevels, currentSession, subjects: schoolSubjects } = useSchool();
+  // The merged list leads with the 28 built-ins, so a school's own subjects
+  // landed below the fold of a short scroll box and read as "missing". Show
+  // them first, under their own heading.
+  const builtInSubjectSet = new Set<string>(SUBJECTS);
+  const schoolOwnSubjects = schoolSubjects.filter(s => !builtInSubjectSet.has(s));
+  const standardSubjects = schoolSubjects.filter(s => builtInSubjectSet.has(s));
   const [classes, setClasses] = useState<SchoolClass[]>([]);
   const [teachers, setTeachers] = useState<UserProfile[]>([]);
   const [classSubjects, setClassSubjects] = useState<ClassSubject[]>([]);
@@ -616,24 +622,38 @@ export default function ClassManagement() {
                             ))}
                           </select>
                         ) : (
-                          <div className="flex flex-wrap gap-2 p-3 border border-slate-200 rounded-xl max-h-40 overflow-y-auto">
-                            {schoolSubjects.map(s => {
-                              const active = selectedSubjects.includes(s);
-                              return (
-                                <button
-                                  key={s}
-                                  type="button"
-                                  onClick={() => setSelectedSubjects(prev =>
-                                    active ? prev.filter(name => name !== s) : [...prev, s]
-                                  )}
-                                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors ${
-                                    active ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300'
-                                  }`}
-                                >
-                                  {s}
-                                </button>
-                              );
-                            })}
+                          <div className="p-3 border border-slate-200 rounded-xl max-h-64 overflow-y-auto space-y-3">
+                            {[
+                              { key: 'own', label: "Your school's subjects", tone: 'text-indigo-600', names: schoolOwnSubjects },
+                              { key: 'standard', label: 'Standard subjects', tone: 'text-slate-400', names: standardSubjects },
+                            ].filter(g => g.names.length > 0).map(group => (
+                              <div key={group.key}>
+                                {schoolOwnSubjects.length > 0 && (
+                                  <p className={`text-[10px] font-bold uppercase tracking-wider mb-1.5 ${group.tone}`}>
+                                    {group.label}
+                                  </p>
+                                )}
+                                <div className="flex flex-wrap gap-2">
+                                  {group.names.map(s => {
+                                    const active = selectedSubjects.includes(s);
+                                    return (
+                                      <button
+                                        key={s}
+                                        type="button"
+                                        onClick={() => setSelectedSubjects(prev =>
+                                          active ? prev.filter(name => name !== s) : [...prev, s]
+                                        )}
+                                        className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors ${
+                                          active ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300'
+                                        }`}
+                                      >
+                                        {s}
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            ))}
                           </div>
                         )}
                       </div>

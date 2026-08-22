@@ -12,7 +12,7 @@ import {
   ChevronDown, ChevronUp, CheckCircle, XCircle, Copy, Loader2,
   AlertCircle, Download,
 } from 'lucide-react';
-import { useClassSelectOptions } from '../components/SchoolContext';
+import { useClassSelectOptions, useSchool } from '../components/SchoolContext';
 import { useAuth } from '../components/FirebaseProvider';
 import { useSchoolId } from '../hooks/useSchoolId';
 import { generateQuestionBatch } from '../services/geminiService';
@@ -37,6 +37,7 @@ type TabId = 'exams' | 'question_bank' | 'cbt' | 'results';
 function QuestionBankTab() {
   const { user } = useAuth();
   const schoolId = useSchoolId();
+  const { subjects: allSubjects } = useSchool();
   const [questions, setQuestions] = useState<QuestionBankItem[]>([]);
   const [filterSubject, setFilterSubject] = useState(SUBJECTS[0]);
   const [filterLevel, setFilterLevel] = useState('');
@@ -157,7 +158,7 @@ function QuestionBankTab() {
           <select value={filterSubject} onChange={e => setFilterSubject(e.target.value)}
             className="px-3 py-2 rounded-xl border border-slate-200 text-xs font-medium bg-white outline-none focus:ring-2 focus:ring-indigo-500">
             <option value="">All Subjects</option>
-            {SUBJECTS.map(s => <option key={s}>{s}</option>)}
+            {allSubjects.map(s => <option key={s}>{s}</option>)}
           </select>
           <select value={filterLevel} onChange={e => setFilterLevel(e.target.value)}
             className="px-3 py-2 rounded-xl border border-slate-200 text-xs font-medium bg-white outline-none focus:ring-2 focus:ring-indigo-500">
@@ -251,7 +252,7 @@ function QuestionBankTab() {
               <label className="text-xs font-bold text-slate-500 uppercase tracking-wide block mb-1.5">Subject</label>
               <select value={genForm.subject} onChange={e => { setGenForm(p => ({ ...p, subject: e.target.value })); setSelectedDocId(''); }}
                 className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none bg-white text-sm">
-                {SUBJECTS.map(s => <option key={s}>{s}</option>)}
+                {allSubjects.map(s => <option key={s}>{s}</option>)}
               </select>
             </div>
             <div>
@@ -312,7 +313,7 @@ function QuestionBankTab() {
                     <label className="text-xs font-bold text-slate-500 uppercase tracking-wide block mb-1">Subject</label>
                     <select value={addForm.subject} onChange={e => setAddForm(p => ({ ...p, subject: e.target.value }))}
                       className="w-full px-3 py-2.5 rounded-xl border border-slate-200 text-sm outline-none focus:ring-2 focus:ring-indigo-500 bg-white">
-                      {SUBJECTS.map(s => <option key={s}>{s}</option>)}
+                      {allSubjects.map(s => <option key={s}>{s}</option>)}
                     </select>
                   </div>
                   <div>
@@ -381,6 +382,7 @@ function QuestionBankTab() {
 function CBTExamsTab() {
   const { user } = useAuth();
   const schoolId = useSchoolId();
+  const { subjects: allSubjects } = useSchool();
   const classSelectOptions = useClassSelectOptions();
   const [cbtExams, setCbtExams] = useState<CBTExam[]>([]);
   const [questions, setQuestions] = useState<QuestionBankItem[]>([]);
@@ -583,7 +585,7 @@ function CBTExamsTab() {
                     <label className="text-xs font-bold text-slate-500 uppercase tracking-wide block mb-1">Subject</label>
                     <select value={form.subject} onChange={e => setForm(p => ({ ...p, subject: e.target.value, questionFilter: { subject: e.target.value } }))}
                       className="w-full px-3 py-2.5 rounded-xl border border-slate-200 text-sm outline-none focus:ring-2 focus:ring-indigo-500 bg-white">
-                      {SUBJECTS.map(s => <option key={s}>{s}</option>)}
+                      {allSubjects.map(s => <option key={s}>{s}</option>)}
                     </select>
                   </div>
                   <div>
@@ -779,6 +781,7 @@ function ResultsTab() {
 // ─── Main ExamManagement ──────────────────────────────────────────────────────
 export default function ExamManagement() {
   const schoolId = useSchoolId();
+  const { subjects: allSubjects } = useSchool();
   const classSelectOptions = useClassSelectOptions();
   const [activeTab, setActiveTab] = useState<TabId>('exams');
   const [exams, setExams] = useState<Exam[]>([]);
@@ -1015,7 +1018,7 @@ export default function ExamManagement() {
                     <label className="text-xs font-bold text-slate-500 uppercase tracking-wide block mb-1">Subject</label>
                     <select value={examForm.subject} onChange={e => setExamForm(p => ({ ...p, subject: e.target.value }))}
                       className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none bg-white text-sm">
-                      {SUBJECTS.map(s => <option key={s}>{s}</option>)}
+                      {allSubjects.map(s => <option key={s}>{s}</option>)}
                     </select>
                   </div>
                   <div>

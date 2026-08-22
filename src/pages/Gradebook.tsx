@@ -26,7 +26,7 @@ const GRADE_COLORS: Record<string, string> = {
 
 export default function Gradebook() {
   const classSelectOptions = useClassSelectOptions();
-  const { getGradingForClass } = useSchool();
+  const { getGradingForClass, subjects: allSubjects } = useSchool();
   const schoolId = useSchoolId();
   const { profile } = useAuth();
   const [students, setStudents] = useState<Student[]>([]);
@@ -200,7 +200,7 @@ export default function Gradebook() {
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
           {[
             { label: 'Class', value: selectedClass, onChange: setSelectedClass, options: classSelectOptions.map(o => ({ k: o.key, v: o.value, l: o.label })) },
-            { label: 'Subject', value: selectedSubject, onChange: setSelectedSubject, options: SUBJECTS.map((s, i) => ({ k: `subj-${i}`, v: s, l: s })) },
+            { label: 'Subject', value: selectedSubject, onChange: setSelectedSubject, options: allSubjects.map((s, i) => ({ k: `subj-${i}`, v: s, l: s })) },
             { label: 'Term', value: selectedTerm, onChange: (v: any) => setSelectedTerm(v), options: [{ k: 't1', v: '1st Term', l: '1st Term' }, { k: 't2', v: '2nd Term', l: '2nd Term' }, { k: 't3', v: '3rd Term', l: '3rd Term' }] },
           ].map(f => (
             <div key={f.label}>

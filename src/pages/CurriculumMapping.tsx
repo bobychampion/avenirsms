@@ -134,7 +134,7 @@ function AISummaryCard({ doc: cdoc, onDelete }: { doc: CurriculumDocument; onDel
 function AITrainingTab() {
   const { user } = useAuth();
   const schoolId = useSchoolId();
-  const { classes } = useSchool();
+  const { classes, subjects: allSubjects } = useSchool();
   const levels = classes.length > 0 ? Array.from(new Set(classes.map(c => c.level))).sort() : SCHOOL_CLASSES;
   const [docs, setDocs] = useState<CurriculumDocument[]>([] as CurriculumDocument[]);
   const [uploading, setUploading] = useState(false);
@@ -276,7 +276,7 @@ function AITrainingTab() {
 
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-5">
           {[
-            { label: 'Subject', value: form.subject, key: 'subject' as const, opts: SUBJECTS },
+            { label: 'Subject', value: form.subject, key: 'subject' as const, opts: allSubjects },
             { label: 'Level', value: form.level, key: 'level' as const, opts: levels },
           ].map(f => (
             <div key={f.key}>
@@ -347,7 +347,7 @@ function AITrainingTab() {
               className="px-3 py-2 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none bg-white text-xs font-medium"
             >
               <option value="">All Subjects</option>
-              {SUBJECTS.map(s => <option key={s}>{s}</option>)}
+              {allSubjects.map(s => <option key={s}>{s}</option>)}
             </select>
             <select
               value={filterLevel}

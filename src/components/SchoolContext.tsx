@@ -409,8 +409,29 @@ export function SchoolProvider({ children }: { children: React.ReactNode }) {
     return () => unsub();
   }, [schoolId]);
 
-  // Merge built-in subjects with custom subjects (deduplicated)
-  const mergedSubjects = [...SUBJECTS, ...customSubjects.filter(s => !SUBJECTS.includes(s))];
+  // Merge every source of subject names, de-duplicated case-insensitively.
+  //
+  // There are two independent places a school can define subjects, and this
+  // used to only read one of them:
+  //   1. school_settings.customSubjects — the "Additional / Custom Subjects"
+  //      tag list on Settings > Academic (a plain string[])
+  //   2. the `subjects` collection — Settings > Subjects, which stores richer
+  //      SubjectDefinition docs (code, assigned classes, teacher)
+  // subjectDefinitions was previously fetched but only ever consulted inside
+  // getSubjectsForClass(), so anything created on the Subjects tab was
+  // invisible to every consumer of `subjects` — most visibly the class
+  // subject picker in Class Management.
+  const mergedSubjects = (() => {
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const name of [...SUBJECTS, ...customSubjects, ...subjectDefinitions.map(s => s.name)]) {
+      const key = (name ?? '').trim().toLowerCase();
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      out.push(name.trim());
+    }
+    return out;
+  })();
 
   // Dynamic term labels derived from termStructure
   const terms = getTermLabels(termStructure);

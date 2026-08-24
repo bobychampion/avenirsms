@@ -4,13 +4,16 @@ async function getToken(): Promise<string | null> {
   return (await getAuth().currentUser?.getIdToken()) ?? null;
 }
 
+const API_BASE = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/$/, '');
+
 export async function callApi<T = unknown>(
   endpoint: string,
   body?: unknown,
   method: 'POST' | 'GET' | 'DELETE' = 'POST',
 ): Promise<T> {
   const token = await getToken();
-  const res = await fetch(endpoint, {
+  const url = endpoint.startsWith('/') ? `${API_BASE}${endpoint}` : endpoint;
+  const res = await fetch(url, {
     method,
     headers: {
       'Content-Type': 'application/json',

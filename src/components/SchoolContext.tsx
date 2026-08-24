@@ -168,6 +168,11 @@ export function SchoolProvider({ children }: { children: React.ReactNode }) {
   const [periodTimes, setPeriodTimes] = useState<string[]>([...DEFAULT_PERIOD_TIMES]);
   const [timetablePeriods, setTimetablePeriods] = useState<TimetablePeriodSlot[]>([...DEFAULT_TIMETABLE_PERIODS]);
   const [customSubjects, setCustomSubjects] = useState<string[]>([]);
+  // Built-in subject names this school has switched off. The built-in list is a
+  // Nigerian-curriculum set, so schools on other curricula (or any school that
+  // simply doesn't teach all 28) need to hide the irrelevant ones rather than
+  // live with them in every picker.
+  const [hiddenBuiltInSubjects, setHiddenBuiltInSubjects] = useState<string[]>([]);
   const [currentSession, setCurrentSession] = useState<string>(CURRENT_SESSION);
   const [termStructure, setTermStructure] = useState<TermStructure>('3-term');
 
@@ -308,6 +313,7 @@ export function SchoolProvider({ children }: { children: React.ReactNode }) {
           setTimetablePeriods(resolvedSlots);
           setPeriodTimes(periodTimesFromSlots(resolvedSlots));
           if (data.customSubjects) setCustomSubjects(data.customSubjects);
+          setHiddenBuiltInSubjects(data.hiddenBuiltInSubjects ?? []);
           if (data.currentSession) setCurrentSession(data.currentSession);
           if (data.currentTerm) setCurrentTerm(data.currentTerm);
           setTermStructure((data.termStructure as TermStructure) || '3-term');
@@ -421,12 +427,23 @@ export function SchoolProvider({ children }: { children: React.ReactNode }) {
   // getSubjectsForClass(), so anything created on the Subjects tab was
   // invisible to every consumer of `subjects` — most visibly the class
   // subject picker in Class Management.
+  // Built-ins the school has switched off are dropped here, which is why one
+  // change covers every picker in the app. A hidden name is only excluded when
+  // it isn't ALSO defined by the school itself — if an admin re-creates e.g.
+  // "History" as their own subject, theirs wins over the hidden built-in.
   const mergedSubjects = (() => {
+    const hidden = new Set(hiddenBuiltInSubjects.map(s => s.trim().toLowerCase()));
+    const schoolOwn = new Set(
+      [...customSubjects, ...subjectDefinitions.map(s => s.name)]
+        .map(s => (s ?? '').trim().toLowerCase())
+        .filter(Boolean),
+    );
     const seen = new Set<string>();
     const out: string[] = [];
     for (const name of [...SUBJECTS, ...customSubjects, ...subjectDefinitions.map(s => s.name)]) {
       const key = (name ?? '').trim().toLowerCase();
       if (!key || seen.has(key)) continue;
+      if (hidden.has(key) && !schoolOwn.has(key)) continue;
       seen.add(key);
       out.push(name.trim());
     }

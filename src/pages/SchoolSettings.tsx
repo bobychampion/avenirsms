@@ -87,6 +87,8 @@ export interface SchoolSettings {
   // Dynamic lists
   schoolLevels: string[];
   customSubjects: string[];
+  /** Built-in subject names this school has switched off (see Settings > Subjects). */
+  hiddenBuiltInSubjects: string[];
   /** @deprecated Legacy start-time list — kept in sync with lesson slots for backward compatibility */
   periodTimes: string[];
   /** School bell schedule — drives dynamic timetable columns */
@@ -266,6 +268,7 @@ export const defaultSettings: SchoolSettings = {
   studentIdPadding: 3,
   schoolLevels: [...SCHOOL_CLASSES],
   customSubjects: [],
+  hiddenBuiltInSubjects: [],
   periodTimes: periodTimesFromSlots(DEFAULT_TIMETABLE_PERIODS),
   timetablePeriods: [...DEFAULT_TIMETABLE_PERIODS],
   weekendDays: [],
@@ -1784,13 +1787,55 @@ export default function SchoolSettingsPage() {
               ))}
             </div>
 
-            {/* Built-in subjects */}
+            {/* Built-in subjects — click to switch off the ones this school
+                doesn't teach. The built-in set follows the Nigerian curriculum,
+                so most schools on another curriculum need to hide a good part
+                of it. Hiding only removes it from pickers; existing classes,
+                grades and timetable entries that already reference the subject
+                are untouched. */}
             <div className="mb-6">
-              <p className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-2">Built-in Subjects ({SUBJECTS.length})</p>
+              <div className="flex items-center justify-between gap-3 mb-2 flex-wrap">
+                <p className="text-xs font-bold text-slate-400 uppercase tracking-wide">
+                  Built-in Subjects ({SUBJECTS.length - form.hiddenBuiltInSubjects.length} of {SUBJECTS.length} in use)
+                </p>
+                {form.hiddenBuiltInSubjects.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => field('hiddenBuiltInSubjects', [])}
+                    className="text-[11px] font-bold text-indigo-600 hover:text-indigo-700"
+                  >
+                    Restore all {form.hiddenBuiltInSubjects.length} hidden
+                  </button>
+                )}
+              </div>
+              <p className="text-xs text-slate-400 mb-2.5">
+                Click a subject to switch it off for your school. Hidden subjects disappear from class,
+                gradebook, exam and timetable pickers — nothing already recorded is affected.
+              </p>
               <div className="flex flex-wrap gap-2">
-                {SUBJECTS.map(s => (
-                  <span key={s} className="px-3 py-1 bg-slate-100 text-slate-600 rounded-lg text-xs font-medium">{s}</span>
-                ))}
+                {SUBJECTS.map(s => {
+                  const hidden = form.hiddenBuiltInSubjects.includes(s);
+                  return (
+                    <button
+                      key={s}
+                      type="button"
+                      onClick={() => field(
+                        'hiddenBuiltInSubjects',
+                        hidden
+                          ? form.hiddenBuiltInSubjects.filter(n => n !== s)
+                          : [...form.hiddenBuiltInSubjects, s],
+                      )}
+                      title={hidden ? 'Switched off — click to restore' : 'In use — click to switch off'}
+                      className={`px-3 py-1 rounded-lg text-xs font-medium border transition-colors ${
+                        hidden
+                          ? 'bg-white text-slate-300 border-slate-200 line-through hover:text-slate-500'
+                          : 'bg-slate-100 text-slate-600 border-slate-100 hover:border-slate-300'
+                      }`}
+                    >
+                      {s}
+                    </button>
+                  );
+                })}
               </div>
             </div>
 

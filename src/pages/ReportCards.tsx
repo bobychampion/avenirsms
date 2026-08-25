@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { db, handleFirestoreError, OperationType } from '../firebase';
 import { collection, query, where, getDocs } from 'firebase/firestore';
-import { Student, Grade, calculateGrade, CURRENT_SESSION, formatDate, StudentSkillRecord, StudentSkills, SKILL_LABELS, SKILL_RATING_LABELS, SkillRating } from '../types';
+import { Student, Grade, GradingMode, calculateGrade, scoreRemark, scoreTextColorClass, gradingScaleLegend, formatDate, StudentSkillRecord, StudentSkills, SKILL_LABELS, SKILL_RATING_LABELS, SkillRating } from '../types';
 import { generateReportSummary } from '../services/geminiService';
 import toast from 'react-hot-toast';
 import { useClassSelectOptions, useSchool } from '../components/SchoolContext';
@@ -17,32 +17,29 @@ interface StudentReport {
   student: Student;
   grades: Grade[];
   totalScore: number;
-  average: number;
+  /** null when no grade in this report has a numeric score (e.g. an all-single_grade class) — an
+   *  average of discrete grade values isn't meaningful, so this is distinguished from a real 0%. */
+  average: number | null;
   position: number;
   attendanceRate?: number;
   principalComment?: string;
   skills?: StudentSkills;
 }
 
-const GRADE_MAP: Record<string, { label: string; color: string }> = {
-  A1: { label: 'Excellent', color: 'text-emerald-600' },
-  B2: { label: 'Very Good', color: 'text-green-600' },
-  B3: { label: 'Good', color: 'text-lime-600' },
-  C4: { label: 'Credit', color: 'text-blue-600' },
-  C5: { label: 'Credit', color: 'text-blue-600' },
-  C6: { label: 'Credit', color: 'text-indigo-600' },
-  D7: { label: 'Pass', color: 'text-amber-600' },
-  E8: { label: 'Pass', color: 'text-orange-600' },
-  F9: { label: 'Fail', color: 'text-rose-600' },
-};
+// Subject, [score column(s)], Grade, [Pos., Remark] — column count varies by grading mode.
+function reportCardColCount(mode: GradingMode): number {
+  if (mode === 'single_grade') return 2;
+  if (mode === 'score_percentage') return 4;
+  return 7; // ca_exam / custom
+}
 
 export default function ReportCards() {
   const classSelectOptions = useClassSelectOptions();
-  const { getGradingForClass, schoolName, logoUrl, reportShowLogo, reportFooterText } = useSchool();
+  const { getGradingForClass, currentSession, schoolName, logoUrl, reportShowLogo, reportFooterText } = useSchool();
   const schoolId = useSchoolId();
   const [selectedClass, setSelectedClass] = useState('');
   const [selectedTerm, setSelectedTerm] = useState<'1st Term' | '2nd Term' | '3rd Term'>('1st Term');
-  const [session] = useState(CURRENT_SESSION);
+  const session = currentSession;
   const [reports, setReports] = useState<StudentReport[]>([]);
   const [loading, setLoading] = useState(false);
   const [selectedReport, setSelectedReport] = useState<StudentReport | null>(null);
@@ -72,14 +69,18 @@ export default function ReportCards() {
 
     const studentReports: StudentReport[] = students.map(student => {
       const studentGrades = grades.filter(g => g.studentId === student.id);
-      const totalScore = studentGrades.reduce((sum, g) => sum + g.totalScore, 0);
-      const average = studentGrades.length > 0 ? Math.round(totalScore / studentGrades.length) : 0;
+      // single_grade records have no numeric score — excluded from the average, not treated as 0.
+      const numericGrades = studentGrades.filter(g => (g.gradingMode ?? 'ca_exam') !== 'single_grade');
+      const totalScore = numericGrades.reduce((sum, g) => sum + (g.totalScore ?? 0), 0);
+      const average = numericGrades.length > 0
+        ? Math.round(totalScore / numericGrades.length)
+        : (studentGrades.length > 0 ? null : 0);
       return { student, grades: studentGrades, totalScore, average, position: 0, skills: skillsMap[student.id!] };
     });
 
-    // Assign positions
-    const sorted = [...studentReports].sort((a, b) => b.average - a.average);
-    sorted.forEach((r, i) => { r.position = i + 1; });
+    // Assign positions — reports with no numeric average (all single_grade) aren't ranked.
+    const sorted = [...studentReports].sort((a, b) => (b.average ?? -1) - (a.average ?? -1));
+    sorted.forEach((r, i) => { r.position = r.average !== null ? i + 1 : 0; });
 
     setReports(sorted);
     setLoading(false);
@@ -178,7 +179,7 @@ export default function ReportCards() {
 
         {/* Report Card Preview */}
         <div className="lg:col-span-2 print:col-span-3">
-          {selectedReport ? (
+          {selectedReport ? (() => { const grading = getGradingForClass(selectedClass, session); return (
             <div className="print:shadow-none print:border-none">
               <div className="print:hidden mb-4 flex justify-end gap-2">
                 <button
@@ -216,8 +217,10 @@ export default function ReportCards() {
                     { label: 'Name', value: selectedReport.student.studentName },
                     { label: 'Student ID', value: selectedReport.student.studentId },
                     { label: 'Gender', value: selectedReport.student.gender },
-                    { label: 'Class Position', value: `${selectedReport.position} of ${reports.length}` },
-                    { label: 'Average', value: `${selectedReport.average}%` },
+                    ...(grading.gradingMode !== 'single_grade' ? [
+                      { label: 'Class Position', value: selectedReport.average !== null ? `${selectedReport.position} of ${reports.length}` : '—' },
+                      { label: 'Average', value: selectedReport.average !== null ? `${selectedReport.average}%` : '—' },
+                    ] : []),
                   ].map(item => (
                     <div key={item.label}>
                       <p className="text-xs text-slate-500 font-semibold uppercase tracking-wide">{item.label}</p>
@@ -232,44 +235,69 @@ export default function ReportCards() {
                     <thead>
                       <tr className="border-b-2 border-slate-200">
                         <th className="text-left py-2 text-xs font-bold text-slate-500 uppercase tracking-wide">Subject</th>
-                        <th className="text-center py-2 text-xs font-bold text-slate-500 uppercase tracking-wide">CA /40</th>
-                        <th className="text-center py-2 text-xs font-bold text-slate-500 uppercase tracking-wide">Exam /60</th>
-                        <th className="text-center py-2 text-xs font-bold text-slate-500 uppercase tracking-wide">Total</th>
+                        {grading.gradingMode === 'ca_exam' && <>
+                          <th className="text-center py-2 text-xs font-bold text-slate-500 uppercase tracking-wide">CA /40</th>
+                          <th className="text-center py-2 text-xs font-bold text-slate-500 uppercase tracking-wide">Exam /60</th>
+                          <th className="text-center py-2 text-xs font-bold text-slate-500 uppercase tracking-wide">Total</th>
+                        </>}
+                        {grading.gradingMode === 'score_percentage' && <th className="text-center py-2 text-xs font-bold text-slate-500 uppercase tracking-wide">Score /100</th>}
                         <th className="text-center py-2 text-xs font-bold text-slate-500 uppercase tracking-wide">Grade</th>
-                        <th className="text-center py-2 text-xs font-bold text-slate-500 uppercase tracking-wide">Pos.</th>
-                        <th className="text-left py-2 text-xs font-bold text-slate-500 uppercase tracking-wide">Remark</th>
+                        {grading.gradingMode !== 'single_grade' && <>
+                          <th className="text-center py-2 text-xs font-bold text-slate-500 uppercase tracking-wide">Pos.</th>
+                          <th className="text-left py-2 text-xs font-bold text-slate-500 uppercase tracking-wide">Remark</th>
+                        </>}
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
                       {selectedReport.grades.length === 0 ? (
-                        <tr><td colSpan={7} className="py-8 text-center text-slate-400 text-xs">No grades recorded for this term.</td></tr>
+                        <tr><td colSpan={reportCardColCount(grading.gradingMode)} className="py-8 text-center text-slate-400 text-xs">No grades recorded for this term.</td></tr>
                       ) : (
-                        selectedReport.grades.map(g => (
+                        selectedReport.grades.map(g => {
+                          const rowMode = g.gradingMode ?? 'ca_exam';
+                          const liveGrade = rowMode === 'single_grade' ? g.grade : calculateGrade(g.totalScore ?? 0, grading.gradingSystem, grading.customGradingScale);
+                          const colorClass = scoreTextColorClass(g.totalScore ?? 0);
+                          return (
                           <tr key={g.subject}>
                             <td className="py-2.5 font-medium text-slate-800">{g.subject}</td>
-                            <td className="py-2.5 text-center text-slate-600">{g.caScore}</td>
-                            <td className="py-2.5 text-center text-slate-600">{g.examScore}</td>
-                            <td className="py-2.5 text-center font-bold text-slate-900">{g.totalScore}</td>
+                            {grading.gradingMode === 'ca_exam' && <>
+                              <td className="py-2.5 text-center text-slate-600">{g.caScore}</td>
+                              <td className="py-2.5 text-center text-slate-600">{g.examScore}</td>
+                              <td className="py-2.5 text-center font-bold text-slate-900">{g.totalScore}</td>
+                            </>}
+                            {grading.gradingMode === 'score_percentage' && (
+                              <td className="py-2.5 text-center font-bold text-slate-900">{g.totalScore}</td>
+                            )}
                             <td className="py-2.5 text-center">
-                              <span className={`font-bold ${GRADE_MAP[g.grade]?.color || 'text-slate-700'}`}>{g.grade}</span>
+                              <span className={`font-bold ${rowMode === 'single_grade' ? 'text-slate-800' : colorClass}`}>{liveGrade}</span>
                             </td>
-                            <td className="py-2.5 text-center text-xs text-slate-500">
-                              {g.subjectPosition ? `#${g.subjectPosition}` : '—'}
-                            </td>
-                            <td className={`py-2.5 text-xs ${GRADE_MAP[g.grade]?.color || 'text-slate-500'}`}>
-                              {GRADE_MAP[g.grade]?.label || g.grade}
-                            </td>
+                            {grading.gradingMode !== 'single_grade' && <>
+                              <td className="py-2.5 text-center text-xs text-slate-500">
+                                {g.subjectPosition ? `#${g.subjectPosition}` : '—'}
+                              </td>
+                              <td className={`py-2.5 text-xs ${colorClass}`}>
+                                {rowMode === 'single_grade' ? '—' : scoreRemark(g.totalScore ?? 0)}
+                              </td>
+                            </>}
                           </tr>
-                        ))
+                          );
+                        })
                       )}
                     </tbody>
                     <tfoot>
                       <tr className="border-t-2 border-slate-200 bg-slate-50">
-                        <td colSpan={2} className="py-2.5 font-bold text-slate-700 text-sm">Overall Average</td>
-                        <td colSpan={2} className="py-2.5 text-center font-bold text-indigo-700 text-lg">{selectedReport.average}%</td>
-                        <td colSpan={3} className="py-2.5 text-left font-bold text-slate-700">
-                          {(() => { const g = getGradingForClass(selectedClass); return calculateGrade(selectedReport.average, g.gradingSystem, g.customGradingScale); })()} &nbsp;—&nbsp; Position: <span className="text-indigo-700">{selectedReport.position} of {reports.length}</span>
-                        </td>
+                        {grading.gradingMode === 'single_grade' ? (
+                          <td colSpan={2} className="py-2.5 font-bold text-slate-700 text-sm">Single Grade mode — no overall average or position</td>
+                        ) : selectedReport.average !== null ? (
+                          <>
+                            <td colSpan={2} className="py-2.5 font-bold text-slate-700 text-sm">Overall Average</td>
+                            <td colSpan={2} className="py-2.5 text-center font-bold text-indigo-700 text-lg">{selectedReport.average}%</td>
+                            <td colSpan={3} className="py-2.5 text-left font-bold text-slate-700">
+                              {calculateGrade(selectedReport.average, grading.gradingSystem, grading.customGradingScale)} &nbsp;—&nbsp; Position: <span className="text-indigo-700">{selectedReport.position} of {reports.length}</span>
+                            </td>
+                          </>
+                        ) : (
+                          <td colSpan={7} className="py-2.5 font-bold text-slate-700 text-sm">Not applicable — no numeric scores this term</td>
+                        )}
                       </tr>
                     </tfoot>
                   </table>
@@ -315,12 +343,17 @@ export default function ReportCards() {
                 <div className="px-5 pb-5">
                   <div className="border border-slate-200 rounded-xl p-3">
                     <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">Grading Scale</p>
-                    <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-600">
-                      {Object.entries(GRADE_MAP).map(([g, v]) => (
-                        <span key={g}><span className="font-bold">{g}</span> — {v.label}</span>
-                      ))}
-                    </div>
-                    <p className="text-xs text-slate-400 mt-1">A1: 75+ | B2: 70–74 | B3: 65–69 | C4: 60–64 | C5: 55–59 | C6: 50–54 | D7: 45–49 | E8: 40–44 | F9: &lt;40</p>
+                    {grading.gradingMode === 'single_grade' ? (
+                      <p className="text-xs text-slate-600">
+                        Allowed grades for {selectedClass}: <span className="font-bold">{(grading.allowedGrades ?? []).join('  ') || '—'}</span>
+                      </p>
+                    ) : (
+                      <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-600">
+                        {gradingScaleLegend(grading.gradingSystem, grading.customGradingScale).map(({ grade, range }) => (
+                          <span key={grade}><span className="font-bold">{grade}</span> — {range}</span>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 </div>
 
@@ -353,7 +386,7 @@ export default function ReportCards() {
                 </div>
               </div>
             </div>
-          ) : (
+          ); })() : (
             <div className="bg-white rounded-2xl border border-slate-200 py-24 text-center shadow-sm print:hidden">
               <FileText className="w-12 h-12 text-slate-200 mx-auto mb-4" />
               <p className="text-slate-500 font-medium">Select a student from the list to preview their report card.</p>

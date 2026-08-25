@@ -134,13 +134,16 @@ export function useTeacherOverviewData(params: {
       setBelowThresholdStudents(below);
 
       // ── Grades: class average, subject performance, leaderboard ────────────
-      const classGrades = gradesSnap.docs.map(d => ({ id: d.id, ...d.data() } as Grade));
+      // single_grade records have no numeric score — excluded from every average below,
+      // since there's no sane numeric average across discrete grade values.
+      const classGrades = gradesSnap.docs.map(d => ({ id: d.id, ...d.data() } as Grade))
+        .filter(g => (g.gradingMode ?? 'ca_exam') !== 'single_grade');
       const byStudentGrades: Record<string, Grade[]> = {};
       classGrades.forEach(g => { (byStudentGrades[g.studentId] ||= []).push(g); });
 
       const studentAverages: LeaderboardEntry[] = students.map(s => {
         const sg = byStudentGrades[s.id!] || [];
-        const avg = sg.length > 0 ? Math.round(sg.reduce((sum, g) => sum + g.totalScore, 0) / sg.length) : 0;
+        const avg = sg.length > 0 ? Math.round(sg.reduce((sum, g) => sum + (g.totalScore ?? 0), 0) / sg.length) : 0;
         return { studentId: s.id!, studentName: s.studentName, photoUrl: s.photoUrl, average: avg };
       }).filter(s => s.average > 0).sort((a, b) => b.average - a.average);
       setLeaderboard(studentAverages.slice(0, 5));
@@ -151,7 +154,7 @@ export function useTeacherOverviewData(params: {
       setClassAverage(overallClassAvg);
 
       const bySubject: Record<string, number[]> = {};
-      classGrades.forEach(g => { (bySubject[g.subject] ||= []).push(g.totalScore); });
+      classGrades.forEach(g => { (bySubject[g.subject] ||= []).push(g.totalScore ?? 0); });
       setSubjectPerformance(
         subjectsForClass
           .map(subject => {
@@ -162,9 +165,10 @@ export function useTeacherOverviewData(params: {
       );
 
       // ── School-wide average (cross-class) ───────────────────────────────────
-      const schoolGrades = schoolGradesSnap.docs.map(d => d.data() as Grade);
+      const schoolGrades = schoolGradesSnap.docs.map(d => d.data() as Grade)
+        .filter(g => (g.gradingMode ?? 'ca_exam') !== 'single_grade');
       setSchoolAverage(schoolGrades.length > 0
-        ? Math.round(schoolGrades.reduce((sum, g) => sum + g.totalScore, 0) / schoolGrades.length)
+        ? Math.round(schoolGrades.reduce((sum, g) => sum + (g.totalScore ?? 0), 0) / schoolGrades.length)
         : null);
 
       // ── Curriculum coverage ─────────────────────────────────────────────────

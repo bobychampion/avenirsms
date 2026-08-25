@@ -10,7 +10,7 @@ import React, { useState, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { db } from '../firebase';
 import {
-  collection, addDoc, getDocs, query, where, serverTimestamp, writeBatch, doc, setDoc,
+  collection, addDoc, getDoc, getDocs, query, where, serverTimestamp, writeBatch, doc, setDoc,
 } from 'firebase/firestore';
 import Papa from 'papaparse';
 import * as XLSX from 'xlsx';
@@ -22,6 +22,7 @@ import {
   School, ChevronRight, Download, Landmark, Monitor,
 } from 'lucide-react';
 import { generateStudentId as genId } from '../services/firestoreService';
+import { SCHOOL_CLASSES } from '../types';
 import { OnboardingStep } from '../hooks/useOnboarding';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -405,6 +406,23 @@ function ImportStep({
         query(collection(db, 'classes'), where('schoolId', '==', schoolId))
       );
       const existingClassNames = new Set(existingClassSnap.docs.map(d => d.data().name));
+
+      // Resolve each class's `level` against the school's configured level list, not the raw
+      // class name — grading (and per-level grading overrides) key off `level`, so a mismatch
+      // here silently breaks custom grading scales for every class created this way.
+      const settingsSnap = await getDoc(doc(db, 'school_settings', schoolId));
+      const schoolLevels: string[] = settingsSnap.data()?.schoolLevels?.length
+        ? settingsSnap.data()!.schoolLevels
+        : [...SCHOOL_CLASSES];
+      const resolveLevel = (className: string): string => {
+        const exact = schoolLevels.find(lvl => lvl.toLowerCase() === className.toLowerCase());
+        if (exact) return exact;
+        // e.g. class "Year 7A" should resolve to level "Year 7"
+        const prefixMatches = schoolLevels.filter(lvl => className.toLowerCase().startsWith(lvl.toLowerCase()));
+        if (prefixMatches.length > 0) return prefixMatches.sort((a, b) => b.length - a.length)[0];
+        return '';
+      };
+
       const newClasses: string[] = [];
 
       const batch = writeBatch(db);
@@ -413,7 +431,7 @@ function ImportStep({
           const ref = doc(collection(db, 'classes'));
           batch.set(ref, {
             name: cn,
-            level: cn,
+            level: resolveLevel(cn),
             schoolId,
             academicSession: new Date().getFullYear() + '/' + (new Date().getFullYear() + 1),
             studentCount: 0,

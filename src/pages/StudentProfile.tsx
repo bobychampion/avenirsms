@@ -325,7 +325,7 @@ export default function StudentProfile() {
       ));
       const grades = gradesSnap.docs.map(d => {
         const g = d.data() as Grade;
-        return { subject: g.subject, total: g.totalScore ?? (g.caScore + g.examScore), grade: g.grade };
+        return { subject: g.subject, total: g.totalScore ?? ((g.caScore ?? 0) + (g.examScore ?? 0)), grade: g.grade };
       });
 
       // Fetch attendance

@@ -271,14 +271,19 @@ export interface Grade {
   studentId: string;
   subject: string;
   class: string;
+  classId?: string;          // resolved classes/{id} — lets Firestore Rules look up the class's
+                              // level without a query; also drives session-correct config resolution
   term: '1st Term' | '2nd Term' | '3rd Term';
   session: string;
-  caScore: number;
-  examScore: number;
-  totalScore: number;
+  gradingMode?: GradingMode; // denormalized mode this record was saved under; absent = 'ca_exam'
+                              // (pre-existing docs). Display components branch on this directly so a
+                              // school switching modes mid-session doesn't reinterpret old rows.
+  caScore?: number;          // absent in single_grade mode
+  examScore?: number;        // absent in single_grade mode
+  totalScore?: number;       // absent in single_grade mode; == score in score_percentage mode
   grade: string;
   teacherNotes?: string;
-  subjectPosition?: number;  // rank within the class for this subject
+  subjectPosition?: number;  // rank within the class for this subject; never written in single_grade mode
   updatedAt: any;
 }
 
@@ -820,20 +825,77 @@ export interface LevelGradingOverride {
 }
 
 /**
- * Resolves which grading system/scale applies to a given class level, falling back to the
- * school-wide default when no override exists for that level (or no level is given).
+ * How a school's teachers enter results. 'ca_exam' (the original/default behaviour) and
+ * 'score_percentage' both compute a letter via `calculateGrade`'s percentage boundaries.
+ * 'single_grade' bypasses scoring entirely — the teacher picks a value directly from an
+ * admin-defined list (see `GradingRule`). 'custom' is reserved for future grading engines;
+ * it currently resolves the same as 'ca_exam' and has no dedicated UI.
+ */
+export type GradingMode = 'ca_exam' | 'single_grade' | 'score_percentage' | 'custom';
+
+export const GRADING_MODE_OPTIONS: { value: GradingMode; label: string; description: string }[] = [
+  { value: 'ca_exam', label: 'CA + Exam', description: 'Continuous assessment + exam score, summed to a total, mapped to a letter grade.' },
+  { value: 'score_percentage', label: 'Single Score / Percentage', description: 'One 0–100 score per subject, mapped to a letter grade — no CA/Exam split.' },
+  { value: 'single_grade', label: 'Single Grade (Discrete)', description: 'Teacher picks one grade value directly from an admin-defined list — no scores, no computed total, no position.' },
+];
+
+/** One discrete-grade "band": a set of school levels sharing one allowed-grades list (single_grade mode). */
+export interface GradingRule {
+  id: string;
+  levels: string[];
+  grades: string[];
+}
+
+/**
+ * Flattens band-shaped GradingRule[] into a level → allowed-grades map. This is the shape both
+ * `resolveGradingForLevel` and Firestore Security Rules actually need — rules can't iterate an
+ * array to find "the band containing this level", but they can do an O(1) map-key lookup.
+ */
+export function flattenGradingRules(rules?: GradingRule[]): Record<string, string[]> {
+  const map: Record<string, string[]> = {};
+  (rules ?? []).forEach(rule => { rule.levels.forEach(level => { map[level] = rule.grades; }); });
+  return map;
+}
+
+/**
+ * Full grading configuration as it existed for one academic session. Snapshotted into
+ * `school_settings.gradingConfigHistory[session]` whenever Settings is saved, so a school
+ * changing its grading setup for a new session doesn't retroactively change how older
+ * sessions' results resolve.
+ */
+export interface GradingConfigSnapshot {
+  gradingMode: GradingMode;
+  gradingSystem: GradingSystem;
+  customGradingScale?: CustomGradeScale[];
+  levelGradingOverrides?: Record<string, LevelGradingOverride>;
+  gradingRules?: GradingRule[];
+  gradingRulesByLevel?: Record<string, string[]>;
+}
+
+/**
+ * Resolves the effective grading configuration for a given class level, falling back to the
+ * school-wide default when no per-level override exists (or no level is given). `allowedGrades`
+ * is only populated for 'single_grade' mode.
  */
 export function resolveGradingForLevel(
   level: string | undefined,
-  defaultGradingSystem: GradingSystem,
-  defaultCustomScale: CustomGradeScale[] | undefined,
+  defaults: {
+    gradingMode?: GradingMode;
+    gradingSystem: GradingSystem;
+    customGradingScale?: CustomGradeScale[];
+    gradingRules?: GradingRule[];
+  },
   levelOverrides?: Record<string, LevelGradingOverride>
-): { gradingSystem: GradingSystem; customGradingScale?: CustomGradeScale[] } {
+): { gradingMode: GradingMode; gradingSystem: GradingSystem; customGradingScale?: CustomGradeScale[]; allowedGrades?: string[] } {
+  const gradingMode = defaults.gradingMode ?? 'ca_exam';
   const override = level ? levelOverrides?.[level] : undefined;
-  if (override) {
-    return { gradingSystem: override.gradingSystem, customGradingScale: override.customGradingScale };
-  }
-  return { gradingSystem: defaultGradingSystem, customGradingScale: defaultCustomScale };
+  const base = override
+    ? { gradingSystem: override.gradingSystem, customGradingScale: override.customGradingScale }
+    : { gradingSystem: defaults.gradingSystem, customGradingScale: defaults.customGradingScale };
+  const allowedGrades = gradingMode === 'single_grade'
+    ? flattenGradingRules(defaults.gradingRules)[level ?? '']
+    : undefined;
+  return { gradingMode, ...base, allowedGrades };
 }
 
 export function calculateGrade(
@@ -909,6 +971,90 @@ export function calculateGrade(
       if (total >= 50) return 'C';
       return 'F';
   }
+}
+
+/** Grade/range legend for a resolved grading system, for display on report cards. */
+export function gradingScaleLegend(
+  gradingSystem: GradingSystem = 'waec',
+  customScale?: CustomGradeScale[]
+): { grade: string; range: string }[] {
+  switch (gradingSystem) {
+    case 'waec':
+      return [
+        { grade: 'A1', range: '75+' }, { grade: 'B2', range: '70–74' }, { grade: 'B3', range: '65–69' },
+        { grade: 'C4', range: '60–64' }, { grade: 'C5', range: '55–59' }, { grade: 'C6', range: '50–54' },
+        { grade: 'D7', range: '45–49' }, { grade: 'E8', range: '40–44' }, { grade: 'F9', range: '<40' },
+      ];
+    case 'percentage':
+      return [
+        { grade: 'A+', range: '90+' }, { grade: 'A', range: '80–89' }, { grade: 'B', range: '70–79' },
+        { grade: 'C', range: '60–69' }, { grade: 'D', range: '50–59' }, { grade: 'F', range: '<50' },
+      ];
+    case 'gpa4':
+      return [
+        { grade: 'A (4.0)', range: '90+' }, { grade: 'B (3.0)', range: '80–89' }, { grade: 'C (2.0)', range: '70–79' },
+        { grade: 'D (1.0)', range: '60–69' }, { grade: 'F (0.0)', range: '<60' },
+      ];
+    case 'ib':
+      return [
+        { grade: '7', range: '86+' }, { grade: '6', range: '72–85' }, { grade: '5', range: '58–71' },
+        { grade: '4', range: '44–57' }, { grade: '3', range: '30–43' }, { grade: '2', range: '16–29' }, { grade: '1', range: '<16' },
+      ];
+    case 'igcse':
+      return [
+        { grade: 'A*', range: '90+' }, { grade: 'A', range: '80–89' }, { grade: 'B', range: '70–79' },
+        { grade: 'C', range: '60–69' }, { grade: 'D', range: '50–59' }, { grade: 'E', range: '40–49' },
+        { grade: 'F', range: '30–39' }, { grade: 'G', range: '20–29' }, { grade: 'U', range: '<20' },
+      ];
+    case 'alevel':
+      return [
+        { grade: 'A*', range: '90+' }, { grade: 'A', range: '80–89' }, { grade: 'B', range: '70–79' },
+        { grade: 'C', range: '60–69' }, { grade: 'D', range: '50–59' }, { grade: 'E', range: '40–49' }, { grade: 'U', range: '<40' },
+      ];
+    case 'custom':
+      if (customScale && customScale.length > 0) {
+        return [...customScale].sort((a, b) => b.min - a.min)
+          .map(s => ({ grade: s.grade, range: `${s.min}–${s.max}${s.label ? ` (${s.label})` : ''}` }));
+      }
+      return [{ grade: 'Pass', range: '50+' }, { grade: 'Fail', range: '<50' }];
+    default:
+      return [{ grade: 'A1', range: '75+' }, { grade: 'C', range: '50–74' }, { grade: 'F', range: '<50' }];
+  }
+}
+
+/**
+ * Percentage-band descriptive remark for a score, independent of the letter/label a
+ * particular grading system happens to use (WAEC codes, Cambridge A*-U, a custom scale, etc).
+ * Use this instead of matching on specific grade strings, which breaks the moment a school
+ * switches grading systems.
+ */
+export function scoreRemark(total: number): string {
+  if (total >= 75) return 'Excellent';
+  if (total >= 70) return 'Very Good';
+  if (total >= 65) return 'Good';
+  if (total >= 50) return 'Credit';
+  if (total >= 40) return 'Pass';
+  return 'Fail';
+}
+
+/** Badge background/text/border classes for a score, independent of grading system. */
+export function scoreBadgeClasses(total: number): string {
+  if (total >= 75) return 'bg-emerald-50 text-emerald-700 border-emerald-200';
+  if (total >= 70) return 'bg-green-50 text-green-700 border-green-200';
+  if (total >= 65) return 'bg-lime-50 text-lime-700 border-lime-200';
+  if (total >= 50) return 'bg-indigo-50 text-indigo-700 border-indigo-200';
+  if (total >= 40) return 'bg-amber-50 text-amber-700 border-amber-200';
+  return 'bg-rose-50 text-rose-700 border-rose-200';
+}
+
+/** Text-only color class for a score, independent of grading system. */
+export function scoreTextColorClass(total: number): string {
+  if (total >= 75) return 'text-emerald-600';
+  if (total >= 70) return 'text-green-600';
+  if (total >= 65) return 'text-lime-600';
+  if (total >= 50) return 'text-indigo-600';
+  if (total >= 40) return 'text-amber-600';
+  return 'text-rose-600';
 }
 
 export function calculatePAYE(grossPay: number): number {

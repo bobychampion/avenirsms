@@ -15,7 +15,7 @@
 import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { db } from '../firebase';
 import { collection, onSnapshot, orderBy, query, doc, where } from 'firebase/firestore';
-import { SchoolClass, SCHOOL_CLASSES, SUBJECTS, CURRENT_SESSION, TERMS, GradingSystem, CustomGradeScale, LevelGradingOverride, resolveGradingForLevel, SubjectDefinition, TimetablePeriodSlot, DAYS_OF_WEEK, WeekendDay } from '../types';
+import { SchoolClass, SCHOOL_CLASSES, SUBJECTS, CURRENT_SESSION, TERMS, GradingSystem, CustomGradeScale, LevelGradingOverride, GradingMode, GradingRule, GradingConfigSnapshot, resolveGradingForLevel, SubjectDefinition, TimetablePeriodSlot, DAYS_OF_WEEK, WeekendDay } from '../types';
 import {
   DEFAULT_TIMETABLE_PERIODS,
   resolveTimetablePeriodSlots,
@@ -70,8 +70,15 @@ interface SchoolContextValue {
   gradingSystem: GradingSystem;
   customGradingScale: CustomGradeScale[];
   levelGradingOverrides: Record<string, LevelGradingOverride>;
-  /** Resolves the effective grading system/scale for a class name, honouring any per-level override. */
-  getGradingForClass: (className: string) => { gradingSystem: GradingSystem; customGradingScale?: CustomGradeScale[] };
+  gradingMode: GradingMode;
+  gradingRules: GradingRule[];
+  gradingConfigHistory: Record<string, GradingConfigSnapshot>;
+  /**
+   * Resolves the effective grading configuration for a class name, honouring any per-level
+   * override. Pass `session` to resolve against that session's snapshot (for historical
+   * accuracy) instead of the school's live/current configuration.
+   */
+  getGradingForClass: (className: string, session?: string) => { gradingMode: GradingMode; gradingSystem: GradingSystem; customGradingScale?: CustomGradeScale[]; allowedGrades?: string[] };
   taxModel: 'nigeria_paye' | 'flat_rate' | 'none';
   taxFlatRate: number;
   cloudinaryConfig: { cloudName: string; uploadPreset: string };
@@ -125,7 +132,10 @@ const SchoolContext = createContext<SchoolContextValue>({
   gradingSystem: 'percentage',
   customGradingScale: [],
   levelGradingOverrides: {},
-  getGradingForClass: () => ({ gradingSystem: 'percentage', customGradingScale: [] }),
+  gradingMode: 'ca_exam',
+  gradingRules: [],
+  gradingConfigHistory: {},
+  getGradingForClass: () => ({ gradingMode: 'ca_exam', gradingSystem: 'percentage', customGradingScale: [] }),
   taxModel: 'none',
   taxFlatRate: 0,
   cloudinaryConfig: { cloudName: '', uploadPreset: '' },
@@ -187,6 +197,9 @@ export function SchoolProvider({ children }: { children: React.ReactNode }) {
   const [gradingSystem, setGradingSystem] = useState<GradingSystem>('percentage');
   const [customGradingScale, setCustomGradingScale] = useState<CustomGradeScale[]>([]);
   const [levelGradingOverrides, setLevelGradingOverrides] = useState<Record<string, LevelGradingOverride>>({});
+  const [gradingMode, setGradingMode] = useState<GradingMode>('ca_exam');
+  const [gradingRules, setGradingRules] = useState<GradingRule[]>([]);
+  const [gradingConfigHistory, setGradingConfigHistory] = useState<Record<string, GradingConfigSnapshot>>({});
   const [taxModel, setTaxModel] = useState<'nigeria_paye' | 'flat_rate' | 'none'>('none');
   const [taxFlatRate, setTaxFlatRate] = useState(0);
   const [cloudinaryConfig, setCloudinaryConfig] = useState({ cloudName: '', uploadPreset: '' });
@@ -273,6 +286,9 @@ export function SchoolProvider({ children }: { children: React.ReactNode }) {
       setGradingSystem('percentage');
       setCustomGradingScale([]);
       setLevelGradingOverrides({});
+      setGradingMode('ca_exam');
+      setGradingRules([]);
+      setGradingConfigHistory({});
       setTaxModel('none');
       setTaxFlatRate(0);
       setCloudinaryConfig({ cloudName: '', uploadPreset: '' });
@@ -328,6 +344,9 @@ export function SchoolProvider({ children }: { children: React.ReactNode }) {
           setGradingSystem(data.gradingSystem || 'percentage');
           setCustomGradingScale(data.customGradingScale || []);
           setLevelGradingOverrides(data.levelGradingOverrides || {});
+          setGradingMode(data.gradingMode || 'ca_exam');
+          setGradingRules(data.gradingRules || []);
+          setGradingConfigHistory(data.gradingConfigHistory || {});
           setTaxModel(data.taxModel || 'none');
           setTaxFlatRate(data.taxFlatRate || 0);
           setInstitutionType(data.institutionType || 'secondary');
@@ -457,9 +476,14 @@ export function SchoolProvider({ children }: { children: React.ReactNode }) {
   const schoolDays = [...DAYS_OF_WEEK, ...weekendDays];
 
   // Helper: resolve the effective grading system/scale for a class, honouring per-level overrides
-  const getGradingForClass = (className: string) => {
+  const getGradingForClass = (className: string, session?: string) => {
     const level = classes.find(c => c.name === className)?.level;
-    return resolveGradingForLevel(level, gradingSystem, customGradingScale, levelGradingOverrides);
+    const snap = session ? gradingConfigHistory[session] : undefined;
+    const defaults = snap
+      ? { gradingMode: snap.gradingMode, gradingSystem: snap.gradingSystem, customGradingScale: snap.customGradingScale, gradingRules: snap.gradingRules }
+      : { gradingMode, gradingSystem, customGradingScale, gradingRules };
+    const overrides = snap?.levelGradingOverrides ?? levelGradingOverrides;
+    return resolveGradingForLevel(level, defaults, overrides);
   };
 
   // Helper: get subjects for a specific class (from SubjectDefinitions, falling back to all merged subjects)
@@ -500,6 +524,9 @@ export function SchoolProvider({ children }: { children: React.ReactNode }) {
       gradingSystem,
       customGradingScale,
       levelGradingOverrides,
+      gradingMode,
+      gradingRules,
+      gradingConfigHistory,
       getGradingForClass,
       taxModel,
       taxFlatRate,

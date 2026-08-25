@@ -392,12 +392,51 @@ service cloud.firestore {
 
     // ─── Grades & assessments ─────────────────────────────────────────────────
 
+    /**
+     * Server-side validation for 'single_grade' mode: the picked value must be in that
+     * class level's admin-configured allowed list. Fails OPEN (no extra restriction) for
+     * every other grading mode — deliberate scope boundary, not an oversight: porting
+     * percentage-boundary/custom-scale validation into rules has the same "can't scan a
+     * range list" problem that flattening to a level→grades map solves for discrete lists,
+     * and it isn't what was asked. That gap is pre-existing (zero validation today) and is
+     * left unchanged, not worsened.
+     *
+     * Known residual gap: gradingMode/classId/session are client-declared on the write, not
+     * independently re-derived from a trusted source — a school-scoped teacher/admin could
+     * still declare gradingMode: 'ca_exam' to skip this check entirely. Closing that fully
+     * would require routing grade writes through a Cloud Function, which is deliberately off
+     * the table for this project (Cloud Functions were moved to Vercel API routes specifically
+     * to escape Firebase Blaze billing). Accepted: the actor is an authenticated, school-scoped
+     * staff member, not an anonymous attacker, and the blast radius stays confined to their own
+     * school either way.
+     */
+    function singleGradeValueIsValid() {
+      let mode = request.resource.data.get('gradingMode', 'ca_exam');
+      return mode != 'single_grade' || singleGradeMatchesAllowedList();
+    }
+
+    function singleGradeMatchesAllowedList() {
+      let data = request.resource.data;
+      let classId = data.get('classId', null);
+      return classId != null && gradeInAllowedList(classId, data.get('session', ''), data.get('grade', ''));
+    }
+
+    /** ~2 get() reads (class doc + school_settings doc); dedup'd if called more than once per request. */
+    function gradeInAllowedList(classId, session, gradeValue) {
+      let cls = get(/databases/$(database)/documents/classes/$(classId)).data;
+      let settings = get(/databases/$(database)/documents/school_settings/$(userProfile().schoolId)).data;
+      let history = settings.get('gradingConfigHistory', {});
+      let effective = history.get(session, settings);
+      let byLevel = effective.get('gradingRulesByLevel', settings.get('gradingRulesByLevel', {}));
+      return gradeValue in byLevel.get(cls.get('level', ''), []);
+    }
+
     match /grades/{gradeId} {
       allow read: if isSuperAdmin() ||
                     ((isAdmin() || isTeacher()) && docBelongsToCallerSchool()) ||
                     isGuardianOfStudent(resource.data.studentId);
       allow write: if isSuperAdmin() ||
-                    ((isAdmin() || isTeacher()) && newDocBelongsToCallerSchool());
+                    ((isAdmin() || isTeacher()) && newDocBelongsToCallerSchool() && singleGradeValueIsValid());
     }
 
     match /student_skills/{skillId} {

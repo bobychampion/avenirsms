@@ -7,7 +7,7 @@ import {
   collection, query, where, getDocs, addDoc, serverTimestamp, writeBatch, doc,
 } from 'firebase/firestore';
 import { db } from '../../firebase';
-import { Student, Staff, Grade, Attendance, SubjectAttendance, SpecialLessonAttendance, calculateGrade } from '../../types';
+import { Student, Staff, Grade, Attendance, SubjectAttendance, SpecialLessonAttendance, calculateGrade, GradingMode, GradingSystem, CustomGradeScale } from '../../types';
 import { generateStudentId } from '../firestoreService';
 
 // ─── Generic helpers ─────────────────────────────────────────────────────────
@@ -264,6 +264,7 @@ export function exportStaffCsv(staff: Staff[]): void {
 export const GRADE_CSV_HEADERS = [
   'studentId', 'studentName', 'class', 'subject', 'term', 'session',
   'caScore', 'examScore', 'totalScore', 'grade', 'teacherNotes',
+  'classId', 'gradingMode',
 ] as const;
 
 export type GradeCsvRow = Record<(typeof GRADE_CSV_HEADERS)[number], string>;
@@ -271,14 +272,17 @@ export type GradeCsvRow = Record<(typeof GRADE_CSV_HEADERS)[number], string>;
 export function gradeToCsvRow(g: Grade & { studentName?: string }): string[] {
   return [
     g.studentId ?? '', g.studentName ?? '', g.class ?? '', g.subject ?? '',
-    g.term ?? '', g.session ?? '', String(g.caScore ?? 0), String(g.examScore ?? 0),
-    String(g.totalScore ?? 0), g.grade ?? '', g.teacherNotes ?? '',
+    g.term ?? '', g.session ?? '',
+    // Empty (not '0') when genuinely absent — e.g. single_grade mode has no CA/Exam/Total.
+    g.caScore != null ? String(g.caScore) : '', g.examScore != null ? String(g.examScore) : '',
+    g.totalScore != null ? String(g.totalScore) : '', g.grade ?? '', g.teacherNotes ?? '',
+    g.classId ?? '', g.gradingMode ?? 'ca_exam',
   ];
 }
 
 export function downloadGradeTemplate(): void {
   downloadCsv('grade_import_template.csv', [...GRADE_CSV_HEADERS], [
-    ['STU-2026-001', 'Adaeze Okonkwo', 'JSS 1', 'Mathematics', '1st Term', '2025/2026', '32', '48', '80', 'A1', 'Excellent work'],
+    ['STU-2026-001', 'Adaeze Okonkwo', 'JSS 1', 'Mathematics', '1st Term', '2025/2026', '32', '48', '80', 'A1', 'Excellent work', '', 'ca_exam'],
   ]);
 }
 
@@ -299,7 +303,12 @@ export interface GradeImportResult {
 
 export async function importGradesFromRows(
   rows: GradeCsvRow[],
-  schoolId: string
+  schoolId: string,
+  /** Resolves the grading config for a class name + session. Optional so this stays decoupled
+   *  from React context; when omitted, every row imports exactly as before (ca_exam-shaped). */
+  resolveGrading?: (className: string, session: string) => { gradingMode: GradingMode; allowedGrades?: string[]; gradingSystem: GradingSystem; customGradingScale?: CustomGradeScale[] },
+  /** Class name → Firestore doc id, for stamping `classId` (needed for single_grade Rules validation). */
+  classesByName?: Record<string, string>
 ): Promise<GradeImportResult[]> {
   const results: GradeImportResult[] = [];
   for (let i = 0; i < rows.length; i++) {
@@ -308,18 +317,39 @@ export async function importGradesFromRows(
       results.push({ row: i + 2, studentId: row.studentId || '', status: 'error', message: 'studentId and subject required' });
       continue;
     }
-    const caScore = Math.min(parseFloat(row.caScore) || 0, 40);
-    const examScore = Math.min(parseFloat(row.examScore) || 0, 60);
-    const totalScore = caScore + examScore;
-    const grade = row.grade?.trim() || calculateGrade(totalScore);
+    const className = row.class?.trim() || '';
+    const session = row.session?.trim() || '';
+    const grading = resolveGrading?.(className, session);
+    const classId = row.classId?.trim() || classesByName?.[className];
+
+    let payload: Record<string, unknown>;
+    if (grading?.gradingMode === 'single_grade') {
+      const grade = row.grade?.trim() || '';
+      if (!grade || !(grading.allowedGrades ?? []).includes(grade)) {
+        results.push({ row: i + 2, studentId: row.studentId, status: 'error', message: `grade "${grade}" not in the allowed list for ${className || 'this class'}` });
+        continue;
+      }
+      if (!classId) {
+        results.push({ row: i + 2, studentId: row.studentId, status: 'error', message: `class "${className}" not found — required for single_grade mode` });
+        continue;
+      }
+      payload = { grade, classId, gradingMode: 'single_grade' as GradingMode };
+    } else {
+      const caScore = Math.min(parseFloat(row.caScore) || 0, 40);
+      const examScore = Math.min(parseFloat(row.examScore) || 0, 60);
+      const totalScore = caScore + examScore;
+      const grade = row.grade?.trim() || (grading ? calculateGrade(totalScore, grading.gradingSystem, grading.customGradingScale) : calculateGrade(totalScore));
+      payload = { caScore, examScore, totalScore, grade, classId: classId ?? null, gradingMode: (grading?.gradingMode ?? 'ca_exam') as GradingMode };
+    }
+
     try {
       await addDoc(collection(db, 'grades'), {
         studentId: row.studentId.trim(),
         subject: row.subject.trim(),
-        class: row.class?.trim() || '',
+        class: className,
         term: row.term?.trim() || '1st Term',
-        session: row.session?.trim() || '',
-        caScore, examScore, totalScore, grade,
+        session,
+        ...payload,
         teacherNotes: row.teacherNotes?.trim() || (row as { teacherComment?: string }).teacherComment?.trim() || '',
         schoolId,
         updatedAt: serverTimestamp(),

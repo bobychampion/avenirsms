@@ -36,7 +36,7 @@ type Tab = 'backup' | 'restore' | 'modules';
 
 export default function DataPortability() {
   const schoolId = useSchoolId();
-  const { schoolName } = useSchool();
+  const { schoolName, classes, getGradingForClass } = useSchool();
   const { user, profile, isSuperAdmin } = useAuth();
 
   const [tab, setTab] = useState<Tab>('backup');
@@ -173,7 +173,8 @@ export default function DataPortability() {
   const handleGradeImport = async (file: File) => {
     if (!schoolId) return;
     const rows = await parseSpreadsheetFile<GradeCsvRow>(file);
-    const results = await importGradesFromRows(rows, schoolId);
+    const classesByName = Object.fromEntries(classes.filter(c => c.id).map(c => [c.name, c.id!]));
+    const results = await importGradesFromRows(rows, schoolId, getGradingForClass, classesByName);
     const ok = results.filter(r => r.status === 'success').length;
     toast.success(`Grades import: ${ok}/${rows.length} rows imported`);
   };

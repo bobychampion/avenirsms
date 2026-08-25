@@ -22,7 +22,7 @@ import {
 } from '../utils/timetablePeriods';
 import { GeoFence } from '../types';
 import { haversineDistance } from '../services/geofenceService';
-import { SCHOOL_CLASSES, SUBJECTS, TERMS, GradingSystem, CustomGradeScale, LevelGradingOverride, GRADING_SYSTEM_OPTIONS, SubjectDefinition, UserProfile, FeeCategory, WeekendDay } from '../types';
+import { SCHOOL_CLASSES, SUBJECTS, TERMS, GradingSystem, CustomGradeScale, LevelGradingOverride, GRADING_SYSTEM_OPTIONS, GradingMode, GradingRule, GradingConfigSnapshot, GRADING_MODE_OPTIONS, flattenGradingRules, SubjectDefinition, UserProfile, FeeCategory, WeekendDay } from '../types';
 import { useUnsavedChanges } from '../hooks/useUnsavedChanges';
 import UnsavedChangesDialog from '../components/UnsavedChangesDialog';
 import StorageSettingsPanel from '../components/StorageSettingsPanel';
@@ -127,6 +127,14 @@ export interface SchoolSettings {
   customGradingScale: CustomGradeScale[];
   /** Per-level overrides (keyed by entry in schoolLevels), e.g. Kindergarten uses a descriptive scale while Secondary uses WAEC. */
   levelGradingOverrides?: Record<string, LevelGradingOverride>;
+  /** How teachers enter results. Defaults to 'ca_exam' — absent for every school that hasn't touched this. */
+  gradingMode?: GradingMode;
+  /** Discrete allowed-grade bands, used only when gradingMode === 'single_grade'. */
+  gradingRules?: GradingRule[];
+  /** Snapshot of the full grading configuration as it existed for each academic session, so a
+   *  school changing its setup for a new session doesn't retroactively change how older
+   *  sessions' results resolve. Keyed by session string (e.g. "2025/2026"). */
+  gradingConfigHistory?: Record<string, GradingConfigSnapshot>;
   termStructure: '3-term' | '2-semester' | '4-quarter';
   // Finance & Payroll
   taxModel: 'nigeria_paye' | 'flat_rate' | 'none';
@@ -286,6 +294,9 @@ export const defaultSettings: SchoolSettings = {
   gradingSystem: 'percentage',
   customGradingScale: [],
   levelGradingOverrides: {},
+  gradingMode: 'ca_exam',
+  gradingRules: [],
+  gradingConfigHistory: {},
   termStructure: '3-term',
   // Finance
   taxModel: 'none',
@@ -555,6 +566,128 @@ function LevelGradingOverridesEditor({
           );
         })}
       </div>
+    </div>
+  );
+}
+
+// ─── Discrete Grading Rules Editor (Single Grade mode) ────────────────────────
+function GradingRulesEditor({
+  levels, rules, onChange
+}: {
+  levels: string[];
+  rules: GradingRule[];
+  onChange: (rules: GradingRule[]) => void;
+}) {
+  const [gradeInputs, setGradeInputs] = useState<Record<string, string>>({});
+
+  const addBand = () => onChange([...rules, { id: `band-${Date.now()}`, levels: [], grades: [] }]);
+  const removeBand = (id: string) => onChange(rules.filter(r => r.id !== id));
+  const toggleLevel = (bandId: string, level: string) => {
+    onChange(rules.map(r => {
+      if (r.id === bandId) {
+        const has = r.levels.includes(level);
+        return { ...r, levels: has ? r.levels.filter(l => l !== level) : [...r.levels, level] };
+      }
+      // A level can only belong to one band — unclaim it from any other band.
+      return { ...r, levels: r.levels.filter(l => l !== level) };
+    }));
+  };
+  const addGrade = (bandId: string) => {
+    const val = (gradeInputs[bandId] ?? '').trim();
+    if (!val) return;
+    onChange(rules.map(r => (r.id === bandId && !r.grades.includes(val)) ? { ...r, grades: [...r.grades, val] } : r));
+    setGradeInputs(prev => ({ ...prev, [bandId]: '' }));
+  };
+  const removeGrade = (bandId: string, grade: string) => {
+    onChange(rules.map(r => r.id === bandId ? { ...r, grades: r.grades.filter(g => g !== grade) } : r));
+  };
+  const moveGrade = (bandId: string, index: number, dir: -1 | 1) => {
+    onChange(rules.map(r => {
+      if (r.id !== bandId) return r;
+      const next = [...r.grades];
+      const target = index + dir;
+      if (target < 0 || target >= next.length) return r;
+      [next[index], next[target]] = [next[target], next[index]];
+      return { ...r, grades: next };
+    }));
+  };
+
+  const byLevel = flattenGradingRules(rules);
+
+  return (
+    <div>
+      <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">Grading Rules by Year Group</label>
+      <p className="text-xs text-slate-500 mb-3">
+        Group levels into bands that share the same allowed grade values — e.g. Year 1–9 use 1–5, Year 10–11 use 1–9.
+        A level can only belong to one band.
+      </p>
+      {levels.length === 0 && <span className="text-xs text-slate-400 italic">Add grade/year levels above first</span>}
+      <div className="space-y-3 mb-4">
+        {rules.map((rule, ri) => (
+          <div key={rule.id} className="border border-slate-200 rounded-xl p-3">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-xs font-bold text-slate-700">Band {ri + 1}</span>
+              <button onClick={() => removeBand(rule.id)} className="text-slate-400 hover:text-red-500"><Trash2 className="w-3.5 h-3.5" /></button>
+            </div>
+            <div className="flex flex-wrap gap-1.5 mb-3">
+              {levels.map(level => {
+                const active = rule.levels.includes(level);
+                return (
+                  <button key={level} type="button" onClick={() => toggleLevel(rule.id, level)}
+                    className={`px-2.5 py-1 rounded-lg text-xs font-semibold border transition-colors ${
+                      active ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-slate-50 text-slate-500 border-slate-200 hover:border-indigo-300'
+                    }`}>
+                    {level}
+                  </button>
+                );
+              })}
+            </div>
+            <div className="flex flex-wrap items-center gap-1.5 mb-2">
+              {rule.grades.map((g, gi) => (
+                <span key={g} className="inline-flex items-center gap-1 px-2.5 py-1 bg-indigo-50 text-indigo-700 text-xs font-bold rounded-lg border border-indigo-100">
+                  {g}
+                  <button onClick={() => moveGrade(rule.id, gi, -1)} disabled={gi === 0} className="text-indigo-300 hover:text-indigo-600 disabled:opacity-25"><ChevronUp className="w-3 h-3" /></button>
+                  <button onClick={() => moveGrade(rule.id, gi, 1)} disabled={gi === rule.grades.length - 1} className="text-indigo-300 hover:text-indigo-600 disabled:opacity-25"><ChevronDown className="w-3 h-3" /></button>
+                  <button onClick={() => removeGrade(rule.id, g)} className="text-indigo-300 hover:text-red-500"><X className="w-3 h-3" /></button>
+                </span>
+              ))}
+              {rule.grades.length === 0 && <span className="text-xs text-slate-400 italic">No grade values yet</span>}
+            </div>
+            <div className="flex gap-2">
+              <input
+                value={gradeInputs[rule.id] ?? ''}
+                onChange={e => setGradeInputs(prev => ({ ...prev, [rule.id]: e.target.value }))}
+                onKeyDown={e => e.key === 'Enter' && addGrade(rule.id)}
+                placeholder="e.g. 1, 2, A, U"
+                className="flex-1 px-3 py-1.5 rounded-lg border border-slate-200 text-xs outline-none focus:ring-2 focus:ring-indigo-500"
+              />
+              <button onClick={() => addGrade(rule.id)} className="flex items-center gap-1 px-3 py-1.5 bg-indigo-600 text-white text-xs font-bold rounded-lg hover:bg-indigo-700 transition-colors">
+                <Plus className="w-3.5 h-3.5" /> Add
+              </button>
+            </div>
+          </div>
+        ))}
+        {rules.length === 0 && <span className="text-xs text-slate-400 italic">No bands defined yet</span>}
+      </div>
+      <button onClick={addBand} className="flex items-center gap-1.5 px-4 py-2 bg-indigo-50 text-indigo-700 border border-indigo-200 text-xs font-bold rounded-xl hover:bg-indigo-100 transition-colors mb-4">
+        <Plus className="w-3.5 h-3.5" /> Add Band
+      </button>
+
+      {levels.length > 0 && (
+        <div className="border border-slate-200 rounded-xl p-3 bg-slate-50">
+          <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">Preview — this is the grading system your school uses</p>
+          <div className="space-y-1">
+            {levels.map(level => (
+              <div key={level} className="flex items-center gap-2 text-xs">
+                <span className="w-32 font-semibold text-slate-700 truncate">{level}</span>
+                {byLevel[level]?.length
+                  ? <span className="text-indigo-700 font-bold">{byLevel[level].join('  ')}</span>
+                  : <span className="text-slate-400 italic">not covered by any band</span>}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1105,13 +1238,30 @@ export default function SchoolSettingsPage() {
     setSaving(true);
     const tid = toast.loading('Saving settings…');
     try {
+      // Flatten the admin-editable grading bands into a level→grades map (the shape both
+      // resolution and Firestore Rules actually query), and snapshot the full grading config
+      // under the current session so a later config change never reinterprets older results.
+      const gradingRulesByLevel = flattenGradingRules(form.gradingRules);
+      const snapshot: GradingConfigSnapshot = {
+        gradingMode: form.gradingMode ?? 'ca_exam',
+        gradingSystem: form.gradingSystem,
+        customGradingScale: form.customGradingScale,
+        levelGradingOverrides: form.levelGradingOverrides,
+        gradingRules: form.gradingRules ?? [],
+        gradingRulesByLevel,
+      };
+      const gradingConfigHistory = { ...(form.gradingConfigHistory ?? {}), [form.currentSession]: snapshot };
+
       await setDoc(doc(db, SETTINGS_DOC, schoolId!), {
         ...form,
+        gradingConfigHistory,
+        gradingRulesByLevel,
         periodTimes: periodTimesFromSlots(form.timetablePeriods),
         updatedAt: serverTimestamp(),
         // Mark settings step done for onboarding wizard
         onboardingSettingsDone: true,
       });
+      setForm(f => ({ ...f, gradingConfigHistory }));
       setIsDirty(false);
       toast.success('Settings saved!', { id: tid });
     } catch (e: any) {
@@ -1567,23 +1717,43 @@ export default function SchoolSettingsPage() {
             <p className="text-xs text-slate-500 mb-5">Grading system, academic levels, and custom subjects. Configure timetable periods under the Timetable tab.</p>
 
             <div className="mb-6">
-              <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">Grading System</label>
-              <select value={form.gradingSystem} onChange={e => field('gradingSystem', e.target.value as GradingSystem)}
-                className="w-full sm:w-72 px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm">
-                <option value="waec">WAEC / NECO (A1–F9) — Nigerian</option>
-                <option value="percentage">Percentage (A+, A, B, C, D, F)</option>
-                <option value="gpa4">GPA 4.0 — US / International</option>
-                <option value="ib">IB Scale (1–7) — International Baccalaureate</option>
-                <option value="igcse">IGCSE (A*–U) — Cambridge / British</option>
-                <option value="alevel">A-Level (A*–U) — Cambridge / British</option>
-                <option value="custom">Custom Scale</option>
+              <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">Grading Mode</label>
+              <p className="text-xs text-slate-500 mb-2">How teachers enter results. Teachers never configure this themselves — they automatically see whatever is set here.</p>
+              <select value={form.gradingMode ?? 'ca_exam'} onChange={e => field('gradingMode', e.target.value as GradingMode)}
+                className="w-full sm:w-96 px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm">
+                {GRADING_MODE_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
               </select>
-              {form.gradingSystem === 'custom' && (
-                <div className="mt-4">
-                  <CustomGradeScaleEditor scale={form.customGradingScale} onChange={s => field('customGradingScale', s)} />
-                </div>
-              )}
+              <p className="text-xs text-slate-400 mt-1">{GRADING_MODE_OPTIONS.find(o => o.value === (form.gradingMode ?? 'ca_exam'))?.description}</p>
             </div>
+
+            {form.gradingMode === 'single_grade' ? (
+              <div className="mb-6">
+                <GradingRulesEditor
+                  levels={form.schoolLevels}
+                  rules={form.gradingRules ?? []}
+                  onChange={rules => field('gradingRules', rules)}
+                />
+              </div>
+            ) : (
+              <div className="mb-6">
+                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">Grading System</label>
+                <select value={form.gradingSystem} onChange={e => field('gradingSystem', e.target.value as GradingSystem)}
+                  className="w-full sm:w-72 px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm">
+                  <option value="waec">WAEC / NECO (A1–F9) — Nigerian</option>
+                  <option value="percentage">Percentage (A+, A, B, C, D, F)</option>
+                  <option value="gpa4">GPA 4.0 — US / International</option>
+                  <option value="ib">IB Scale (1–7) — International Baccalaureate</option>
+                  <option value="igcse">IGCSE (A*–U) — Cambridge / British</option>
+                  <option value="alevel">A-Level (A*–U) — Cambridge / British</option>
+                  <option value="custom">Custom Scale</option>
+                </select>
+                {form.gradingSystem === 'custom' && (
+                  <div className="mt-4">
+                    <CustomGradeScaleEditor scale={form.customGradingScale} onChange={s => field('customGradingScale', s)} />
+                  </div>
+                )}
+              </div>
+            )}
 
             <div className="mb-6">
               <OrderableLevelEditor
@@ -1594,13 +1764,15 @@ export default function SchoolSettingsPage() {
               />
             </div>
 
-            <div className="mb-6">
-              <LevelGradingOverridesEditor
-                levels={form.schoolLevels}
-                overrides={form.levelGradingOverrides ?? {}}
-                onChange={ov => field('levelGradingOverrides', ov)}
-              />
-            </div>
+            {form.gradingMode !== 'single_grade' && (
+              <div className="mb-6">
+                <LevelGradingOverridesEditor
+                  levels={form.schoolLevels}
+                  overrides={form.levelGradingOverrides ?? {}}
+                  onChange={ov => field('levelGradingOverrides', ov)}
+                />
+              </div>
+            )}
 
             <div className="mb-6">
               <TagListEditor label="Additional / Custom Subjects" items={form.customSubjects} placeholder="e.g. Slovenian Language, IB Theory of Knowledge"

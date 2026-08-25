@@ -47,7 +47,7 @@ interface AttendanceRow {
 export default function TeacherPortal() {
   const { user, profile } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
-  const { classNames, subjects, currentSession, currentTerm, getGradingForClass, terms, schoolName, schoolDays, attendanceMode } = useSchool();
+  const { classNames, classes, subjects, currentSession, currentTerm, getGradingForClass, terms, schoolName, schoolDays, attendanceMode } = useSchool();
   const schoolId = useSchoolId();
 
   // Derived helpers (safe fallbacks)
@@ -907,7 +907,7 @@ export default function TeacherPortal() {
             caScore: 0,
             examScore: 0,
             totalScore: 0,
-            grade: 'F9',
+            grade: '',
             updatedAt: null,
           };
         }
@@ -916,6 +916,9 @@ export default function TeacherPortal() {
     };
     fetchGrades();
   }, [activeTab, students, selectedClass, gradeSubject, gradeTerm, gradeSession]);
+
+  const gradebookGrading = getGradingForClass(selectedClass, gradeSession);
+  const gradebookMode = gradebookGrading.gradingMode;
 
   // ── Load existing skills when class/term changes ──
   useEffect(() => {
@@ -946,24 +949,50 @@ export default function TeacherPortal() {
     setGrades(prev => {
       const g = { ...prev[studentId] };
       g[field] = Math.min(field === 'caScore' ? 40 : 60, Math.max(0, val));
-      g.totalScore = g.caScore + g.examScore;
-      const grading = getGradingForClass(selectedClass);
-      g.grade = calculateGrade(g.totalScore, grading.gradingSystem, grading.customGradingScale);
+      g.totalScore = (g.caScore ?? 0) + (g.examScore ?? 0);
+      g.grade = calculateGrade(g.totalScore, gradebookGrading.gradingSystem, gradebookGrading.customGradingScale);
       return { ...prev, [studentId]: g };
     });
+  };
+
+  // score_percentage mode: one 0-100 field, no CA/Exam split.
+  const updateScoreOnly = (studentId: string, val: number) => {
+    setGrades(prev => {
+      const g = { ...prev[studentId] };
+      const total = Math.min(100, Math.max(0, val));
+      g.totalScore = total;
+      g.caScore = undefined;
+      g.examScore = undefined;
+      g.grade = calculateGrade(total, gradebookGrading.gradingSystem, gradebookGrading.customGradingScale);
+      return { ...prev, [studentId]: g };
+    });
+  };
+
+  // single_grade mode: teacher picks a value directly — no score, no computed total.
+  const updateSingleGrade = (studentId: string, value: string) => {
+    setGrades(prev => ({ ...prev, [studentId]: { ...prev[studentId], grade: value, caScore: undefined, examScore: undefined, totalScore: undefined } }));
   };
 
   const handleSaveGrades = async () => {
     setSavingGrades(true);
     const tid = toast.loading('Saving grades…');
     try {
-      const sorted = [...students].sort((a, b) => (grades[b.id!]?.totalScore ?? 0) - (grades[a.id!]?.totalScore ?? 0));
+      const classId = classes.find(c => c.name === selectedClass)?.id;
+
       const posMap: Record<string, number> = {};
-      sorted.forEach((s, i) => { posMap[s.id!] = i + 1; });
+      if (gradebookMode !== 'single_grade') {
+        const sorted = [...students].sort((a, b) => (grades[b.id!]?.totalScore ?? 0) - (grades[a.id!]?.totalScore ?? 0));
+        sorted.forEach((s, i) => { posMap[s.id!] = i + 1; });
+      }
 
       const batch = writeBatch(db);
       for (const [studentId, g] of Object.entries(grades)) {
-        const withPos = { ...g, subjectPosition: posMap[studentId] || 0 };
+        const withPos = {
+          ...g,
+          classId,
+          gradingMode: gradebookMode,
+          ...(gradebookMode !== 'single_grade' ? { subjectPosition: posMap[studentId] || 0 } : {}),
+        };
         if (g.id) {
           batch.update(doc(db, 'grades', g.id), { ...withPos, updatedAt: serverTimestamp() });
         } else {
@@ -1955,17 +1984,23 @@ export default function TeacherPortal() {
                     <thead className="bg-slate-50 text-xs font-bold text-slate-500 uppercase tracking-wide">
                       <tr>
                         <th className="px-5 py-3">Student</th>
-                        <th className="px-4 py-3 text-center w-24">CA /40</th>
-                        <th className="px-4 py-3 text-center w-24">Exam /60</th>
-                        <th className="px-4 py-3 text-center w-20">Total</th>
+                        {gradebookMode === 'ca_exam' && <>
+                          <th className="px-4 py-3 text-center w-24">CA /40</th>
+                          <th className="px-4 py-3 text-center w-24">Exam /60</th>
+                          <th className="px-4 py-3 text-center w-20">Total</th>
+                        </>}
+                        {gradebookMode === 'score_percentage' && <th className="px-4 py-3 text-center w-24">Score /100</th>}
                         <th className="px-4 py-3 text-center w-16">Grade</th>
-                        <th className="px-4 py-3 text-center w-16">Pos.</th>
+                        {gradebookMode !== 'single_grade' && <th className="px-4 py-3 text-center w-16">Pos.</th>}
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-50">
                       {students.map((s, i) => {
                         const g = grades[s.id!];
                         const saved = gradeSavedIds.has(s.id!);
+                        const displayGrade = gradebookMode === 'single_grade'
+                          ? (g?.grade ?? '')
+                          : calculateGrade(g?.totalScore ?? 0, gradebookGrading.gradingSystem, gradebookGrading.customGradingScale);
                         return (
                           <tr key={s.id} className={`transition-colors ${saved ? 'bg-emerald-50/40' : 'hover:bg-slate-50/50'}`}>
                             <td className="px-5 py-3">
@@ -1974,25 +2009,44 @@ export default function TeacherPortal() {
                                 <span className="text-sm font-medium text-slate-900">{s.studentName}</span>
                               </div>
                             </td>
+                            {gradebookMode === 'ca_exam' && <>
+                              <td className="px-4 py-3 text-center">
+                                <input type="number" min={0} max={40} value={g?.caScore ?? 0}
+                                  onChange={e => updateGradeScore(s.id!, 'caScore', Number(e.target.value))}
+                                  className="w-16 text-center px-2 py-1 rounded-lg border border-slate-200 text-sm outline-none focus:ring-2 focus:ring-indigo-400" />
+                              </td>
+                              <td className="px-4 py-3 text-center">
+                                <input type="number" min={0} max={60} value={g?.examScore ?? 0}
+                                  onChange={e => updateGradeScore(s.id!, 'examScore', Number(e.target.value))}
+                                  className="w-16 text-center px-2 py-1 rounded-lg border border-slate-200 text-sm outline-none focus:ring-2 focus:ring-indigo-400" />
+                              </td>
+                              <td className="px-4 py-3 text-center">
+                                <span className={`font-bold text-sm ${(g?.totalScore ?? 0) >= 50 ? 'text-emerald-600' : 'text-rose-600'}`}>{g?.totalScore ?? 0}</span>
+                              </td>
+                            </>}
+                            {gradebookMode === 'score_percentage' && (
+                              <td className="px-4 py-3 text-center">
+                                <input type="number" min={0} max={100} value={g?.totalScore ?? 0}
+                                  onChange={e => updateScoreOnly(s.id!, Number(e.target.value))}
+                                  className="w-16 text-center px-2 py-1 rounded-lg border border-slate-200 text-sm outline-none focus:ring-2 focus:ring-indigo-400" />
+                              </td>
+                            )}
                             <td className="px-4 py-3 text-center">
-                              <input type="number" min={0} max={40} value={g?.caScore ?? 0}
-                                onChange={e => updateGradeScore(s.id!, 'caScore', Number(e.target.value))}
-                                className="w-16 text-center px-2 py-1 rounded-lg border border-slate-200 text-sm outline-none focus:ring-2 focus:ring-indigo-400" />
+                              {gradebookMode === 'single_grade' ? (
+                                <select value={g?.grade ?? ''} onChange={e => updateSingleGrade(s.id!, e.target.value)}
+                                  className="px-2 py-1 rounded-lg border border-slate-200 text-xs font-bold outline-none focus:ring-2 focus:ring-indigo-400">
+                                  <option value="">—</option>
+                                  {(gradebookGrading.allowedGrades ?? []).map(gr => <option key={gr} value={gr}>{gr}</option>)}
+                                </select>
+                              ) : (
+                                <span className="text-xs font-bold text-slate-600">{displayGrade}</span>
+                              )}
                             </td>
-                            <td className="px-4 py-3 text-center">
-                              <input type="number" min={0} max={60} value={g?.examScore ?? 0}
-                                onChange={e => updateGradeScore(s.id!, 'examScore', Number(e.target.value))}
-                                className="w-16 text-center px-2 py-1 rounded-lg border border-slate-200 text-sm outline-none focus:ring-2 focus:ring-indigo-400" />
-                            </td>
-                            <td className="px-4 py-3 text-center">
-                              <span className={`font-bold text-sm ${(g?.totalScore ?? 0) >= 50 ? 'text-emerald-600' : 'text-rose-600'}`}>{g?.totalScore ?? 0}</span>
-                            </td>
-                            <td className="px-4 py-3 text-center">
-                              <span className="text-xs font-bold text-slate-600">{g?.grade ?? 'F9'}</span>
-                            </td>
-                            <td className="px-4 py-3 text-center text-xs text-slate-400">
-                              {g?.subjectPosition ? `#${g.subjectPosition}` : '—'}
-                            </td>
+                            {gradebookMode !== 'single_grade' && (
+                              <td className="px-4 py-3 text-center text-xs text-slate-400">
+                                {g?.subjectPosition ? `#${g.subjectPosition}` : '—'}
+                              </td>
+                            )}
                           </tr>
                         );
                       })}

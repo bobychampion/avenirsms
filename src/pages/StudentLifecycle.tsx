@@ -621,8 +621,10 @@ function AcademicTab({ student, schoolId }: AcademicTabProps) {
       sortedKeys.forEach(key => {
         const [session, term] = key.split('__');
         const termGrades = grouped[key];
-        const avg = termGrades.length > 0
-          ? Math.round(termGrades.reduce((s, g) => s + (g.totalScore ?? (g.caScore + g.examScore)), 0) / termGrades.length)
+        // single_grade records have no numeric score — no sane average across discrete grades.
+        const numericGrades = termGrades.filter(g => (g.gradingMode ?? 'ca_exam') !== 'single_grade');
+        const avg = numericGrades.length > 0
+          ? Math.round(numericGrades.reduce((s, g) => s + (g.totalScore ?? ((g.caScore ?? 0) + (g.examScore ?? 0))), 0) / numericGrades.length)
           : 0;
         const label = `${term} ${session}`;
         chart.push({ label, average: avg });

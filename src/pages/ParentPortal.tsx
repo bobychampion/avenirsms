@@ -6,7 +6,7 @@ import {
   collection, query, onSnapshot, where, addDoc, serverTimestamp,
   orderBy, updateDoc, doc, getDoc, getDocs, limit
 } from 'firebase/firestore';
-import { Student, Assignment, AssignmentSubmission, Message, Grade, Attendance, SchoolEvent, Invoice, Notification, TERMS, calculateGrade, SKILL_LABELS, SKILL_RATING_LABELS, SkillRating, SubjectAttendance, SpecialLesson, SpecialLessonAttendance } from '../types';
+import { Student, Assignment, AssignmentSubmission, Message, Grade, Attendance, SchoolEvent, Invoice, Notification, TERMS, calculateGrade, scoreBadgeClasses, scoreRemark, scoreTextColorClass, SKILL_LABELS, SKILL_RATING_LABELS, SkillRating, SubjectAttendance, SpecialLesson, SpecialLessonAttendance } from '../types';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   BookOpen, Calendar, MessageSquare, Loader2, CheckCircle2, Clock,
@@ -23,14 +23,6 @@ import { useSchool } from '../components/SchoolContext';
 import { formatCurrency } from '../utils/formatCurrency';
 import Avatar from '../components/Avatar';
 import toast from 'react-hot-toast';
-
-const GRADE_COLORS: Record<string, string> = {
-  A1: 'text-emerald-700 bg-emerald-50', B2: 'text-emerald-600 bg-emerald-50',
-  B3: 'text-teal-700 bg-teal-50', C4: 'text-blue-700 bg-blue-50',
-  C5: 'text-blue-600 bg-blue-50', C6: 'text-indigo-700 bg-indigo-50',
-  D7: 'text-amber-700 bg-amber-50', E8: 'text-orange-700 bg-orange-50',
-  F9: 'text-rose-700 bg-rose-50',
-};
 
 type TabType = 'progress' | 'attendance' | 'special_lessons' | 'assignments' | 'absences' | 'finance' | 'messages' | 'notifications' | 'report_card';
 
@@ -498,10 +490,11 @@ export default function ParentPortal() {
     }
   };
 
-  // Derived stats
+  // Derived stats. single_grade records have no numeric score — excluded from averages.
   const filteredGrades = grades.filter(g => g.term === filterTerm && g.session === currentSession);
-  const avgScore = filteredGrades.length > 0
-    ? Math.round(filteredGrades.reduce((s, g) => s + (g.totalScore || (g.caScore + g.examScore)), 0) / filteredGrades.length)
+  const numericFilteredGrades = filteredGrades.filter(g => (g.gradingMode ?? 'ca_exam') !== 'single_grade');
+  const avgScore = numericFilteredGrades.length > 0
+    ? Math.round(numericFilteredGrades.reduce((s, g) => s + (g.totalScore ?? ((g.caScore ?? 0) + (g.examScore ?? 0))), 0) / numericFilteredGrades.length)
     : 0;
   const presentCount = attendance.filter(a => a.status === 'present').length;
   const attendanceRate = attendance.length > 0 ? Math.round((presentCount / attendance.length) * 100) : 0;
@@ -511,9 +504,10 @@ export default function ParentPortal() {
 
   // Report card derived data
   const reportCardGrades = grades.filter(g => g.term === reportCardTerm && g.session === currentSession);
-  const reportCardAvg = reportCardGrades.length > 0
-    ? Math.round(reportCardGrades.reduce((s, g) => s + (g.totalScore || (g.caScore + g.examScore)), 0) / reportCardGrades.length)
-    : 0;
+  const numericReportCardGrades = reportCardGrades.filter(g => (g.gradingMode ?? 'ca_exam') !== 'single_grade');
+  const reportCardAvg = numericReportCardGrades.length > 0
+    ? Math.round(numericReportCardGrades.reduce((s, g) => s + (g.totalScore ?? ((g.caScore ?? 0) + (g.examScore ?? 0))), 0) / numericReportCardGrades.length)
+    : null;
 
   // Fetch skills record when report card tab is active
   useEffect(() => {
@@ -770,36 +764,48 @@ export default function ParentPortal() {
                   </div>
                 )}
               </div>
+              {(() => { const grading = getGradingForClass(selectedChild?.currentClass || '', currentSession); return (<>
               <div className="overflow-x-auto">
                 <table className="w-full text-left">
                   <thead className="bg-slate-50">
                     <tr>
                       <th className="px-6 py-3 text-xs font-bold text-slate-400 uppercase">Subject</th>
-                      <th className="px-6 py-3 text-xs font-bold text-slate-400 uppercase text-center">CA (40)</th>
-                      <th className="px-6 py-3 text-xs font-bold text-slate-400 uppercase text-center">Exam (60)</th>
-                      <th className="px-6 py-3 text-xs font-bold text-slate-400 uppercase text-center">Total (100)</th>
+                      {grading.gradingMode === 'ca_exam' && <>
+                        <th className="px-6 py-3 text-xs font-bold text-slate-400 uppercase text-center">CA (40)</th>
+                        <th className="px-6 py-3 text-xs font-bold text-slate-400 uppercase text-center">Exam (60)</th>
+                        <th className="px-6 py-3 text-xs font-bold text-slate-400 uppercase text-center">Total (100)</th>
+                      </>}
+                      {grading.gradingMode === 'score_percentage' && <th className="px-6 py-3 text-xs font-bold text-slate-400 uppercase text-center">Score (100)</th>}
                       <th className="px-6 py-3 text-xs font-bold text-slate-400 uppercase text-center">Grade</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-50">
                     {filteredGrades.map(g => {
-                      const total = g.totalScore ?? (g.caScore + g.examScore);
+                      const rowMode = g.gradingMode ?? 'ca_exam';
+                      const total = g.totalScore ?? ((g.caScore ?? 0) + (g.examScore ?? 0));
+                      const gradingForRow = getGradingForClass(g.class || selectedChild?.currentClass || '', g.session);
+                      const liveGrade = rowMode === 'single_grade' ? g.grade : calculateGrade(total, gradingForRow.gradingSystem, gradingForRow.customGradingScale);
                       return (
                         <tr key={g.id} className="hover:bg-slate-50/50 transition-colors">
                           <td className="px-6 py-3 font-medium text-slate-900 text-sm">{g.subject}</td>
-                          <td className="px-6 py-3 text-center text-sm text-slate-600">{g.caScore}</td>
-                          <td className="px-6 py-3 text-center text-sm text-slate-600">{g.examScore}</td>
-                          <td className="px-6 py-3 text-center">
-                            <div className="flex items-center justify-center gap-2">
-                              <div className="w-24 bg-slate-100 rounded-full h-1.5">
-                                <div className={`h-1.5 rounded-full ${total >= 70 ? 'bg-emerald-500' : total >= 50 ? 'bg-amber-500' : 'bg-rose-500'}`} style={{ width: `${total}%` }} />
+                          {grading.gradingMode === 'ca_exam' && <>
+                            <td className="px-6 py-3 text-center text-sm text-slate-600">{g.caScore}</td>
+                            <td className="px-6 py-3 text-center text-sm text-slate-600">{g.examScore}</td>
+                            <td className="px-6 py-3 text-center">
+                              <div className="flex items-center justify-center gap-2">
+                                <div className="w-24 bg-slate-100 rounded-full h-1.5">
+                                  <div className={`h-1.5 rounded-full ${total >= 70 ? 'bg-emerald-500' : total >= 50 ? 'bg-amber-500' : 'bg-rose-500'}`} style={{ width: `${total}%` }} />
+                                </div>
+                                <span className="text-sm font-bold text-slate-900">{total}</span>
                               </div>
-                              <span className="text-sm font-bold text-slate-900">{total}</span>
-                            </div>
-                          </td>
+                            </td>
+                          </>}
+                          {grading.gradingMode === 'score_percentage' && (
+                            <td className="px-6 py-3 text-center text-sm font-bold text-slate-900">{total}</td>
+                          )}
                           <td className="px-6 py-3 text-center">
-                            <span className={`px-2.5 py-1 rounded-xl text-xs font-bold ${GRADE_COLORS[g.grade] || 'bg-slate-50 text-slate-700'}`}>
-                              {g.grade}
+                            <span className={`px-2.5 py-1 rounded-xl text-xs font-bold border ${rowMode === 'single_grade' ? 'bg-slate-50 text-slate-700 border-slate-200' : scoreBadgeClasses(total)}`}>
+                              {liveGrade}
                             </span>
                           </td>
                         </tr>
@@ -810,9 +816,14 @@ export default function ParentPortal() {
               </div>
               {filteredGrades.length > 0 && (
                 <div className="px-6 py-4 bg-slate-50/50 border-t border-slate-100">
-                  <p className="text-xs text-slate-400">Grade Scale: A1 (75–100) · B2 (70–74) · B3 (65–69) · C4 (60–64) · C5 (55–59) · C6 (50–54) · D7 (45–49) · E8 (40–44) · F9 (0–39)</p>
+                  <p className="text-xs text-slate-400">
+                    {grading.gradingMode === 'single_grade'
+                      ? `Allowed grades: ${(grading.allowedGrades ?? []).join('  ') || '—'}`
+                      : 'Grade Scale: A1 (75–100) · B2 (70–74) · B3 (65–69) · C4 (60–64) · C5 (55–59) · C6 (50–54) · D7 (45–49) · E8 (40–44) · F9 (0–39)'}
+                  </p>
                 </div>
               )}
+              </>); })()}
             </div>
           )}
         </div>
@@ -1614,53 +1625,75 @@ export default function ParentPortal() {
                   <p className="text-slate-500 text-sm">No grades recorded for {reportCardTerm} yet.</p>
                   <p className="text-xs text-slate-400 mt-1">Grades will appear here once your child's teacher has entered them.</p>
                 </div>
-              ) : (
+              ) : (() => { const grading = getGradingForClass(selectedChild.currentClass, currentSession); return (
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b-2 border-slate-200">
                       <th className="text-left py-2 text-xs font-bold text-slate-500 uppercase">Subject</th>
-                      <th className="text-center py-2 text-xs font-bold text-slate-500 uppercase">CA /40</th>
-                      <th className="text-center py-2 text-xs font-bold text-slate-500 uppercase">Exam /60</th>
-                      <th className="text-center py-2 text-xs font-bold text-slate-500 uppercase">Total</th>
+                      {grading.gradingMode === 'ca_exam' && <>
+                        <th className="text-center py-2 text-xs font-bold text-slate-500 uppercase">CA /40</th>
+                        <th className="text-center py-2 text-xs font-bold text-slate-500 uppercase">Exam /60</th>
+                        <th className="text-center py-2 text-xs font-bold text-slate-500 uppercase">Total</th>
+                      </>}
+                      {grading.gradingMode === 'score_percentage' && <th className="text-center py-2 text-xs font-bold text-slate-500 uppercase">Score /100</th>}
                       <th className="text-center py-2 text-xs font-bold text-slate-500 uppercase">Grade</th>
-                      <th className="text-center py-2 text-xs font-bold text-slate-500 uppercase">Pos.</th>
-                      <th className="text-left py-2 text-xs font-bold text-slate-500 uppercase hidden sm:table-cell">Remark</th>
+                      {grading.gradingMode !== 'single_grade' && <>
+                        <th className="text-center py-2 text-xs font-bold text-slate-500 uppercase">Pos.</th>
+                        <th className="text-left py-2 text-xs font-bold text-slate-500 uppercase hidden sm:table-cell">Remark</th>
+                      </>}
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
                     {reportCardGrades.map(g => {
-                      const total = g.totalScore ?? (g.caScore + g.examScore);
-                      const gradeInfo = GRADE_COLORS[g.grade];
+                      const rowMode = g.gradingMode ?? 'ca_exam';
+                      const total = g.totalScore ?? ((g.caScore ?? 0) + (g.examScore ?? 0));
+                      const liveGrade = rowMode === 'single_grade' ? g.grade : calculateGrade(total, grading.gradingSystem, grading.customGradingScale);
+                      const colorClass = scoreTextColorClass(total);
                       return (
                         <tr key={g.subject}>
                           <td className="py-2.5 font-medium text-slate-800">{g.subject}</td>
-                          <td className="py-2.5 text-center text-slate-600">{g.caScore}</td>
-                          <td className="py-2.5 text-center text-slate-600">{g.examScore}</td>
-                          <td className="py-2.5 text-center font-bold text-slate-900">{total}</td>
+                          {grading.gradingMode === 'ca_exam' && <>
+                            <td className="py-2.5 text-center text-slate-600">{g.caScore}</td>
+                            <td className="py-2.5 text-center text-slate-600">{g.examScore}</td>
+                            <td className="py-2.5 text-center font-bold text-slate-900">{total}</td>
+                          </>}
+                          {grading.gradingMode === 'score_percentage' && (
+                            <td className="py-2.5 text-center font-bold text-slate-900">{total}</td>
+                          )}
                           <td className="py-2.5 text-center">
-                            <span className={`px-2 py-0.5 rounded-lg text-xs font-bold ${gradeInfo || 'bg-slate-50 text-slate-700'}`}>{g.grade}</span>
+                            <span className={`px-2 py-0.5 rounded-lg text-xs font-bold border ${rowMode === 'single_grade' ? 'bg-slate-50 text-slate-700 border-slate-200' : scoreBadgeClasses(total)}`}>{liveGrade}</span>
                           </td>
-                          <td className="py-2.5 text-center text-xs text-slate-500">
-                            {g.subjectPosition ? `#${g.subjectPosition}` : '—'}
-                          </td>
-                          <td className={`py-2.5 text-xs hidden sm:table-cell ${gradeInfo?.split(' ')[0] || 'text-slate-500'}`}>
-                            {g.grade === 'A1' ? 'Excellent' : g.grade === 'B2' || g.grade === 'B3' ? 'Very Good' : g.grade === 'C4' || g.grade === 'C5' || g.grade === 'C6' ? 'Credit' : g.grade === 'D7' || g.grade === 'E8' ? 'Pass' : 'Fail'}
-                          </td>
+                          {grading.gradingMode !== 'single_grade' && <>
+                            <td className="py-2.5 text-center text-xs text-slate-500">
+                              {g.subjectPosition ? `#${g.subjectPosition}` : '—'}
+                            </td>
+                            <td className={`py-2.5 text-xs hidden sm:table-cell ${colorClass}`}>
+                              {rowMode === 'single_grade' ? '—' : scoreRemark(total)}
+                            </td>
+                          </>}
                         </tr>
                       );
                     })}
                   </tbody>
                   <tfoot>
                     <tr className="border-t-2 border-slate-200 bg-slate-50">
-                      <td colSpan={2} className="py-3 font-bold text-slate-700 text-sm pl-1">Overall Average</td>
-                      <td colSpan={2} className="py-3 text-center font-black text-indigo-700 text-lg">{reportCardAvg}%</td>
-                      <td colSpan={3} className="py-3 text-left pl-2 font-bold text-slate-700 text-sm">
-                        {(() => { const g = getGradingForClass(selectedChild.currentClass); return calculateGrade(reportCardAvg, g.gradingSystem, g.customGradingScale); })()} — <span className="text-xs text-slate-500">{currentSession}</span>
-                      </td>
+                      {grading.gradingMode === 'single_grade' ? (
+                        <td colSpan={2} className="py-3 font-bold text-slate-700 text-sm pl-1">Single Grade mode — no overall average or position</td>
+                      ) : reportCardAvg !== null ? (
+                        <>
+                          <td colSpan={2} className="py-3 font-bold text-slate-700 text-sm pl-1">Overall Average</td>
+                          <td colSpan={2} className="py-3 text-center font-black text-indigo-700 text-lg">{reportCardAvg}%</td>
+                          <td colSpan={3} className="py-3 text-left pl-2 font-bold text-slate-700 text-sm">
+                            {calculateGrade(reportCardAvg, grading.gradingSystem, grading.customGradingScale)} — <span className="text-xs text-slate-500">{currentSession}</span>
+                          </td>
+                        </>
+                      ) : (
+                        <td colSpan={7} className="py-3 font-bold text-slate-700 text-sm pl-1">Not applicable — no numeric scores this term</td>
+                      )}
                     </tr>
                   </tfoot>
                 </table>
-              )}
+              ); })()}
             </div>
 
             {/* Psychomotor Skills */}

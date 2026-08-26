@@ -20,9 +20,10 @@ import {
 import { cn } from '../lib/utils';
 import { db } from '../firebase';
 import { doc, onSnapshot } from 'firebase/firestore';
-import { GeoFence } from '../types';
+import { GeoFence, UserProfile } from '../types';
 import { isWithinFence } from '../services/geofenceService';
 import { useSchoolId } from '../hooks/useSchoolId';
+import { getPostAuthHomePath } from '../utils/postAuthRedirect';
 import Avatar from './Avatar';
 
 // ── Live clock widget ─────────────────────────────────────────────────────────
@@ -356,7 +357,7 @@ function AdminSidebar({ open, onClose, schoolName, logoUrl, primaryColor, sideba
 
 export function Layout({ children }: { children: React.ReactNode }) {
   const { user, profile, logout, login, isAdmin, isSuperAdmin } = useAuth();
-  const { schoolName, logoUrl, primaryColor, sidebarStyle } = useSchool();
+  const { schoolName, schoolEmail, logoUrl, primaryColor, sidebarStyle } = useSchool();
   const { activeSchoolId, activeSchoolName, exitSchool } = useSuperAdmin();
   const { impersonatedProfile, isImpersonating } = useImpersonation();
   const navigate = useNavigate();
@@ -605,13 +606,15 @@ export function Layout({ children }: { children: React.ReactNode }) {
     );
   }
 
-  // Non-admin layout (top nav)
+  // Non-admin layout (top nav) — real admins never reach this branch (they get the sidebar
+  // layout above), so this always resolves via the non-admin role checks in getPostAuthHomePath.
+  const homePath = !user ? '/' : getPostAuthHomePath(isAdmin, effectiveProfile as UserProfile | null);
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col font-sans">
       <ImpersonationBanner />
       <header className="bg-white border-b border-slate-200 sticky top-0 z-50">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
-          <Link to={!user ? '/' : effectiveProfile?.role === 'teacher' ? '/teacher' : effectiveProfile?.role === 'parent' ? '/parent' : '/apply'}
+          <Link to={homePath}
             className="flex items-center space-x-2"
           >
             {logoUrl ? (
@@ -688,14 +691,11 @@ export function Layout({ children }: { children: React.ReactNode }) {
                 )}
                 <span className="text-lg font-bold text-slate-900">{schoolName}</span>
               </div>
-              <p className="text-slate-500 text-sm leading-relaxed">
-                Empowering schools worldwide with smart, secure, and efficient management tools.
-              </p>
             </div>
             <div>
               <h4 className="font-bold text-slate-900 mb-4">Quick Access</h4>
               <ul className="space-y-2 text-sm">
-                <li><Link to="/" className="text-slate-500 hover:text-indigo-600 transition-colors">Home</Link></li>
+                <li><Link to={homePath} className="text-slate-500 hover:text-indigo-600 transition-colors">Home</Link></li>
                 <li><Link to="/calendar" className="text-slate-500 hover:text-indigo-600 transition-colors">School Calendar</Link></li>
               </ul>
             </div>
@@ -703,7 +703,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
               <h4 className="font-bold text-slate-900 mb-4">Support</h4>
               <p className="text-slate-500 text-sm">
                 Need help? Contact our support team at <br />
-                <span className="font-medium text-indigo-600">support@avenir-sis.com</span>
+                <span className="font-medium text-indigo-600">{schoolEmail || 'support@avenir-sis.com'}</span>
               </p>
             </div>
           </div>

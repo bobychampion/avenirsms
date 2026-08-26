@@ -1310,6 +1310,29 @@ export default function TeacherPortal() {
     s === 'absent' ? 'bg-rose-50 text-rose-700 border-rose-200' :
     'bg-amber-50 text-amber-700 border-amber-200';
 
+  // Click-and-drag horizontal scroll for the tab bar — with the scrollbar hidden (scrollbar-none),
+  // desktop mouse users had no way to reach the tabs past the visible edge (touch swipe still
+  // works natively; this adds the missing desktop equivalent).
+  const tabBarRef = useRef<HTMLDivElement>(null);
+  const tabDrag = useRef({ dragging: false, moved: false, startX: 0, startScrollLeft: 0 });
+  const handleTabBarMouseDown = (e: React.MouseEvent) => {
+    const el = tabBarRef.current;
+    if (!el) return;
+    tabDrag.current = { dragging: true, moved: false, startX: e.pageX, startScrollLeft: el.scrollLeft };
+  };
+  const handleTabBarMouseMove = (e: React.MouseEvent) => {
+    const el = tabBarRef.current;
+    if (!el || !tabDrag.current.dragging) return;
+    const delta = e.pageX - tabDrag.current.startX;
+    if (Math.abs(delta) > 3) tabDrag.current.moved = true;
+    el.scrollLeft = tabDrag.current.startScrollLeft - delta;
+  };
+  const endTabBarDrag = () => { tabDrag.current.dragging = false; };
+  // Swallow the click that follows a real drag so it doesn't also switch tabs.
+  const handleTabBarClickCapture = (e: React.MouseEvent) => {
+    if (tabDrag.current.moved) { e.preventDefault(); e.stopPropagation(); tabDrag.current.moved = false; }
+  };
+
   if (loading || assignmentLoading) return (
     <div className="flex items-center justify-center min-h-screen">
       <Loader2 className="w-8 h-8 animate-spin text-indigo-600" />
@@ -1340,7 +1363,16 @@ export default function TeacherPortal() {
       />
 
       {/* Tab Bar */}
-      <div className="flex space-x-1 bg-slate-100 p-1 rounded-xl mb-8 w-full overflow-x-auto scrollbar-none" style={{ WebkitOverflowScrolling: 'touch' }}>
+      <div
+        ref={tabBarRef}
+        onMouseDown={handleTabBarMouseDown}
+        onMouseMove={handleTabBarMouseMove}
+        onMouseUp={endTabBarDrag}
+        onMouseLeave={endTabBarDrag}
+        onClickCapture={handleTabBarClickCapture}
+        className="flex space-x-1 bg-slate-100 p-1 rounded-xl mb-8 w-full overflow-x-auto scrollbar-none cursor-grab active:cursor-grabbing select-none"
+        style={{ WebkitOverflowScrolling: 'touch' }}
+      >
         {tabs.map(({ id, label, Icon, badge }) => (
           <button
             key={id}

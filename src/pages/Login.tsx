@@ -54,7 +54,6 @@ const ROLE_OPTIONS: RoleConfig[] = [
 ];
 
 function toProfileRole(r: RegisterRole): UserProfile['role'] {
-  if (r === 'staff') return 'applicant';
   return r;
 }
 

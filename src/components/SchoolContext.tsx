@@ -86,6 +86,8 @@ interface SchoolContextValue {
   institutionType: 'secondary' | 'college' | 'online';
   // School branding
   schoolName: string;
+  /** School's own contact/support email, from School Settings. Empty if the admin hasn't set one. */
+  schoolEmail: string;
   logoUrl: string;
   faviconUrl: string;
   // Report card
@@ -141,6 +143,7 @@ const SchoolContext = createContext<SchoolContextValue>({
   cloudinaryConfig: { cloudName: '', uploadPreset: '' },
   institutionType: 'secondary',
   schoolName: 'Avenir SIS',
+  schoolEmail: '',
   logoUrl: '',
   faviconUrl: '',
   reportShowLogo: true,
@@ -210,6 +213,7 @@ export function SchoolProvider({ children }: { children: React.ReactNode }) {
 
   // School branding state
   const [schoolName, setSchoolName] = useState('Avenir SIS');
+  const [schoolEmail, setSchoolEmail] = useState('');
   const [logoUrl, setLogoUrl] = useState('');
   const [faviconUrl, setFaviconUrl] = useState('');
   const [reportShowLogo, setReportShowLogo] = useState(true);
@@ -294,6 +298,7 @@ export function SchoolProvider({ children }: { children: React.ReactNode }) {
       setCloudinaryConfig({ cloudName: '', uploadPreset: '' });
       setInstitutionType('secondary');
       setSchoolName('Avenir SIS');
+      setSchoolEmail('');
       setLogoUrl('');
       setFaviconUrl('');
       setReportShowLogo(true);
@@ -356,6 +361,7 @@ export function SchoolProvider({ children }: { children: React.ReactNode }) {
           });
           // Branding
           setSchoolName(data.schoolName || 'Avenir SIS');
+          setSchoolEmail(data.email || '');
           setLogoUrl(data.logoUrl || '');
           setFaviconUrl(data.faviconUrl || '');
           setReportShowLogo(data.reportShowLogo !== false);
@@ -533,6 +539,7 @@ export function SchoolProvider({ children }: { children: React.ReactNode }) {
       cloudinaryConfig,
       institutionType,
       schoolName,
+      schoolEmail,
       logoUrl,
       faviconUrl,
       reportShowLogo,

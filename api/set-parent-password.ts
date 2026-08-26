@@ -1,6 +1,7 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { getAuth, getFirestore } from './_lib/admin.js';
 import { requireAuth, AppError, errorResponse, isSuperAdmin, isSchoolAdmin } from './_lib/auth.js';
+import { applyCors } from './_lib/cors.js';
 
 /**
  * Parent account administration. Actions (?action=…, default 'set-password'):
@@ -12,6 +13,7 @@ import { requireAuth, AppError, errorResponse, isSuperAdmin, isSchoolAdmin } fro
  * SDK, and Vercel's Hobby plan caps how many functions this project can deploy.
  */
 export default async function handler(req: VercelRequest, res: VercelResponse) {
+  if (applyCors(req, res)) return;
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
   const action = (req.query.action as string) || 'set-password';

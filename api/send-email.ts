@@ -3,12 +3,14 @@ import { getFirestore } from './_lib/admin.js';
 import { requireAuth, AppError, errorResponse } from './_lib/auth.js';
 import { Resend } from 'resend';
 import * as templates from '../functions/src/email/emailTemplates.js';
+import { applyCors } from './_lib/cors.js';
 
 const resend = new Resend(process.env.RESEND_API_KEY);
 
 const ALLOWED_ROLES = ['super_admin', 'admin', 'School_admin', 'teacher', 'accountant', 'hr'];
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
+  if (applyCors(req, res)) return;
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
   try {

@@ -1,5 +1,6 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { requireAuth, errorResponse, AppError } from './_lib/auth.js';
+import { applyCors } from './_lib/cors.js';
 import {
   testStorageConnectionHandler,
   connectStorageProviderHandler,
@@ -10,6 +11,7 @@ import {
 
 // Handles: test / connect / disconnect / delete-file / verify  (pass ?action=xxx)
 export default async function handler(req: VercelRequest, res: VercelResponse) {
+  if (applyCors(req, res)) return;
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
   const action = req.query.action as string;
   try {

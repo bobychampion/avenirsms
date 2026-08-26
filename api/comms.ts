@@ -3,6 +3,7 @@ import { Timestamp } from 'firebase-admin/firestore';
 import { Resend } from 'resend';
 import { getFirestore, getMessaging } from './_lib/admin.js';
 import { requireAuth, AppError, errorResponse, isSuperAdmin } from './_lib/auth.js';
+import { applyCors } from './_lib/cors.js';
 import { buildStaffBroadcastEmail } from '../src/utils/staffBroadcastEmail.js';
 
 const resend = new Resend(process.env.RESEND_API_KEY);
@@ -176,6 +177,7 @@ export async function sendToRecipients(
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
+  if (applyCors(req, res)) return;
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
   const action = req.query.action as string;
   const body = req.body ?? {};

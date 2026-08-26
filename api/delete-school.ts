@@ -1,6 +1,7 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { getAuth, getFirestore } from './_lib/admin.js';
 import { requireAuth, AppError, errorResponse } from './_lib/auth.js';
+import { applyCors } from './_lib/cors.js';
 
 export const maxDuration = 300; // 5 min — school deletion touches 40+ collections
 
@@ -20,6 +21,7 @@ const FINANCIAL_COLLECTIONS = ['invoices','fee_payments','payments','expenses','
 const DOCUMENT_COLLECTIONS = ['school_settings','geofences'];
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
+  if (applyCors(req, res)) return;
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
   try {
     const caller = await requireAuth(req);

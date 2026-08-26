@@ -1,7 +1,9 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
+import { applyCors } from './_lib/cors.js';
 
 /** Health check — no Firebase import so it can never crash on a bad key. */
-export default function handler(_req: VercelRequest, res: VercelResponse) {
+export default function handler(req: VercelRequest, res: VercelResponse) {
+  if (applyCors(req, res)) return;
   const pk = process.env.FIREBASE_PRIVATE_KEY ?? '';
   const pkStatus = pk.length === 0
     ? 'NOT SET'

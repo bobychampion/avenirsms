@@ -6,11 +6,13 @@ import { storeTokens, getValidAccessToken, clearTokens } from '../functions/src/
 import { verifyConnection } from '../functions/src/google/googleVerificationService.js';
 import { createEvent, updateEvent, deleteEvent } from '../functions/src/google/googleCalendarService.js';
 import { createCourse, updateCourse, archiveCourse } from '../functions/src/google/googleClassroomService.js';
+import { applyCors } from './_lib/cors.js';
 
 // Handles: connect / disconnect / verify / refresh / calendar.sync / calendar.delete /
 // classroom.sync / classroom.archive  (pass ?action=xxx). calendar.* and classroom.*
 // were folded in from their own routes to stay under the Vercel Hobby function limit.
 export default async function handler(req: VercelRequest, res: VercelResponse) {
+  if (applyCors(req, res)) return;
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
   const action = req.query.action as string;
   const body = req.body ?? {};

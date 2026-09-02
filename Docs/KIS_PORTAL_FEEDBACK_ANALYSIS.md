@@ -25,7 +25,7 @@ code and what it takes to do.
 | 10 | Curriculum — remove the percentage/coverage bar | ✅ Done |
 | 12 | Remove Assignments tab (now a school toggle) | ✅ Done |
 
-Not started: #2, #3, #6, #9, #11.
+Not started: #2, #3, #9, #11.
 
 **#7 post-deploy step:** add repo secrets `ATTENDANCE_WATCH_URL` +
 `CRON_SECRET`, then `firebase deploy --only firestore:indexes`.
@@ -127,26 +127,26 @@ Not started: #2, #3, #6, #9, #11.
   instead of a truncated suggestion set.
 - **Effort: S.** Pairs naturally with #4.
 
-### 6. Attendance — separate secondary students by subject
+### 6. Attendance — separate secondary students by subject — ✅ DONE
 
 > "James does not write attendance for the whole A level class … set the subject
 > attendance to show just the students attending the subjects of the teacher"
 
-- **In code:** **already built.** There's a `subject_attendance` tab, gated on
-  `attendanceMode !== 'daily_only'` (`src/pages/TeacherPortal.tsx:1285`), backed by a
-  `subjectAttendance` collection (`src/pages/TeacherPortal.tsx:704-733`), with a subject
-  picker driven by `mySubjectsForSelectedClass` (`src/pages/TeacherPortal.tsx:1299`).
-- **Gap:** it still lists **every student in the class** (`subjectAttendanceRows` maps
-  over all `students`, `src/pages/TeacherPortal.tsx:737`) rather than only those enrolled
-  in that subject. There's no per-subject enrolment model — students aren't linked to
-  subject sets.
-- **Work:** Two options —
-  (a) quick: KIS enables subject attendance mode in settings and teachers mark only the
-  relevant rows (works today);
-  (b) proper: add subject enrolment per student and filter the roster.
-- **Effort: S** for (a) config, **L** for (b) enrolment model. Also verify KIS's
-  `attendanceMode` isn't `daily_only` — if it is, the tab is hidden entirely and that's
-  why they think it doesn't exist.
+- **In code:** the `subject_attendance` tab (gated on `attendanceMode !== 'daily_only'`)
+  previously listed **every** student in the class.
+- **Turned out to be small:** the enrolment model already exists —
+  `class_subjects.enrolledStudentIds` (a non-empty array = only those students take the
+  subject), set per class+subject by admins in **Class Management → enrolment mode
+  "Selected"**, and already respected by the Gradebook.
+- **Fix applied:** the Subject Attendance tab now subscribes to the `class_subjects` doc
+  for the selected class + subject and filters its roster to `enrolledStudentIds` when the
+  list is non-empty (whole class otherwise). Save, the Present/Absent/Late tallies and the
+  empty state all follow the filtered roster; a "Showing N students enrolled in {subject}"
+  hint appears when a filter is active. Mirrors `Gradebook.tsx`'s elective logic; no new
+  Firestore index (equality-only query).
+- **Effort: S.** For KIS: set each split subject's enrolment to "Selected" in Class
+  Management and tick the students; confirm `attendanceMode` is `daily_and_subject` or
+  `subject_only` so the tab is visible.
 
 ### 7. Admin notification when a teacher isn't in class — ✅ DONE (needs one deploy step)
 
@@ -266,7 +266,7 @@ Not started: #2, #3, #6, #9, #11.
 | 1 | 1/3/5 grade descriptors | S | ✅ Done — optional `gradeLabels` per grade band |
 | 8 | Remove "Sports" from Behaviour | S→M | ✅ Done — configurable `hiddenBehaviourTraits` |
 | 12 | Remove Assignments tab | S | ✅ Done — `assignmentsModuleEnabled` school toggle |
-| 6 | Subject-only attendance roster | S→L | Config today; enrolment model later |
+| 6 | Subject-only attendance roster | S | ✅ Done — filters by `class_subjects.enrolledStudentIds` |
 | 3 | "All Parents" broadcast | M | Needs one-way vs. threaded decision |
 | 11 | Teacher-authored curriculum | M | Minimal add form |
 | 7 | Alert admin when attendance not taken | M | ✅ Done — `/api/cron?job=attendance-watch` + GH Actions ping |

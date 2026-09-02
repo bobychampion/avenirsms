@@ -133,6 +133,10 @@ export default function TeacherPortal() {
   const [localSubjectAttendanceEdits, setLocalSubjectAttendanceEdits] = useState<Record<string, 'present' | 'absent' | 'late'>>({});
   const [savingSubjectAttendance, setSavingSubjectAttendance] = useState(false);
   const [subjectAttendanceSaved, setSubjectAttendanceSaved] = useState(false);
+  // Elective roster: `class_subjects.enrolledStudentIds` for the selected class+subject.
+  // Non-empty → subject attendance lists only those students (secondary schools where a
+  // class splits by subject). null → the whole class takes it (default). Mirrors Gradebook.
+  const [subjectAttendanceRoster, setSubjectAttendanceRoster] = useState<string[] | null>(null);
 
   // Special Lessons state — independent from Daily/Subject Attendance, scoped to enrolled students only.
   const [mySpecialLessons, setMySpecialLessons] = useState<SpecialLesson[]>([]);
@@ -739,9 +743,35 @@ export default function TeacherPortal() {
     return () => { cancelled = true; };
   }, [activeTab, selectedClass, subjectAttendanceSubject, subjectAttendanceTimetablePeriodId, attendanceDate, schoolId, myClassNameToId]);
 
+  // Load the elective roster for the selected class+subject. A non-empty
+  // enrolledStudentIds list means only those students take the subject — so
+  // subject attendance shows just them (KIS feedback #6). Absent/empty = whole class.
+  useEffect(() => {
+    if (!schoolId || !selectedClass || !subjectAttendanceSubject) { setSubjectAttendanceRoster(null); return; }
+    const classId = myClassNameToId[selectedClass];
+    if (!classId) { setSubjectAttendanceRoster(null); return; }
+    const q = query(
+      collection(db, 'class_subjects'),
+      where('schoolId', '==', schoolId),
+      where('classId', '==', classId),
+      where('subjectName', '==', subjectAttendanceSubject),
+    );
+    const unsub = onSnapshot(
+      q,
+      snap => {
+        const ids = snap.docs[0]?.data()?.enrolledStudentIds as string[] | undefined;
+        setSubjectAttendanceRoster(ids && ids.length > 0 ? ids : null);
+      },
+      () => setSubjectAttendanceRoster(null),
+    );
+    return () => unsub();
+  }, [schoolId, selectedClass, subjectAttendanceSubject, myClassNameToId]);
+
   // Effective subject-attendance rows: local edit wins, else an existing saved override,
   // else inherited from the day's daily attendance, else default present.
-  const subjectAttendanceRows: (AttendanceRow & { inherited: boolean })[] = useMemo(() => students.map(s => {
+  const subjectAttendanceRows: (AttendanceRow & { inherited: boolean })[] = useMemo(() => students
+    .filter(s => !subjectAttendanceRoster || subjectAttendanceRoster.includes(s.id!))
+    .map(s => {
     const local = localSubjectAttendanceEdits[s.id!];
     const saved = savedSubjectAttendance[s.id!];
     const status = local ?? saved?.status ?? dailyInheritMap[s.id!] ?? 'present';
@@ -754,7 +784,7 @@ export default function TeacherPortal() {
       status,
       inherited,
     };
-  }), [students, localSubjectAttendanceEdits, savedSubjectAttendance, dailyInheritMap]);
+  }), [students, subjectAttendanceRoster, localSubjectAttendanceEdits, savedSubjectAttendance, dailyInheritMap]);
 
   const cycleSubjectAttendanceStatus = (studentId: string) => {
     const current = subjectAttendanceRows.find(r => r.studentId === studentId)?.status ?? 'present';
@@ -1730,10 +1760,19 @@ export default function TeacherPortal() {
             {subjectAttendanceRows.length === 0 ? (
               <div className="text-center py-12 bg-slate-50 rounded-2xl border-2 border-dashed border-slate-200">
                 <Users className="w-10 h-10 text-slate-200 mx-auto mb-3" />
-                <p className="text-slate-500 text-sm">No students found in {selectedClass}.</p>
+                <p className="text-slate-500 text-sm">
+                  {subjectAttendanceRoster
+                    ? `No students in ${selectedClass} are enrolled in ${subjectAttendanceSubject}.`
+                    : `No students found in ${selectedClass}.`}
+                </p>
               </div>
             ) : (
               <div className="space-y-2">
+                {subjectAttendanceRoster && (
+                  <p className="text-xs text-slate-500 mb-1">
+                    Showing the <span className="font-semibold">{subjectAttendanceRows.length}</span> student{subjectAttendanceRows.length !== 1 ? 's' : ''} enrolled in {subjectAttendanceSubject}.
+                  </p>
+                )}
                 <div className="flex gap-4 text-xs font-bold mb-3">
                   <span className="text-emerald-600">{subjectAttendanceRows.filter(r => r.status === 'present').length} Present</span>
                   <span className="text-rose-600">{subjectAttendanceRows.filter(r => r.status === 'absent').length} Absent</span>

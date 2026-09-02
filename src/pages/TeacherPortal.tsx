@@ -164,22 +164,28 @@ export default function TeacherPortal() {
   const [showContactDropdown, setShowContactDropdown] = useState(false);
   const [resolvedNames, setResolvedNames] = useState<Record<string, string>>({});
 
-  // Every guardian of a student this teacher has visibility over, keyed by
-  // both possible receiverId forms (linked uid and/or email) since messages
-  // may address either.
+  // Every guardian of a student this teacher has visibility over. One entry per
+  // guardian person (deduped across children and across id forms); `aliasIds`
+  // holds every receiverId form — linked uid and/or email — a message might
+  // address them by, so name resolution still works for either form.
   const guardianContacts = React.useMemo(() => {
-    const list: { id: string; name: string; email: string; role: string }[] = [];
+    const list: { id: string; name: string; email: string; role: string; aliasIds: string[] }[] = [];
     const seen = new Set<string>();
     students.forEach(s => {
       if (!s.guardianName) return;
-      const label = `${s.guardianName} (${s.studentName}'s Guardian)`;
-      const id = s.guardianUserId || s.guardianEmail;
-      if (id && !seen.has(id)) { seen.add(id); list.push({ id, name: label, email: s.guardianEmail || '', role: 'guardian' }); }
-      // Also index by email even when a uid is the primary id, so lookups by either form resolve.
-      if (s.guardianUserId && s.guardianEmail && !seen.has(s.guardianEmail)) {
-        seen.add(s.guardianEmail);
-        list.push({ id: s.guardianEmail, name: label, email: s.guardianEmail, role: 'guardian' });
-      }
+      const primaryId = s.guardianUserId || s.guardianEmail;
+      if (!primaryId) return;
+      const aliasIds = [s.guardianUserId, s.guardianEmail].filter((v): v is string => Boolean(v));
+      // Already listed this guardian under one of their id forms (via another child)?
+      if (aliasIds.some(a => seen.has(a))) return;
+      aliasIds.forEach(a => seen.add(a));
+      list.push({
+        id: primaryId,
+        name: `${s.guardianName} (${s.studentName}'s Guardian)`,
+        email: s.guardianEmail || '',
+        role: 'guardian',
+        aliasIds,
+      });
     });
     return list;
   }, [students]);
@@ -202,7 +208,7 @@ export default function TeacherPortal() {
 
   const contactNameMap = React.useMemo(() => {
     const map: Record<string, string> = {};
-    guardianContacts.forEach(c => { map[c.id] = c.name; });
+    guardianContacts.forEach(c => { c.aliasIds.forEach(a => { map[a] = c.name; }); });
     adminContacts.forEach(c => { if (!map[c.id]) map[c.id] = c.name; });
     Object.keys(resolvedNames).forEach(id => { if (!map[id]) map[id] = resolvedNames[id]; });
     return map;
@@ -211,7 +217,7 @@ export default function TeacherPortal() {
   // Fallback resolver for conversation partners not covered by loaded students/admins
   useEffect(() => {
     if (!user) return;
-    const knownIds = new Set<string>([...guardianContacts.map(c => c.id), ...adminContacts.map(c => c.id), ...Object.keys(resolvedNames)]);
+    const knownIds = new Set<string>([...guardianContacts.flatMap(c => c.aliasIds), ...adminContacts.map(c => c.id), ...Object.keys(resolvedNames)]);
     const partnerIds: string[] = messages.map(m => m.senderId === user.uid ? m.receiverId : m.senderId);
     const unknownIds = Array.from(new Set(partnerIds))
       .filter((id): id is string => Boolean(id) && !knownIds.has(id) && !/\S+@\S+\.\S+/.test(id));

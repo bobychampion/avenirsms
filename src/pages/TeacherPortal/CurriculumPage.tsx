@@ -37,7 +37,7 @@ export default function CurriculumPage({
       {data.loading ? (
         <div className="py-12 text-center text-slate-400 text-sm">Loading curriculum data…</div>
       ) : (
-        <CurriculumTracker coverage={data.curriculumCoverage} upcomingLessons={data.upcomingLessons} />
+        <CurriculumTracker upcomingLessons={data.upcomingLessons} />
       )}
     </div>
   );

@@ -106,7 +106,7 @@ export default function TeacherOverview({
 
           {/* Curriculum + AI insight */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            <CurriculumTracker coverage={data.curriculumCoverage} upcomingLessons={data.upcomingLessons} />
+            <CurriculumTracker upcomingLessons={data.upcomingLessons} />
             <AIInsightCard selectedClass={selectedClass} students={students} belowThresholdStudents={data.belowThresholdStudents} />
           </div>
 

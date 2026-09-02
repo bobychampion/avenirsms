@@ -3,21 +3,16 @@ import { BookMarked } from 'lucide-react';
 import { CurriculumItem } from '../../types';
 
 interface CurriculumTrackerProps {
-  coverage: number;
   upcomingLessons: CurriculumItem[];
 }
 
-export default function CurriculumTracker({ coverage, upcomingLessons }: CurriculumTrackerProps) {
+export default function CurriculumTracker({ upcomingLessons }: CurriculumTrackerProps) {
   return (
     <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5">
-      <div className="flex items-center justify-between mb-3">
+      <div className="flex items-center justify-between mb-4">
         <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
-          <BookMarked className="w-4 h-4 text-indigo-600" /> Curriculum Coverage
+          <BookMarked className="w-4 h-4 text-indigo-600" /> Curriculum
         </h3>
-        <span className="text-sm font-bold text-indigo-600">{coverage}%</span>
-      </div>
-      <div className="w-full bg-slate-100 rounded-full h-2 mb-4">
-        <div className="bg-indigo-500 h-2 rounded-full transition-all" style={{ width: `${coverage}%` }} />
       </div>
 
       <p className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-2">Upcoming Lessons</p>

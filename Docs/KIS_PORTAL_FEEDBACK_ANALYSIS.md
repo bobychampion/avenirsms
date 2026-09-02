@@ -25,7 +25,7 @@ code and what it takes to do.
 | 10 | Curriculum — remove the percentage/coverage bar | ✅ Done |
 | 12 | Remove Assignments tab (now a school toggle) | ✅ Done |
 
-Not started: #2, #3, #11.
+Not started: #2, #3.
 
 **#7 post-deploy step:** add repo secrets `ATTENDANCE_WATCH_URL` +
 `CRON_SECRET`, then `firebase deploy --only firestore:indexes`.
@@ -242,20 +242,24 @@ Not started: #2, #3, #11.
   if KIS wants that gone too.
 - **Effort: XS.**
 
-### 11. Curriculum — let teachers insert curriculum (subject + short description)
+### 11. Curriculum — let teachers insert curriculum (subject + short description) — ✅ DONE
 
 > "possibility to insert curriculum. So just the subject and a small description."
 
-- **In code:** teachers currently only get a **read-only** tracker
-  (`src/pages/TeacherPortal/CurriculumTracker.tsx`) fed by `useTeacherOverviewData`;
-  authoring lives in the separate `src/pages/CurriculumMapping.tsx` (1024 lines,
-  admin-oriented, topic-list model). The "project plan for a logistics dashboard" text in
-  screenshot 2 is an AI-generated topic from a bad source doc — they want to ditch that
-  and just type it themselves.
-- **Work:** Give teachers a minimal add form in the Curriculum tab — `subject` (from
-  `mySubjectsForSelectedClass`) + free-text description — writing `CurriculumItem` docs.
-  Lighter than exposing full CurriculumMapping.
-- **Effort: M.**
+- **In code:** teachers only had a **read-only** tracker; authoring lived in the
+  admin-only `CurriculumMapping.tsx`. The Firestore rules for `curriculum_items` already
+  allowed teachers to create/update/delete in their school, and `useTeacherOverviewData`
+  already surfaces `curriculum_items` (by `schoolId + level + term`) as "Upcoming Lessons".
+- **Fix applied:** `src/pages/TeacherPortal/CurriculumPage.tsx` gained a **"My Curriculum
+  Entries"** card — a subject dropdown (their assigned subjects) + a short-description
+  field → writes a `curriculum_items` doc with `source: 'teacher'`, `createdBy: <uid>`,
+  `level: <selected class>`, `term: <current term>`. Below it, a live list of that
+  teacher's own entries with a covered/not-covered toggle and delete. Entries flow
+  straight into the tracker's "Upcoming Lessons" above (same collection + query). No new
+  type work beyond `CurriculumItem.createdBy` + `source: 'teacher'`; no rules or index
+  change (equality-only query).
+- **Effort: M.** For KIS: teachers open **Curriculum**, pick the class, and add rows;
+  they only see and manage their own.
 
 ### 12. Curriculum / nav — remove Assignments
 
@@ -284,7 +288,7 @@ Not started: #2, #3, #11.
 | 12 | Remove Assignments tab | S | ✅ Done — `assignmentsModuleEnabled` school toggle |
 | 6 | Subject-only attendance roster | S | ✅ Done — filters by `class_subjects.enrolledStudentIds` |
 | 3 | "All Parents" broadcast | M | Needs one-way vs. threaded decision |
-| 11 | Teacher-authored curriculum | M | Minimal add form |
+| 11 | Teacher-authored curriculum | M | ✅ Done — "My Curriculum Entries" in the teacher Curriculum tab |
 | 7 | Alert admin when attendance not taken | M | ✅ Done — `/api/cron?job=attendance-watch` + GH Actions ping |
 | 2 | 6 grades per year | **L** | Schema change — get spec from KIS |
 | 9 | Cover-teacher login | M | ✅ Done — `cover_assignments` surfaced in teacher portal (attendance + behaviour, today only) |

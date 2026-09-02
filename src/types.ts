@@ -665,6 +665,8 @@ export interface CurriculumItem {
   completed: boolean;
   completedAt?: any;
   teacherId?: string;
+  /** uid of the teacher who added this item from the Teacher Portal (source === 'teacher'). */
+  createdBy?: string;
   /** Firestore ID of the curriculum_document this item was imported from */
   sourceDocId?: string;
   /** File name of the source document (denormalized for display) */
@@ -673,8 +675,8 @@ export interface CurriculumItem {
   alignedObjective?: string;
   /** Assessment focus areas aligned to this topic from the source document */
   alignedAssessmentFocus?: string[];
-  /** Source type: 'manual', 'nerdc', or 'ai_document' */
-  source?: 'manual' | 'nerdc' | 'ai_document';
+  /** Source type: 'manual' (admin), 'nerdc', 'ai_document', or 'teacher' (added in the Teacher Portal) */
+  source?: 'manual' | 'nerdc' | 'ai_document' | 'teacher';
   createdAt?: any;
   updatedAt?: any;
 }

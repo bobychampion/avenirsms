@@ -6,7 +6,7 @@ import {
   collection, query, onSnapshot, where, addDoc, serverTimestamp,
   orderBy, updateDoc, doc, getDoc, getDocs, limit
 } from 'firebase/firestore';
-import { Student, Assignment, AssignmentSubmission, Message, Grade, Attendance, SchoolEvent, Invoice, Notification, TERMS, calculateGrade, scoreBadgeClasses, scoreRemark, scoreTextColorClass, SKILL_LABELS, SKILL_RATING_LABELS, SkillRating, SubjectAttendance, SpecialLesson, SpecialLessonAttendance } from '../types';
+import { Student, Assignment, AssignmentSubmission, Message, Grade, Attendance, SchoolEvent, Invoice, Notification, TERMS, calculateGrade, scoreBadgeClasses, scoreRemark, scoreTextColorClass, visibleSkillLabels, SKILL_RATING_LABELS, SkillRating, SubjectAttendance, SpecialLesson, SpecialLessonAttendance } from '../types';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   BookOpen, Calendar, MessageSquare, Loader2, CheckCircle2, Clock,
@@ -30,7 +30,7 @@ export default function ParentPortal() {
   const { user, profile } = useAuth();
   const navigate = useNavigate();
   const schoolId = useSchoolId();
-  const { getGradingForClass, locale, currency, schoolName, logoUrl, reportShowLogo, reportFooterText, attendanceMode, currentSession } = useSchool();
+  const { getGradingForClass, locale, currency, schoolName, logoUrl, reportShowLogo, reportFooterText, attendanceMode, currentSession, hiddenBehaviourTraits, assignmentsModuleEnabled } = useSchool();
   // Children come from the shared useLinkedChildren hook so this page, the
   // mobile home, and the drop-off/pickup widget can never disagree about who
   // a guardian is linked to (primary and secondary alike).
@@ -535,7 +535,7 @@ export default function ParentPortal() {
     { id: 'report_card', label: 'Report Card', Icon: FileText },
     { id: 'attendance', label: 'Attendance', Icon: CheckCircle2 },
     ...(mySpecialLessons.length > 0 ? [{ id: 'special_lessons' as TabType, label: 'Activities', Icon: Sparkles }] : []),
-    { id: 'assignments', label: 'Assignments', Icon: BookOpen },
+    ...(assignmentsModuleEnabled ? [{ id: 'assignments' as TabType, label: 'Assignments', Icon: BookOpen }] : []),
     { id: 'absences', label: 'Absence Requests', Icon: CalendarOff },
     { id: 'finance', label: 'Fees', Icon: DollarSign },
     { id: 'messages', label: 'Messages', Icon: MessageSquare, badge: unreadMsgs },
@@ -805,7 +805,9 @@ export default function ParentPortal() {
                           )}
                           <td className="px-6 py-3 text-center">
                             <span className={`px-2.5 py-1 rounded-xl text-xs font-bold border ${rowMode === 'single_grade' ? 'bg-slate-50 text-slate-700 border-slate-200' : scoreBadgeClasses(total)}`}>
-                              {liveGrade}
+                              {rowMode === 'single_grade' && liveGrade && gradingForRow.gradeLabels?.[liveGrade]
+                                ? `${liveGrade} — ${gradingForRow.gradeLabels[liveGrade]}`
+                                : liveGrade}
                             </span>
                           </td>
                         </tr>
@@ -818,7 +820,7 @@ export default function ParentPortal() {
                 <div className="px-6 py-4 bg-slate-50/50 border-t border-slate-100">
                   <p className="text-xs text-slate-400">
                     {grading.gradingMode === 'single_grade'
-                      ? `Allowed grades: ${(grading.allowedGrades ?? []).join('  ') || '—'}`
+                      ? `Allowed grades: ${(grading.allowedGrades ?? []).map(gr => grading.gradeLabels?.[gr] ? `${gr} (${grading.gradeLabels[gr]})` : gr).join(' · ') || '—'}`
                       : 'Grade Scale: A1 (75–100) · B2 (70–74) · B3 (65–69) · C4 (60–64) · C5 (55–59) · C6 (50–54) · D7 (45–49) · E8 (40–44) · F9 (0–39)'}
                   </p>
                 </div>
@@ -1106,7 +1108,7 @@ export default function ParentPortal() {
       )}
 
       {/* ── ASSIGNMENTS ── */}
-      {activeTab === 'assignments' && (
+      {activeTab === 'assignments' && assignmentsModuleEnabled && (
         <div className="space-y-4">
           {assignments.length === 0 ? (
             <div className="text-center py-16 bg-slate-50 rounded-2xl border border-slate-100">
@@ -1661,7 +1663,7 @@ export default function ParentPortal() {
                             <td className="py-2.5 text-center font-bold text-slate-900">{total}</td>
                           )}
                           <td className="py-2.5 text-center">
-                            <span className={`px-2 py-0.5 rounded-lg text-xs font-bold border ${rowMode === 'single_grade' ? 'bg-slate-50 text-slate-700 border-slate-200' : scoreBadgeClasses(total)}`}>{liveGrade}</span>
+                            <span className={`px-2 py-0.5 rounded-lg text-xs font-bold border ${rowMode === 'single_grade' ? 'bg-slate-50 text-slate-700 border-slate-200' : scoreBadgeClasses(total)}`}>{rowMode === 'single_grade' && liveGrade && grading.gradeLabels?.[liveGrade] ? `${liveGrade} — ${grading.gradeLabels[liveGrade]}` : liveGrade}</span>
                           </td>
                           {grading.gradingMode !== 'single_grade' && <>
                             <td className="py-2.5 text-center text-xs text-slate-500">
@@ -1704,7 +1706,7 @@ export default function ParentPortal() {
                     <p className="text-xs font-bold text-slate-600 uppercase tracking-wide">Psychomotor / Affective Skills Assessment</p>
                   </div>
                   <div className="grid grid-cols-3 sm:grid-cols-6 divide-x divide-y sm:divide-y-0 divide-slate-100">
-                    {SKILL_LABELS.map(({ key, label }) => {
+                    {visibleSkillLabels(hiddenBehaviourTraits).map(({ key, label }) => {
                       const rating: SkillRating = reportCardSkills[key] ?? 'G';
                       return (
                         <div key={key} className="p-3 text-center">

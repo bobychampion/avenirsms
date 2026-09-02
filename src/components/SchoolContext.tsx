@@ -78,7 +78,11 @@ interface SchoolContextValue {
    * override. Pass `session` to resolve against that session's snapshot (for historical
    * accuracy) instead of the school's live/current configuration.
    */
-  getGradingForClass: (className: string, session?: string) => { gradingMode: GradingMode; gradingSystem: GradingSystem; customGradingScale?: CustomGradeScale[]; allowedGrades?: string[] };
+  getGradingForClass: (className: string, session?: string) => { gradingMode: GradingMode; gradingSystem: GradingSystem; customGradingScale?: CustomGradeScale[]; allowedGrades?: string[]; gradeLabels?: Record<string, string> };
+  /** Behaviour/psychomotor trait keys the school has switched off (subset of SKILL_LABELS keys). */
+  hiddenBehaviourTraits: string[];
+  /** Whether the Assignments module is enabled for this school. Defaults to true. */
+  assignmentsModuleEnabled: boolean;
   taxModel: 'nigeria_paye' | 'flat_rate' | 'none';
   taxFlatRate: number;
   cloudinaryConfig: { cloudName: string; uploadPreset: string };
@@ -138,6 +142,8 @@ const SchoolContext = createContext<SchoolContextValue>({
   gradingRules: [],
   gradingConfigHistory: {},
   getGradingForClass: () => ({ gradingMode: 'ca_exam', gradingSystem: 'percentage', customGradingScale: [] }),
+  hiddenBehaviourTraits: [],
+  assignmentsModuleEnabled: true,
   taxModel: 'none',
   taxFlatRate: 0,
   cloudinaryConfig: { cloudName: '', uploadPreset: '' },
@@ -202,6 +208,8 @@ export function SchoolProvider({ children }: { children: React.ReactNode }) {
   const [levelGradingOverrides, setLevelGradingOverrides] = useState<Record<string, LevelGradingOverride>>({});
   const [gradingMode, setGradingMode] = useState<GradingMode>('ca_exam');
   const [gradingRules, setGradingRules] = useState<GradingRule[]>([]);
+  const [hiddenBehaviourTraits, setHiddenBehaviourTraits] = useState<string[]>([]);
+  const [assignmentsModuleEnabled, setAssignmentsModuleEnabled] = useState(true);
   const [gradingConfigHistory, setGradingConfigHistory] = useState<Record<string, GradingConfigSnapshot>>({});
   const [taxModel, setTaxModel] = useState<'nigeria_paye' | 'flat_rate' | 'none'>('none');
   const [taxFlatRate, setTaxFlatRate] = useState(0);
@@ -293,6 +301,8 @@ export function SchoolProvider({ children }: { children: React.ReactNode }) {
       setGradingMode('ca_exam');
       setGradingRules([]);
       setGradingConfigHistory({});
+      setHiddenBehaviourTraits([]);
+      setAssignmentsModuleEnabled(true);
       setTaxModel('none');
       setTaxFlatRate(0);
       setCloudinaryConfig({ cloudName: '', uploadPreset: '' });
@@ -352,6 +362,8 @@ export function SchoolProvider({ children }: { children: React.ReactNode }) {
           setGradingMode(data.gradingMode || 'ca_exam');
           setGradingRules(data.gradingRules || []);
           setGradingConfigHistory(data.gradingConfigHistory || {});
+          setHiddenBehaviourTraits(data.hiddenBehaviourTraits ?? []);
+          setAssignmentsModuleEnabled(data.assignmentsModuleEnabled !== false);
           setTaxModel(data.taxModel || 'none');
           setTaxFlatRate(data.taxFlatRate || 0);
           setInstitutionType(data.institutionType || 'secondary');
@@ -534,6 +546,8 @@ export function SchoolProvider({ children }: { children: React.ReactNode }) {
       gradingRules,
       gradingConfigHistory,
       getGradingForClass,
+      hiddenBehaviourTraits,
+      assignmentsModuleEnabled,
       taxModel,
       taxFlatRate,
       cloudinaryConfig,

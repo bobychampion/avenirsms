@@ -22,7 +22,7 @@ import {
 } from '../utils/timetablePeriods';
 import { GeoFence } from '../types';
 import { haversineDistance } from '../services/geofenceService';
-import { SCHOOL_CLASSES, SUBJECTS, TERMS, GradingSystem, CustomGradeScale, LevelGradingOverride, GRADING_SYSTEM_OPTIONS, GradingMode, GradingRule, GradingConfigSnapshot, GRADING_MODE_OPTIONS, flattenGradingRules, SubjectDefinition, UserProfile, FeeCategory, WeekendDay } from '../types';
+import { SCHOOL_CLASSES, SUBJECTS, TERMS, GradingSystem, CustomGradeScale, LevelGradingOverride, GRADING_SYSTEM_OPTIONS, GradingMode, GradingRule, GradingConfigSnapshot, GRADING_MODE_OPTIONS, flattenGradingRules, SKILL_LABELS, SubjectDefinition, UserProfile, FeeCategory, WeekendDay } from '../types';
 import { useUnsavedChanges } from '../hooks/useUnsavedChanges';
 import UnsavedChangesDialog from '../components/UnsavedChangesDialog';
 import StorageSettingsPanel from '../components/StorageSettingsPanel';
@@ -131,6 +131,10 @@ export interface SchoolSettings {
   gradingMode?: GradingMode;
   /** Discrete allowed-grade bands, used only when gradingMode === 'single_grade'. */
   gradingRules?: GradingRule[];
+  /** When false, the Assignments module is hidden from the teacher & parent portals. Defaults to true (absent = enabled). */
+  assignmentsModuleEnabled?: boolean;
+  /** Behaviour/psychomotor trait keys hidden from the teacher Behaviour tab & report cards (subset of SKILL_LABELS keys). */
+  hiddenBehaviourTraits?: string[];
   /** Snapshot of the full grading configuration as it existed for each academic session, so a
    *  school changing its setup for a new session doesn't retroactively change how older
    *  sessions' results resolve. Keyed by session string (e.g. "2025/2026"). */
@@ -297,6 +301,8 @@ export const defaultSettings: SchoolSettings = {
   gradingMode: 'ca_exam',
   gradingRules: [],
   gradingConfigHistory: {},
+  assignmentsModuleEnabled: true,
+  hiddenBehaviourTraits: [],
   termStructure: '3-term',
   // Finance
   taxModel: 'none',
@@ -599,7 +605,21 @@ function GradingRulesEditor({
     setGradeInputs(prev => ({ ...prev, [bandId]: '' }));
   };
   const removeGrade = (bandId: string, grade: string) => {
-    onChange(rules.map(r => r.id === bandId ? { ...r, grades: r.grades.filter(g => g !== grade) } : r));
+    onChange(rules.map(r => {
+      if (r.id !== bandId) return r;
+      const gradeLabels = { ...(r.gradeLabels ?? {}) };
+      delete gradeLabels[grade];
+      return { ...r, grades: r.grades.filter(g => g !== grade), gradeLabels };
+    }));
+  };
+  const setGradeLabel = (bandId: string, grade: string, label: string) => {
+    onChange(rules.map(r => {
+      if (r.id !== bandId) return r;
+      const gradeLabels = { ...(r.gradeLabels ?? {}) };
+      if (label.trim()) gradeLabels[grade] = label;
+      else delete gradeLabels[grade];
+      return { ...r, gradeLabels };
+    }));
   };
   const moveGrade = (bandId: string, index: number, dir: -1 | 1) => {
     onChange(rules.map(r => {
@@ -642,14 +662,22 @@ function GradingRulesEditor({
                 );
               })}
             </div>
-            <div className="flex flex-wrap items-center gap-1.5 mb-2">
+            <div className="space-y-1.5 mb-2">
               {rule.grades.map((g, gi) => (
-                <span key={g} className="inline-flex items-center gap-1 px-2.5 py-1 bg-indigo-50 text-indigo-700 text-xs font-bold rounded-lg border border-indigo-100">
-                  {g}
-                  <button onClick={() => moveGrade(rule.id, gi, -1)} disabled={gi === 0} className="text-indigo-300 hover:text-indigo-600 disabled:opacity-25"><ChevronUp className="w-3 h-3" /></button>
-                  <button onClick={() => moveGrade(rule.id, gi, 1)} disabled={gi === rule.grades.length - 1} className="text-indigo-300 hover:text-indigo-600 disabled:opacity-25"><ChevronDown className="w-3 h-3" /></button>
-                  <button onClick={() => removeGrade(rule.id, g)} className="text-indigo-300 hover:text-red-500"><X className="w-3 h-3" /></button>
-                </span>
+                <div key={g} className="flex items-center gap-1.5">
+                  <span className="inline-flex items-center gap-1 px-2.5 py-1 bg-indigo-50 text-indigo-700 text-xs font-bold rounded-lg border border-indigo-100 shrink-0">
+                    {g}
+                    <button onClick={() => moveGrade(rule.id, gi, -1)} disabled={gi === 0} className="text-indigo-300 hover:text-indigo-600 disabled:opacity-25"><ChevronUp className="w-3 h-3" /></button>
+                    <button onClick={() => moveGrade(rule.id, gi, 1)} disabled={gi === rule.grades.length - 1} className="text-indigo-300 hover:text-indigo-600 disabled:opacity-25"><ChevronDown className="w-3 h-3" /></button>
+                    <button onClick={() => removeGrade(rule.id, g)} className="text-indigo-300 hover:text-red-500"><X className="w-3 h-3" /></button>
+                  </span>
+                  <input
+                    value={rule.gradeLabels?.[g] ?? ''}
+                    onChange={e => setGradeLabel(rule.id, g, e.target.value)}
+                    placeholder="Description (optional) — e.g. Meeting the standard"
+                    className="flex-1 px-2.5 py-1 rounded-lg border border-slate-200 text-xs outline-none focus:ring-2 focus:ring-indigo-500"
+                  />
+                </div>
               ))}
               {rule.grades.length === 0 && <span className="text-xs text-slate-400 italic">No grade values yet</span>}
             </div>
@@ -1778,6 +1806,50 @@ export default function SchoolSettingsPage() {
               <TagListEditor label="Additional / Custom Subjects" items={form.customSubjects} placeholder="e.g. Slovenian Language, IB Theory of Knowledge"
                 onAdd={v => field('customSubjects', [...form.customSubjects, v])}
                 onRemove={i => field('customSubjects', form.customSubjects.filter((_, idx) => idx !== i))} />
+            </div>
+
+            <div className="mb-6">
+              <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">Behaviour Traits</label>
+              <p className="text-xs text-slate-500 mb-3">
+                Traits teachers rate on the Behaviour tab and that appear on report cards. Switch off any your school doesn&apos;t assess.
+              </p>
+              <div className="flex flex-wrap gap-2">
+                {SKILL_LABELS.map(({ key, label }) => {
+                  const hidden = (form.hiddenBehaviourTraits ?? []).includes(key);
+                  return (
+                    <button
+                      key={key}
+                      type="button"
+                      onClick={() => field('hiddenBehaviourTraits', hidden
+                        ? (form.hiddenBehaviourTraits ?? []).filter(k => k !== key)
+                        : [...(form.hiddenBehaviourTraits ?? []), key])}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors ${
+                        hidden
+                          ? 'bg-slate-50 text-slate-400 border-slate-200 line-through'
+                          : 'bg-indigo-600 text-white border-indigo-600'
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="mb-6">
+              <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">Modules</label>
+              <label className="flex items-start gap-3 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={form.assignmentsModuleEnabled !== false}
+                  onChange={e => field('assignmentsModuleEnabled', e.target.checked)}
+                  className="mt-0.5 w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                />
+                <span>
+                  <span className="block text-sm font-semibold text-slate-700">Assignments</span>
+                  <span className="block text-xs text-slate-500">Show the Assignments tab in the teacher and parent portals.</span>
+                </span>
+              </label>
             </div>
           </section>
 

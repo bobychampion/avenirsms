@@ -258,6 +258,16 @@ export const SKILL_LABELS: { key: keyof StudentSkills; label: string }[] = [
   { key: 'creativity', label: 'Creativity' },
 ];
 
+/**
+ * SKILL_LABELS minus any trait keys the school has switched off in Settings
+ * (`school_settings.hiddenBehaviourTraits`). Used by the teacher Behaviour tab,
+ * the parent portal and report cards so a school can drop traits it doesn't assess.
+ */
+export function visibleSkillLabels(hidden?: string[]): { key: keyof StudentSkills; label: string }[] {
+  if (!hidden || hidden.length === 0) return SKILL_LABELS;
+  return SKILL_LABELS.filter(s => !hidden.includes(s.key));
+}
+
 export const SKILL_RATING_LABELS: Record<SkillRating, string> = {
   E: 'Excellent',
   VG: 'Very Good',
@@ -844,6 +854,12 @@ export interface GradingRule {
   id: string;
   levels: string[];
   grades: string[];
+  /**
+   * Optional human-readable descriptor per grade value, e.g.
+   * `{ "1": "Below the expected standard", "3": "Meeting the standard", "5": "Should be fast-tracked" }`.
+   * single_grade mode only; shown next to the grade in the Gradebook picker and on report cards.
+   */
+  gradeLabels?: Record<string, string>;
 }
 
 /**
@@ -854,6 +870,16 @@ export interface GradingRule {
 export function flattenGradingRules(rules?: GradingRule[]): Record<string, string[]> {
   const map: Record<string, string[]> = {};
   (rules ?? []).forEach(rule => { rule.levels.forEach(level => { map[level] = rule.grades; }); });
+  return map;
+}
+
+/** Like `flattenGradingRules` but for the optional per-grade descriptors: level → { grade → label }. */
+export function flattenGradingRuleLabels(rules?: GradingRule[]): Record<string, Record<string, string>> {
+  const map: Record<string, Record<string, string>> = {};
+  (rules ?? []).forEach(rule => {
+    if (!rule.gradeLabels) return;
+    rule.levels.forEach(level => { map[level] = rule.gradeLabels!; });
+  });
   return map;
 }
 
@@ -886,7 +912,7 @@ export function resolveGradingForLevel(
     gradingRules?: GradingRule[];
   },
   levelOverrides?: Record<string, LevelGradingOverride>
-): { gradingMode: GradingMode; gradingSystem: GradingSystem; customGradingScale?: CustomGradeScale[]; allowedGrades?: string[] } {
+): { gradingMode: GradingMode; gradingSystem: GradingSystem; customGradingScale?: CustomGradeScale[]; allowedGrades?: string[]; gradeLabels?: Record<string, string> } {
   const gradingMode = defaults.gradingMode ?? 'ca_exam';
   const override = level ? levelOverrides?.[level] : undefined;
   const base = override
@@ -895,7 +921,10 @@ export function resolveGradingForLevel(
   const allowedGrades = gradingMode === 'single_grade'
     ? flattenGradingRules(defaults.gradingRules)[level ?? '']
     : undefined;
-  return { gradingMode, ...base, allowedGrades };
+  const gradeLabels = gradingMode === 'single_grade'
+    ? flattenGradingRuleLabels(defaults.gradingRules)[level ?? '']
+    : undefined;
+  return { gradingMode, ...base, allowedGrades, gradeLabels };
 }
 
 export function calculateGrade(

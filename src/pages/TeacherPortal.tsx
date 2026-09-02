@@ -6,7 +6,7 @@ import {
   collection, query, onSnapshot, where, addDoc, serverTimestamp,
   orderBy, updateDoc, doc, deleteDoc, getDocs, writeBatch, getDoc,
 } from 'firebase/firestore';
-import { Student, Assignment, AssignmentSubmission, Message, SUBJECTS, TERMS, Grade, calculateGrade, StudentSkills, SKILL_LABELS, SkillRating, StudentSkillRecord, Timetable, GeoFence, TeacherCheckIn, CurriculumDocument, SubjectAttendance, SpecialLesson } from '../types';
+import { Student, Assignment, AssignmentSubmission, Message, SUBJECTS, TERMS, Grade, calculateGrade, StudentSkills, visibleSkillLabels, SkillRating, StudentSkillRecord, Timetable, GeoFence, TeacherCheckIn, CurriculumDocument, SubjectAttendance, SpecialLesson } from '../types';
 import { getCurrentPosition, isWithinFence, isAccuracyAcceptable, isSpoofedVelocity } from '../services/geofenceService';
 import { batchUpsertAttendance, fetchDailyAttendanceMap, batchUpsertSubjectAttendance, batchUpsertSpecialLessonAttendance } from '../services/firestoreService';
 import { generateLessonNotes, generateExamQuestions, generateQuestionsFromCurriculum } from '../services/geminiService';
@@ -47,7 +47,8 @@ interface AttendanceRow {
 export default function TeacherPortal() {
   const { user, profile } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
-  const { classNames, classes, subjects, currentSession, currentTerm, getGradingForClass, terms, schoolName, schoolDays, attendanceMode } = useSchool();
+  const { classNames, classes, subjects, currentSession, currentTerm, getGradingForClass, terms, schoolName, schoolDays, attendanceMode, hiddenBehaviourTraits, assignmentsModuleEnabled } = useSchool();
+  const behaviourTraits = visibleSkillLabels(hiddenBehaviourTraits);
   const schoolId = useSchoolId();
 
   // Derived helpers (safe fallbacks)
@@ -1294,7 +1295,7 @@ export default function TeacherPortal() {
     { id: 'grades', label: 'Gradebook', Icon: Award },
     { id: 'skills', label: 'Behaviour', Icon: Star },
     { id: 'curriculum', label: 'Curriculum', Icon: BookMarked },
-    { id: 'assignments', label: 'Assignments', Icon: BookOpen },
+    ...(assignmentsModuleEnabled ? [{ id: 'assignments' as TabType, label: 'Assignments', Icon: BookOpen }] : []),
     { id: 'messages', label: 'Messages', Icon: MessageSquare },
     { id: 'leave', label: 'My Leave', Icon: CalendarOff },
     { id: 'ai_tools', label: 'AI Tools', Icon: Sparkles },
@@ -2074,7 +2075,9 @@ export default function TeacherPortal() {
                                 <select value={g?.grade ?? ''} onChange={e => updateSingleGrade(s.id!, e.target.value)}
                                   className="px-2 py-1 rounded-lg border border-slate-200 text-xs font-bold outline-none focus:ring-2 focus:ring-indigo-400">
                                   <option value="">—</option>
-                                  {(gradebookGrading.allowedGrades ?? []).map(gr => <option key={gr} value={gr}>{gr}</option>)}
+                                  {(gradebookGrading.allowedGrades ?? []).map(gr => (
+                                    <option key={gr} value={gr}>{gradebookGrading.gradeLabels?.[gr] ? `${gr} — ${gradebookGrading.gradeLabels[gr]}` : gr}</option>
+                                  ))}
                                 </select>
                               ) : (
                                 <span className="text-xs font-bold text-slate-600">{displayGrade}</span>
@@ -2142,7 +2145,7 @@ export default function TeacherPortal() {
                     <thead className="bg-slate-50">
                       <tr>
                         <th className="px-5 py-3 text-xs font-bold text-slate-500 uppercase">Student</th>
-                        {SKILL_LABELS.map(({ label }) => (
+                        {behaviourTraits.map(({ label }) => (
                           <th key={label} className="px-3 py-3 text-xs font-bold text-slate-500 uppercase text-center whitespace-nowrap">{label}</th>
                         ))}
                       </tr>
@@ -2151,7 +2154,7 @@ export default function TeacherPortal() {
                       {students.map(s => (
                         <tr key={s.id} className="hover:bg-slate-50/50">
                           <td className="px-5 py-3 font-medium text-slate-900 whitespace-nowrap">{s.studentName}</td>
-                          {SKILL_LABELS.map(({ key }) => {
+                          {behaviourTraits.map(({ key }) => {
                             const val = skills[s.id!]?.[key] ?? 'G';
                             const colors: Record<SkillRating, string> = {
                               E: 'bg-emerald-600 text-white', VG: 'bg-emerald-100 text-emerald-800',
@@ -2188,7 +2191,7 @@ export default function TeacherPortal() {
       )}
 
       {/* ── ASSIGNMENTS TAB ── */}
-      {activeTab === 'assignments' && (
+      {activeTab === 'assignments' && assignmentsModuleEnabled && (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
           <div className="lg:col-span-1">
             <form onSubmit={handleCreateAssignment} className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-4 sticky top-24">
@@ -2537,16 +2540,18 @@ export default function TeacherPortal() {
                   />
                   {showContactDropdown && (() => {
                     const q = contactQuery.trim().toLowerCase();
-                    const allContacts = [...guardianContacts, ...adminContacts];
+                    const allContacts = [...guardianContacts, ...adminContacts]
+                      .sort((a, b) => a.name.localeCompare(b.name));
+                    // No query → show every guardian + admin (scrollable), not a truncated slice.
                     const matches = q
                       ? allContacts.filter(c => c.name.toLowerCase().includes(q) || c.email.toLowerCase().includes(q))
-                      : allContacts.slice(0, 8);
+                      : allContacts;
                     const isEmail = /\S+@\S+\.\S+/.test(contactQuery.trim());
                     const pick = (id: string) => { setNewMessage({ receiverId: id, content: '' }); setContactQuery(''); setShowContactDropdown(false); };
                     return (
                       <div className="absolute z-10 mt-1 w-full bg-white border border-slate-200 rounded-xl shadow-lg max-h-64 overflow-y-auto">
                         {!q && matches.length > 0 && (
-                          <p className="px-4 py-1.5 text-[10px] font-bold text-slate-400 uppercase tracking-wide">Suggested</p>
+                          <p className="px-4 py-1.5 text-[10px] font-bold text-slate-400 uppercase tracking-wide">All contacts ({matches.length})</p>
                         )}
                         {matches.length > 0 ? (
                           <div className="p-2 pt-0">

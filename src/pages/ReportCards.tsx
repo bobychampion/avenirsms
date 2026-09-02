@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { db, handleFirestoreError, OperationType } from '../firebase';
 import { collection, query, where, getDocs } from 'firebase/firestore';
-import { Student, Grade, GradingMode, calculateGrade, scoreRemark, scoreTextColorClass, gradingScaleLegend, formatDate, StudentSkillRecord, StudentSkills, SKILL_LABELS, SKILL_RATING_LABELS, SkillRating } from '../types';
+import { Student, Grade, GradingMode, calculateGrade, scoreRemark, scoreTextColorClass, gradingScaleLegend, formatDate, StudentSkillRecord, StudentSkills, visibleSkillLabels, SKILL_RATING_LABELS, SkillRating } from '../types';
 import { generateReportSummary } from '../services/geminiService';
 import toast from 'react-hot-toast';
 import { useClassSelectOptions, useSchool } from '../components/SchoolContext';
@@ -35,7 +35,7 @@ function reportCardColCount(mode: GradingMode): number {
 
 export default function ReportCards() {
   const classSelectOptions = useClassSelectOptions();
-  const { getGradingForClass, currentSession, schoolName, logoUrl, reportShowLogo, reportFooterText } = useSchool();
+  const { getGradingForClass, currentSession, schoolName, logoUrl, reportShowLogo, reportFooterText, hiddenBehaviourTraits } = useSchool();
   const schoolId = useSchoolId();
   const [selectedClass, setSelectedClass] = useState('');
   const [selectedTerm, setSelectedTerm] = useState<'1st Term' | '2nd Term' | '3rd Term'>('1st Term');
@@ -268,7 +268,11 @@ export default function ReportCards() {
                               <td className="py-2.5 text-center font-bold text-slate-900">{g.totalScore}</td>
                             )}
                             <td className="py-2.5 text-center">
-                              <span className={`font-bold ${rowMode === 'single_grade' ? 'text-slate-800' : colorClass}`}>{liveGrade}</span>
+                              <span className={`font-bold ${rowMode === 'single_grade' ? 'text-slate-800' : colorClass}`}>
+                                {rowMode === 'single_grade' && liveGrade && grading.gradeLabels?.[liveGrade]
+                                  ? `${liveGrade} — ${grading.gradeLabels[liveGrade]}`
+                                  : liveGrade}
+                              </span>
                             </td>
                             {grading.gradingMode !== 'single_grade' && <>
                               <td className="py-2.5 text-center text-xs text-slate-500">
@@ -310,7 +314,7 @@ export default function ReportCards() {
                       <p className="text-xs font-bold text-slate-600 uppercase tracking-wide">Psychomotor / Affective Skills Assessment</p>
                     </div>
                     <div className="grid grid-cols-3 sm:grid-cols-6 divide-x divide-y sm:divide-y-0 divide-slate-100">
-                      {SKILL_LABELS.map(({ key, label }) => {
+                      {visibleSkillLabels(hiddenBehaviourTraits).map(({ key, label }) => {
                         const rating = selectedReport.skills?.[key] ?? 'G';
                         return (
                           <div key={key} className="p-3 text-center">
@@ -344,9 +348,12 @@ export default function ReportCards() {
                   <div className="border border-slate-200 rounded-xl p-3">
                     <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">Grading Scale</p>
                     {grading.gradingMode === 'single_grade' ? (
-                      <p className="text-xs text-slate-600">
-                        Allowed grades for {selectedClass}: <span className="font-bold">{(grading.allowedGrades ?? []).join('  ') || '—'}</span>
-                      </p>
+                      <div className="text-xs text-slate-600 space-y-0.5">
+                        <p className="font-semibold">Allowed grades for {selectedClass}:</p>
+                        {(grading.allowedGrades ?? []).length ? (grading.allowedGrades ?? []).map(gr => (
+                          <p key={gr}><span className="font-bold">{gr}</span>{grading.gradeLabels?.[gr] ? ` — ${grading.gradeLabels[gr]}` : ''}</p>
+                        )) : <p>—</p>}
+                      </div>
                     ) : (
                       <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-600">
                         {gradingScaleLegend(grading.gradingSystem, grading.customGradingScale).map(({ grade, range }) => (

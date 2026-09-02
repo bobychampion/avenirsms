@@ -370,7 +370,9 @@ export default function Gradebook() {
                           <select value={grade.grade || ''} onChange={e => handleSingleGradeChange(student.id!, e.target.value)}
                             className="px-2 py-1.5 rounded-lg border border-slate-200 text-xs font-bold outline-none focus:ring-2 focus:ring-indigo-400">
                             <option value="">—</option>
-                            {(grading.allowedGrades ?? []).map(g => <option key={g} value={g}>{g}</option>)}
+                            {(grading.allowedGrades ?? []).map(g => (
+                              <option key={g} value={g}>{grading.gradeLabels?.[g] ? `${g} — ${grading.gradeLabels[g]}` : g}</option>
+                            ))}
                           </select>
                         ) : (
                           <span className={`px-2 py-1 rounded-md text-xs font-bold border ${scoreBadgeClasses(grade.totalScore ?? 0)}`}>{displayGrade}</span>

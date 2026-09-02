@@ -17,10 +17,23 @@ code and what it takes to do.
 
 | # | Item | Status |
 |---|------|--------|
+| 1 | Gradebook — 1/3/5 grade descriptors | ✅ Done |
 | 4 | Messages — guardians showing double | ✅ Done |
+| 5 | Messages — show full guardian/contact list | ✅ Done |
+| 8 | Behaviour — remove "Sports" (now configurable) | ✅ Done |
 | 10 | Curriculum — remove the percentage/coverage bar | ✅ Done |
+| 12 | Remove Assignments tab (now a school toggle) | ✅ Done |
 
-All other items: not started.
+Not started: #2, #3, #6, #7, #9, #11.
+
+### How to configure the new toggles (School Settings → Academic)
+- **#1** — set Grading Mode to *Single Grade*, add a band with grade values `1`,
+  `3`, `5`, and type a description next to each (e.g. `3` → "Meeting the standard").
+  The descriptor then shows in the Gradebook picker and on report cards.
+- **#8** — *Behaviour Traits*: click a trait (e.g. Sports) to switch it off. It
+  disappears from the teacher Behaviour tab, the parent portal and report cards.
+- **#12** — *Modules*: untick **Assignments** to hide the Assignments tab from the
+  teacher and parent portals.
 
 ---
 
@@ -222,10 +235,10 @@ All other items: not started.
 |---|------|--------|-------|
 | 4 | Guardians showing double | **S** | ✅ Done |
 | 10 | Remove curriculum % bar | **XS** | ✅ Done |
-| 5 | Full guardian list in Messages | S | Pairs with #4 |
-| 1 | 1/3/5 grade descriptors | S | Config + render check |
-| 8 | Remove "Sports" from Behaviour | S→M | Prefer school-configurable trait list |
-| 12 | Remove Assignments tab | S | Behind a school flag |
+| 5 | Full guardian list in Messages | S | ✅ Done |
+| 1 | 1/3/5 grade descriptors | S | ✅ Done — optional `gradeLabels` per grade band |
+| 8 | Remove "Sports" from Behaviour | S→M | ✅ Done — configurable `hiddenBehaviourTraits` |
+| 12 | Remove Assignments tab | S | ✅ Done — `assignmentsModuleEnabled` school toggle |
 | 6 | Subject-only attendance roster | S→L | Config today; enrolment model later |
 | 3 | "All Parents" broadcast | M | Needs one-way vs. threaded decision |
 | 11 | Teacher-authored curriculum | M | Minimal add form |

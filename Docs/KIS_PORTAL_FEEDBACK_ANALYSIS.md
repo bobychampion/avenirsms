@@ -25,7 +25,7 @@ code and what it takes to do.
 | 10 | Curriculum — remove the percentage/coverage bar | ✅ Done |
 | 12 | Remove Assignments tab (now a school toggle) | ✅ Done |
 
-Not started: #2, #3, #9, #11.
+Not started: #2, #3, #11.
 
 **#7 post-deploy step:** add repo secrets `ATTENDANCE_WATCH_URL` +
 `CRON_SECRET`, then `firebase deploy --only firestore:indexes`.
@@ -199,16 +199,32 @@ Not started: #2, #3, #9, #11.
 - **Effort: S** to drop it globally, **M** to make it configurable. Since this is one
   school's preference, configurable is the right call.
 
-### 9. Cover teacher — separate login for attendance & comments
+### 9. Cover teacher — separate login for attendance & comments — ✅ DONE
 
 > "a separate login for attendance and comments"
 
-- **In code:** no "cover/substitute teacher" role. Roles are staff/admin/etc.; portal
-  access assumes the assigned class teacher.
-- **Work:** New limited role or a per-day "cover assignment" that grants one teacher
-  temporary attendance + behaviour-comment access to another's class. Auth, routing,
-  Firestore rules.
-- **Effort: L.** Relates to staff account routing work in commit 0343cf6.
+- **Already there:** `src/pages/CoverManager.tsx` already lets an admin assign an existing
+  staff member as cover for a specific period/date, stored in `cover_assignments`
+  (`coverTeacherId`, `className`, `subject`, `date`, `status`). The Firestore rules for
+  `attendance`, `subjectAttendance` and `student_skills` already allow any teacher in the
+  school to write — so the whole gap was **client-side**: the covered class never showed
+  in the cover teacher's portal (the onboarding docs told admins to hack it via the form
+  tutor field).
+- **Fix applied (frontend only — no new role, no rules or index change):**
+  - `useTeacherAssignments` now also loads `cover_assignments` where
+    `coverTeacherId == me`, keeps only rows for **today** with `status: 'assigned'`, and
+    exposes `coverClassNamesToday` / `coverSubjectsByClassToday` / `isCoveringToday()`.
+    Deliberately **not** merged into `assignedClassNames` / `subjectsByClass`, so Gradebook,
+    Curriculum and Assignments stay locked to owned classes.
+  - `TeacherPortal` derives `attendanceClasses = own ∪ cover-today` and uses it for the
+    **Attendance**, **Subject Attendance** and **Behaviour** tab pickers, the Home
+    "attendance not marked" banner and the Today panel. Covered classes show a
+    "Cover · today" badge and a `(cover)` suffix in the dropdown. Save handlers already
+    key off `selectedClass`, so nothing else was needed.
+- **Effort: M** (was L — the admin side + rules were already done).
+- **For KIS:** cover teachers must be **existing staff accounts**. Admin assigns cover in
+  **Cover Manager**; the covered class then appears in that teacher's portal for that day,
+  attendance + behaviour only.
 
 ### 10. Curriculum — remove the percentage/coverage bar — ✅ DONE
 
@@ -271,7 +287,7 @@ Not started: #2, #3, #9, #11.
 | 11 | Teacher-authored curriculum | M | Minimal add form |
 | 7 | Alert admin when attendance not taken | M | ✅ Done — `/api/cron?job=attendance-watch` + GH Actions ping |
 | 2 | 6 grades per year | **L** | Schema change — get spec from KIS |
-| 9 | Cover-teacher login | **L** | New role + rules |
+| 9 | Cover-teacher login | M | ✅ Done — `cover_assignments` surfaced in teacher portal (attendance + behaviour, today only) |
 
 ---
 

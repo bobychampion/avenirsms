@@ -29,11 +29,22 @@ export interface TeacherAssignments {
   classIdToName: Record<string, string>;
   /** class name -> classId (inverse of classIdToName), for callers writing records that need a classId FK. */
   classNameToId: Record<string, string>;
+  /**
+   * Classes this teacher is covering **today only** (admin-assigned in Cover Manager,
+   * stored in `cover_assignments`). Cover access is scoped to attendance + behaviour —
+   * NOT grades or curriculum — so it is deliberately kept separate from
+   * `assignedClassNames` / `subjectsByClass`.
+   */
+  coverClassNamesToday: string[];
+  /** className -> subject names this teacher is covering today. */
+  coverSubjectsByClassToday: Record<string, string[]>;
   isFormTutor: (className: string) => boolean;
   /** True if the teacher can mark attendance/grades for this class (any subject, or form tutor). */
   canAccessClass: (className: string) => boolean;
   /** True if the teacher teaches this specific subject in this class (or is form tutor). */
   canTeachSubject: (className: string, subjectName: string) => boolean;
+  /** True if this class is one the teacher is covering today (own assignments excluded). */
+  isCoveringToday: (className: string) => boolean;
   reload: () => void;
 }
 
@@ -45,6 +56,7 @@ export function useTeacherAssignments(): TeacherAssignments {
   const [subjectsByClass, setSubjectsByClass] = useState<Record<string, string[]>>({});
   const [classIdToName, setClassIdToName] = useState<Record<string, string>>({});
   const [classNameToId, setClassNameToId] = useState<Record<string, string>>({});
+  const [coverSubjectsByClassToday, setCoverSubjectsByClassToday] = useState<Record<string, string[]>>({});
   const [reloadToken, setReloadToken] = useState(0);
 
   useEffect(() => {
@@ -54,10 +66,12 @@ export function useTeacherAssignments(): TeacherAssignments {
 
     (async () => {
       try {
-        const [subjectSnap, tutorSnap, classSnap] = await Promise.all([
+        const todayStr = new Date().toISOString().split('T')[0];
+        const [subjectSnap, tutorSnap, classSnap, coverSnap] = await Promise.all([
           getDocs(query(collection(db, 'class_subjects'), where('schoolId', '==', schoolId), where('teacherId', '==', uid))),
           getDocs(query(collection(db, 'classes'), where('schoolId', '==', schoolId), where('formTutorId', '==', uid))),
           getDocs(query(collection(db, 'classes'), where('schoolId', '==', schoolId))),
+          getDocs(query(collection(db, 'cover_assignments'), where('schoolId', '==', schoolId), where('coverTeacherId', '==', uid))),
         ]);
         if (cancelled) return;
 
@@ -87,10 +101,23 @@ export function useTeacherAssignments(): TeacherAssignments {
           if (name) finalByName[name] = ['__all__'];
         });
 
+        // Today's cover assignments (attendance + behaviour only — never merged into
+        // finalByName, which gates grades/curriculum).
+        const coverByName: Record<string, string[]> = {};
+        coverSnap.docs.forEach(d => {
+          const c = d.data();
+          if (c.date !== todayStr || c.status !== 'assigned') return;
+          const name = (c.className as string) || '';
+          if (!name) return;
+          if (!coverByName[name]) coverByName[name] = [];
+          if (c.subject && !coverByName[name].includes(c.subject)) coverByName[name].push(c.subject);
+        });
+
         setClassIdToName(idToName);
         setClassNameToId(nameToId);
         setSubjectsByClass(finalByName);
         setAssignedClassNames(Object.keys(finalByName).sort());
+        setCoverSubjectsByClassToday(coverByName);
       } catch (e) {
         console.warn('useTeacherAssignments: failed to load assignments:', e);
       } finally {
@@ -107,6 +134,7 @@ export function useTeacherAssignments(): TeacherAssignments {
     const subs = subjectsByClass[className] || [];
     return subs.includes('__all__') || subs.includes(subjectName);
   };
+  const isCoveringToday = (className: string) => !!coverSubjectsByClassToday[className]?.length;
 
   return {
     loading,
@@ -114,9 +142,12 @@ export function useTeacherAssignments(): TeacherAssignments {
     subjectsByClass,
     classIdToName,
     classNameToId,
+    coverClassNamesToday: Object.keys(coverSubjectsByClassToday).sort(),
+    coverSubjectsByClassToday,
     isFormTutor,
     canAccessClass,
     canTeachSubject,
+    isCoveringToday,
     reload: () => setReloadToken(t => t + 1),
   };
 }

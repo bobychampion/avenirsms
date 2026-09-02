@@ -62,8 +62,18 @@ export default function TeacherPortal() {
     assignedClassNames: myAssignedClasses,
     subjectsByClass: myAssignedSubjectsByClass,
     classNameToId: myClassNameToId,
+    coverClassNamesToday,
+    coverSubjectsByClassToday,
+    isCoveringToday,
     loading: assignmentLoading,
   } = useTeacherAssignments();
+
+  // Classes available for attendance + behaviour = own classes plus any the teacher is
+  // covering today. Cover access is deliberately NOT extended to Gradebook / Curriculum.
+  const attendanceClasses = React.useMemo(
+    () => Array.from(new Set([...myAssignedClasses, ...coverClassNamesToday])).sort(),
+    [myAssignedClasses, coverClassNamesToday],
+  );
 
   const [students, setStudents] = useState<Student[]>([]);
   const [assignments, setAssignments] = useState<Assignment[]>([]);
@@ -284,8 +294,8 @@ export default function TeacherPortal() {
   // Keep selectedClass valid as the teacher's assignment list loads/changes.
   useEffect(() => {
     if (assignmentLoading) return;
-    setSelectedClass(prev => myAssignedClasses.includes(prev) ? prev : (myAssignedClasses[0] ?? ''));
-  }, [assignmentLoading, myAssignedClasses]);
+    setSelectedClass(prev => attendanceClasses.includes(prev) ? prev : (myAssignedClasses[0] ?? attendanceClasses[0] ?? ''));
+  }, [assignmentLoading, myAssignedClasses, attendanceClasses]);
 
   // Special Lessons this teacher is assigned to (independent of class_subjects/formTutorId).
   useEffect(() => {
@@ -694,10 +704,13 @@ export default function TeacherPortal() {
   };
 
   // ── Subject Attendance (only relevant when attendanceMode !== 'daily_only') ──────────
-  // Subjects this teacher can mark subject attendance for in the selected class.
+  // Subjects this teacher can mark subject attendance for in the selected class —
+  // own assignments plus any subject they're covering in this class today.
   const mySubjectOptionsForSelectedClass: string[] = (() => {
     const subs = myAssignedSubjectsByClass[selectedClass] ?? [];
-    return subs.includes('__all__') ? allSubjects : subs;
+    if (subs.includes('__all__')) return allSubjects;
+    const cover = coverSubjectsByClassToday[selectedClass] ?? [];
+    return Array.from(new Set([...subs, ...cover]));
   })();
 
   // Keep the selected subject valid as the class or assignment list changes.
@@ -1432,7 +1445,7 @@ export default function TeacherPortal() {
         <>
         {/* Attendance reminder banner */}
         {(() => {
-          const pending = myAssignedClasses.filter(c => !todaysMarkedClasses.has(c));
+          const pending = attendanceClasses.filter(c => !todaysMarkedClasses.has(c));
           if (pending.length === 0) return null;
           return (
             <div className="mb-4 flex flex-wrap items-center gap-3 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3">
@@ -1459,7 +1472,7 @@ export default function TeacherPortal() {
         <TodayPanel
           myTimetables={myTimetables}
           mySpecialLessons={mySpecialLessons}
-          myAssignedClasses={myAssignedClasses}
+          myAssignedClasses={attendanceClasses}
           todaysMarkedClasses={todaysMarkedClasses}
           teacherName={profile?.displayName}
           onOpenDailyAttendance={openDailyAttendanceFor}
@@ -1559,7 +1572,7 @@ export default function TeacherPortal() {
       {/* ── ATTENDANCE TAB ── */}
       {activeTab === 'attendance' && (
         <div className="space-y-6">
-          {myAssignedClasses.length === 0 ? (
+          {attendanceClasses.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-20 bg-amber-50 rounded-2xl border border-amber-200">
               <Lock className="w-12 h-12 text-amber-400 mx-auto mb-3" />
               <h3 className="font-bold text-slate-900 mb-1">No Classes Assigned</h3>
@@ -1583,8 +1596,11 @@ export default function TeacherPortal() {
                     onChange={e => setSelectedClass(e.target.value)}
                     className="px-3 py-2 rounded-xl border border-slate-200 text-sm font-medium outline-none focus:ring-2 focus:ring-indigo-500"
                   >
-                    {myAssignedClasses.map(c => <option key={c} value={c}>{c}</option>)}
+                    {attendanceClasses.map(c => <option key={c} value={c}>{isCoveringToday(c) && !myAssignedClasses.includes(c) ? `${c} (cover)` : c}</option>)}
                   </select>
+                  {isCoveringToday(selectedClass) && !myAssignedClasses.includes(selectedClass) && (
+                    <span className="text-[10px] font-bold uppercase tracking-wide px-2 py-1 rounded-lg bg-violet-100 text-violet-700">Cover · today</span>
+                  )}
                 </div>
                 <input
                   type="date"
@@ -1701,7 +1717,7 @@ export default function TeacherPortal() {
       {/* ── SUBJECT ATTENDANCE TAB (only when attendanceMode !== 'daily_only') ── */}
       {activeTab === 'subject_attendance' && (
         <div className="space-y-6">
-          {myAssignedClasses.length === 0 || mySubjectOptionsForSelectedClass.length === 0 ? (
+          {attendanceClasses.length === 0 || mySubjectOptionsForSelectedClass.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-20 bg-amber-50 rounded-2xl border border-amber-200">
               <Lock className="w-12 h-12 text-amber-400 mx-auto mb-3" />
               <h3 className="font-bold text-slate-900 mb-1">No Subjects Assigned</h3>
@@ -1727,8 +1743,11 @@ export default function TeacherPortal() {
                     onChange={e => { setSelectedClass(e.target.value); setSubjectAttendanceTimetablePeriodId(undefined); }}
                     className="px-3 py-2 rounded-xl border border-slate-200 text-sm font-medium outline-none focus:ring-2 focus:ring-indigo-500"
                   >
-                    {myAssignedClasses.map(c => <option key={c} value={c}>{c}</option>)}
+                    {attendanceClasses.map(c => <option key={c} value={c}>{isCoveringToday(c) && !myAssignedClasses.includes(c) ? `${c} (cover)` : c}</option>)}
                   </select>
+                  {isCoveringToday(selectedClass) && !myAssignedClasses.includes(selectedClass) && (
+                    <span className="text-[10px] font-bold uppercase tracking-wide px-2 py-1 rounded-lg bg-violet-100 text-violet-700">Cover · today</span>
+                  )}
                 </div>
                 <select
                   value={subjectAttendanceSubject}
@@ -2150,7 +2169,7 @@ export default function TeacherPortal() {
       {/* ── SKILLS TAB ── */}
       {activeTab === 'skills' && (
         <div className="space-y-6">
-          {myAssignedClasses.length === 0 ? (
+          {attendanceClasses.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-20 bg-amber-50 rounded-2xl border border-amber-200">
               <Lock className="w-12 h-12 text-amber-400 mx-auto mb-3" />
               <h3 className="font-bold text-slate-900 mb-1">No Classes Assigned</h3>
@@ -2163,9 +2182,12 @@ export default function TeacherPortal() {
                 <Filter className="w-4 h-4 text-slate-400" />
                 <select value={selectedClass} onChange={e => setSelectedClass(e.target.value)}
                   className="px-3 py-2 rounded-xl border border-slate-200 text-sm font-medium outline-none focus:ring-2 focus:ring-indigo-500">
-                  {myAssignedClasses.map(c => <option key={c}>{c}</option>)}
+                  {attendanceClasses.map(c => <option key={c}>{isCoveringToday(c) && !myAssignedClasses.includes(c) ? `${c} (cover)` : c}</option>)}
                 </select>
               </div>
+              {isCoveringToday(selectedClass) && !myAssignedClasses.includes(selectedClass) && (
+                <span className="text-[10px] font-bold uppercase tracking-wide px-2 py-1 rounded-lg bg-violet-100 text-violet-700">Cover · today</span>
+              )}
               <select value={skillsTerm} onChange={e => setSkillsTerm(e.target.value)}
                 className="px-3 py-2 rounded-xl border border-slate-200 text-sm font-medium outline-none focus:ring-2 focus:ring-indigo-500">
                 {terms.map(t => <option key={t}>{t}</option>)}

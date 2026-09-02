@@ -21,10 +21,14 @@ code and what it takes to do.
 | 4 | Messages — guardians showing double | ✅ Done |
 | 5 | Messages — show full guardian/contact list | ✅ Done |
 | 8 | Behaviour — remove "Sports" (now configurable) | ✅ Done |
+| 7 | Alert admin when attendance isn't taken (timetable-driven) | ✅ Done — needs 1 deploy step |
 | 10 | Curriculum — remove the percentage/coverage bar | ✅ Done |
 | 12 | Remove Assignments tab (now a school toggle) | ✅ Done |
 
-Not started: #2, #3, #6, #7, #9, #11.
+Not started: #2, #3, #6, #9, #11.
+
+**#7 post-deploy step:** add repo secrets `ATTENDANCE_WATCH_URL` +
+`CRON_SECRET`, then `firebase deploy --only firestore:indexes`.
 
 ### How to configure the new toggles (School Settings → Academic)
 - **#1** — set Grading Mode to *Single Grade*, add a band with grade values `1`,
@@ -144,19 +148,38 @@ Not started: #2, #3, #6, #7, #9, #11.
   `attendanceMode` isn't `daily_only` — if it is, the tab is hidden entirely and that's
   why they think it doesn't exist.
 
-### 7. Admin notification when a teacher isn't in class
+### 7. Admin notification when a teacher isn't in class — ✅ DONE (needs one deploy step)
 
-> "Does Admin get a notification if a teacher isn't in class?"
+> "Does Admin get a notification if a teacher isn't in class? ... some schools don't use
+> geofencing so use the timetable — if the class starts and the teacher hasn't recorded
+> attendance within a stipulated time adjusted by the admin, it just sends notice to the
+> admin."
 
-- **In code:** there's clock-in / geofence infrastructure (`checkInLoading`,
-  `TeacherCheckIn`, "Outside school boundary" hero, `src/pages/TeacherPortal.tsx:259`) but
-  **no absence alert** — nothing notifies admin when a teacher fails to clock in or leaves
-  the boundary during a scheduled period.
-- **Work:** Scheduled job (Vercel cron) that cross-refs timetable periods against
-  `TeacherCheckIn` records and writes an admin `notifications` doc when a teacher has a
-  class but no active check-in.
-- **Effort: M.** New backend, per the Vercel migration architecture. Answer to their
-  literal question today: **no.**
+- **Design (timetable-driven, no GPS):** if a timetabled lesson has started and **no
+  attendance — daily *or* subject — has been recorded for that class today**, once the
+  admin-set grace period elapses, every school admin gets a `notifications` doc
+  (`type: 'attendance'`) plus an FCM push.
+- **Fix applied:**
+  - `api/cron/attendance-watch.ts` — new endpoint. Per school with alerts enabled:
+    resolves "now" in the school's timezone, walks today's `timetables`, and for each
+    lesson whose `start + grace` is within the last 90 min checks `attendance`
+    (by class + date) and `subjectAttendance` (by className + subjectName + date). If
+    neither exists it alerts every `admin` / `School_admin` user. Idempotent via an
+    `attendance_alerts/{school_date_class_period}` marker (one alert per lesson, ever);
+    markers self-purge after 3 days.
+  - `school_settings.attendanceAlertsEnabled` (default **off**) +
+    `attendanceAlertGraceMinutes` (default 15) — **School Settings → Attendance**, a
+    checkbox and a minutes field.
+  - `firestore.indexes.json` — added `subjectAttendance (schoolId, attendanceDate)`.
+  - `.github/workflows/attendance-watch.yml` — pings the endpoint every 20 min on
+    weekdays. It is **not** a Vercel cron: the Hobby plan caps crons at 2 (both used) and
+    runs them once/day, too coarse for a "15 min after class starts" check.
+- **Deploy step (once):** add repo secrets `ATTENDANCE_WATCH_URL`
+  (`https://www.avenirsms.com.ng/api/cron/attendance-watch`) and `CRON_SECRET` (same value
+  as the Vercel env var), then run `firebase deploy --only firestore:indexes`. Any
+  external scheduler (cron-job.org, etc.) hitting the endpoint with the bearer token works
+  as an alternative to GitHub Actions.
+- **Effort: M.** Delivered.
 
 ### 8. Behaviour — remove "Sports"
 
@@ -242,7 +265,7 @@ Not started: #2, #3, #6, #7, #9, #11.
 | 6 | Subject-only attendance roster | S→L | Config today; enrolment model later |
 | 3 | "All Parents" broadcast | M | Needs one-way vs. threaded decision |
 | 11 | Teacher-authored curriculum | M | Minimal add form |
-| 7 | Alert admin when teacher not in class | M | New Vercel cron |
+| 7 | Alert admin when attendance not taken | M | ✅ Done — `attendance-watch` endpoint + GH Actions ping |
 | 2 | 6 grades per year | **L** | Schema change — get spec from KIS |
 | 9 | Cover-teacher login | **L** | New role + rules |
 

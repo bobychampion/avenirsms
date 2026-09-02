@@ -176,6 +176,10 @@ export interface SchoolSettings {
   attendanceExamThreshold: number;
   /** School days per week (Mon–Fri = 5, Mon–Sat = 6) */
   schoolDaysPerWeek: 5 | 6;
+  /** Notify every admin when a timetabled lesson starts and no attendance (daily or subject) is recorded for that class within the grace window. Timetable-driven, no GPS needed. */
+  attendanceAlertsEnabled?: boolean;
+  /** Minutes after a lesson's start time before the "attendance not taken" alert fires. Default 15. */
+  attendanceAlertGraceMinutes?: number;
 
   // ── Assessment & Grading ─────────────────────────────────────────────────
   /** Maximum CA (continuous assessment) score out of total */
@@ -324,6 +328,8 @@ export const defaultSettings: SchoolSettings = {
   attendanceWarningThreshold: 75,
   attendanceExamThreshold: 70,
   schoolDaysPerWeek: 5,
+  attendanceAlertsEnabled: false,
+  attendanceAlertGraceMinutes: 15,
   // Assessment
   caMaxScore: 40,
   examMaxScore: 60,
@@ -2307,6 +2313,37 @@ export default function SchoolSettingsPage() {
                 </div>
                 <p className="text-xs text-slate-400 mt-1">Students below this cannot sit exams.</p>
               </div>
+            </div>
+
+            <div className="mt-6 pt-6 border-t border-slate-100">
+              <label className="flex items-start gap-3 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={form.attendanceAlertsEnabled === true}
+                  onChange={e => field('attendanceAlertsEnabled', e.target.checked)}
+                  className="mt-0.5 w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                />
+                <span>
+                  <span className="block text-sm font-semibold text-slate-700">Alert admins when attendance isn&apos;t taken</span>
+                  <span className="block text-xs text-slate-500">
+                    If a timetabled lesson starts and no daily or subject attendance is recorded for that class within the grace period, every admin gets a notification. Uses the class timetable only — no GPS required.
+                  </span>
+                </span>
+              </label>
+              {form.attendanceAlertsEnabled && (
+                <div className="mt-4 sm:w-64">
+                  <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">Grace period (minutes)</label>
+                  <input
+                    type="number"
+                    min={0}
+                    max={180}
+                    value={form.attendanceAlertGraceMinutes ?? 15}
+                    onChange={e => field('attendanceAlertGraceMinutes', Math.max(0, Math.min(180, Number(e.target.value))))}
+                    className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm"
+                  />
+                  <p className="text-xs text-slate-400 mt-1">How long after a lesson&apos;s start time to wait before alerting.</p>
+                </div>
+              )}
             </div>
           </section>
         </div>

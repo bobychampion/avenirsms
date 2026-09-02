@@ -1,0 +1,40 @@
+name: Attendance watch
+
+# Pings the "attendance not taken" endpoint on a short interval during school
+# hours. It can't be a Vercel Cron: the Hobby plan caps cron jobs at 2 (both
+# already used) and only runs them once a day.
+#
+# Required repo secrets (Settings > Secrets and variables > Actions):
+#   ATTENDANCE_WATCH_URL  full URL, e.g. https://www.avenirsms.com.ng/api/cron/attendance-watch
+#   CRON_SECRET           same value as the Vercel environment variable
+#
+# Times are UTC. 05:00–17:59 UTC covers ~06:00–19:00 in West/Central Africa
+# (UTC+1) and Europe (UTC+1/+2). GitHub's scheduler can lag under load; the
+# endpoint's 90-minute alert window absorbs that.
+
+on:
+  schedule:
+    - cron: '*/20 5-17 * * 1-5'
+  workflow_dispatch: {}
+
+concurrency:
+  group: attendance-watch
+  cancel-in-progress: false
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call attendance-watch endpoint
+        run: |
+          if [ -z "${{ secrets.ATTENDANCE_WATCH_URL }}" ] || [ -z "${{ secrets.CRON_SECRET }}" ]; then
+            echo "ATTENDANCE_WATCH_URL and/or CRON_SECRET secret is not set — skipping."
+            exit 0
+          fi
+          code=$(curl -sS -m 60 -o /tmp/out.txt -w '%{http_code}' \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            "${{ secrets.ATTENDANCE_WATCH_URL }}")
+          echo "HTTP $code"
+          cat /tmp/out.txt
+          echo
+          test "$code" = "200"

@@ -224,8 +224,14 @@ export async function batchUpsertSubjectAttendance(
       }));
     } else {
       const newRef = doc(collection(db, 'subjectAttendance'));
+      // `db` is created without `ignoreUndefinedProperties`, so spreading a
+      // record whose optional `timetablePeriodId` is undefined would make
+      // Firestore reject the whole batch with `invalid-argument`. Drop it
+      // unless it actually has a value.
+      const { timetablePeriodId, ...rest } = record;
       batch.set(newRef, {
-        ...record,
+        ...rest,
+        ...(timetablePeriodId ? { timetablePeriodId } : {}),
         ...(schoolId ? { schoolId } : {}),
         recordedAt: serverTimestamp(),
       });

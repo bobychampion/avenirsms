@@ -160,13 +160,17 @@ Not started: #2, #3, #6, #9, #11.
   admin-set grace period elapses, every school admin gets a `notifications` doc
   (`type: 'attendance'`) plus an FCM push.
 - **Fix applied:**
-  - `api/cron/attendance-watch.ts` — new endpoint. Per school with alerts enabled:
-    resolves "now" in the school's timezone, walks today's `timetables`, and for each
-    lesson whose `start + grace` is within the last 90 min checks `attendance`
-    (by class + date) and `subjectAttendance` (by className + subjectName + date). If
-    neither exists it alerts every `admin` / `School_admin` user. Idempotent via an
+  - `api/_lib/jobs.ts` → `runAttendanceWatch`, dispatched by `api/cron/index.ts` at
+    `/api/cron?job=attendance-watch`. Per school with alerts enabled: resolves "now" in
+    the school's timezone, walks today's `timetables`, and for each lesson whose
+    `start + grace` is within the last 90 min checks `attendance` (by class + date) and
+    `subjectAttendance` (by className + subjectName + date). If neither exists it alerts
+    every `admin` / `School_admin` user. Idempotent via an
     `attendance_alerts/{school_date_class_period}` marker (one alert per lesson, ever);
     markers self-purge after 3 days.
+  - All cron work was consolidated into one dispatcher function in the same change —
+    Vercel Hobby caps the project at 12 Serverless Functions and the new endpoint had
+    pushed it to 13 (failed deploy). Now 10.
   - `school_settings.attendanceAlertsEnabled` (default **off**) +
     `attendanceAlertGraceMinutes` (default 15) — **School Settings → Attendance**, a
     checkbox and a minutes field.
@@ -175,10 +179,10 @@ Not started: #2, #3, #6, #9, #11.
     weekdays. It is **not** a Vercel cron: the Hobby plan caps crons at 2 (both used) and
     runs them once/day, too coarse for a "15 min after class starts" check.
 - **Deploy step (once):** add repo secrets `ATTENDANCE_WATCH_URL`
-  (`https://www.avenirsms.com.ng/api/cron/attendance-watch`) and `CRON_SECRET` (same value
-  as the Vercel env var), then run `firebase deploy --only firestore:indexes`. Any
-  external scheduler (cron-job.org, etc.) hitting the endpoint with the bearer token works
-  as an alternative to GitHub Actions.
+  (`https://www.avenirsms.com.ng/api/cron?job=attendance-watch`) and `CRON_SECRET` (same
+  value as the Vercel env var), then run `firebase deploy --only firestore:indexes`. Any
+  external scheduler (cron-job.org, etc.) hitting that URL with the bearer token works as
+  an alternative to GitHub Actions.
 - **Effort: M.** Delivered.
 
 ### 8. Behaviour — remove "Sports"
@@ -265,7 +269,7 @@ Not started: #2, #3, #6, #9, #11.
 | 6 | Subject-only attendance roster | S→L | Config today; enrolment model later |
 | 3 | "All Parents" broadcast | M | Needs one-way vs. threaded decision |
 | 11 | Teacher-authored curriculum | M | Minimal add form |
-| 7 | Alert admin when attendance not taken | M | ✅ Done — `attendance-watch` endpoint + GH Actions ping |
+| 7 | Alert admin when attendance not taken | M | ✅ Done — `/api/cron?job=attendance-watch` + GH Actions ping |
 | 2 | 6 grades per year | **L** | Schema change — get spec from KIS |
 | 9 | Cover-teacher login | **L** | New role + rules |
 

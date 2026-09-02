@@ -18,9 +18,10 @@ const API_ROUTES: { path: string; method: 'GET' | 'POST'; label: string; group: 
   { path: '/api/get-upload-signature', method: 'POST', label: 'get-upload-signature', group: 'Core' },
   { path: '/api/set-student-password', method: 'POST', label: 'set-student-password', group: 'Core' },
   { path: '/api/delete-school', method: 'POST', label: 'delete-school', group: 'Core' },
-  { path: '/api/cron/daily-reminders', method: 'GET', label: 'cron/daily-reminders', group: 'Cron' },
-  { path: '/api/cron/expire-demo', method: 'GET', label: 'cron/expire-demo', group: 'Cron' },
-  { path: '/api/cron/send-scheduled', method: 'GET', label: 'cron/send-scheduled', group: 'Cron' },
+  { path: '/api/cron?job=daily-reminders', method: 'GET', label: 'cron/daily-reminders', group: 'Cron' },
+  { path: '/api/cron?job=expire-demo', method: 'GET', label: 'cron/expire-demo', group: 'Cron' },
+  { path: '/api/cron?job=send-scheduled', method: 'GET', label: 'cron/send-scheduled', group: 'Cron' },
+  { path: '/api/cron?job=attendance-watch', method: 'GET', label: 'cron/attendance-watch', group: 'Cron' },
 ];
 
 type Status = 'checking' | 'up' | 'down';

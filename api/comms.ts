@@ -8,10 +8,9 @@ import { buildStaffBroadcastEmail } from '../src/utils/staffBroadcastEmail.js';
 
 const resend = new Resend(process.env.RESEND_API_KEY);
 
-// Communications Hub — Vercel's function-count budget means the audience-
-// resolution and send helpers below live in this file (not api/_lib/) so
-// api/cron/send-scheduled.ts can import them without adding another file
-// under api/. Handles: preview-audience / send / schedule / cancel.
+// Communications Hub — the audience-resolution and send helpers below are
+// exported from this route file so api/_lib/jobs.ts (processDueMessages) can
+// reuse them. Handles: preview-audience / send / schedule / cancel.
 
 export interface AudienceFilter {
   roles?: string[]; // defaults to admin + School_admin + teacher

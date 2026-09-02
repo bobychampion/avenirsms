@@ -5,7 +5,7 @@ name: Attendance watch
 # already used) and only runs them once a day.
 #
 # Required repo secrets (Settings > Secrets and variables > Actions):
-#   ATTENDANCE_WATCH_URL  full URL, e.g. https://www.avenirsms.com.ng/api/cron/attendance-watch
+#   ATTENDANCE_WATCH_URL  full URL, e.g. https://www.avenirsms.com.ng/api/cron?job=attendance-watch
 #   CRON_SECRET           same value as the Vercel environment variable
 #
 # Times are UTC. 05:00–17:59 UTC covers ~06:00–19:00 in West/Central Africa

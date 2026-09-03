@@ -547,6 +547,13 @@ service cloud.firestore {
       allow delete: if isSuperAdmin() || (isAdmin() && docBelongsToCallerSchool());
     }
 
+    match /timetable_templates/{templateId} {
+      allow read: if isAuthenticated() && (isSuperAdmin() || docBelongsToCallerSchool());
+      // Same create/update-vs-delete split as /timetables above, for the same reason.
+      allow create, update: if isSuperAdmin() || (isAdmin() && newDocBelongsToCallerSchool());
+      allow delete: if isSuperAdmin() || (isAdmin() && docBelongsToCallerSchool());
+    }
+
     // ─── Assignments ──────────────────────────────────────────────────────────
 
     match /assignments/{assignmentId} {

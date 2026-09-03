@@ -353,6 +353,17 @@ export interface Timetable {
   updatedAt: any;
 }
 
+/** A reusable schedule pattern an admin can apply when starting a new class's timetable. */
+export interface TimetableTemplate {
+  id?: string;
+  schoolId: string;
+  name: string;
+  /** Same weekday-keyed shape as Timetable['schedule'], reused as-is. */
+  schedule: Timetable['schedule'];
+  createdAt: any;
+  createdBy: string; // uid, display-only — no permission logic depends on it
+}
+
 /** Base weekday set — always available regardless of school settings. */
 export const DAYS_OF_WEEK = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'] as const;
 /** Opt-in weekend days a school can enable via school_settings.weekendDays. */

@@ -82,3 +82,100 @@ export function detectTimetableConflicts(
 export function slotColumnHeaders(slots: TimetablePeriodSlot[]): TimetablePeriodSlot[] {
   return sortedPeriodSlots(slots);
 }
+
+// ─── Copy / paste / templates / duplicate-to-class ─────────────────────────
+
+/** Re-keys a copied period onto a (possibly different) slot — times always follow the target slot. */
+export function copyPeriodToSlot(period: TimetablePeriod, targetSlot: TimetablePeriodSlot): TimetablePeriod {
+  return { ...period, slotId: targetSlot.id, startTime: targetSlot.startTime, endTime: targetSlot.endTime };
+}
+
+/** Pastes a single copied period into a day's period list at targetSlot, replacing whatever was there. */
+export function pastePeriodIntoDay(
+  dayPeriods: TimetablePeriod[],
+  targetSlot: TimetablePeriodSlot,
+  copiedPeriod: TimetablePeriod,
+  allSlots: TimetablePeriodSlot[]
+): TimetablePeriod[] {
+  if (targetSlot.type === 'break') return dayPeriods; // defense in depth — UI already disables this
+  return upsertPeriodForSlot(dayPeriods, targetSlot, { subject: copiedPeriod.subject, teacher: copiedPeriod.teacher }, allSlots);
+}
+
+/**
+ * Copies an entire day's period list, re-keyed onto a target day's own column set — each source
+ * lesson slot's period is remapped by lesson-index onto the target's lesson slot at that same
+ * index (the same convention findPeriodForSlot/upsertPeriodForSlot already use for legacy data).
+ * sourceColumns/targetColumns are the same array in every call site today (one school-wide bell
+ * schedule) — kept as two params for clarity, not because they differ in practice.
+ */
+export function copyDayPeriods(
+  sourceDayPeriods: TimetablePeriod[],
+  sourceColumns: TimetablePeriodSlot[],
+  targetColumns: TimetablePeriodSlot[]
+): TimetablePeriod[] {
+  const sourceLessons = lessonSlots(sourceColumns);
+  const targetLessons = lessonSlots(targetColumns);
+  const result: TimetablePeriod[] = [];
+  sourceLessons.forEach((slot, i) => {
+    const period = findPeriodForSlot(sourceDayPeriods, slot, sourceColumns);
+    const targetSlot = targetLessons[i];
+    if (period && targetSlot) result.push(copyPeriodToSlot(period, targetSlot));
+  });
+  return result;
+}
+
+/** Replaces a target day's period list wholesale with a copied day's periods (paste-day). */
+export function pasteDayIntoSchedule(
+  schedule: Timetable['schedule'],
+  targetDay: keyof Timetable['schedule'],
+  copiedDayPeriods: TimetablePeriod[]
+): Timetable['schedule'] {
+  return { ...schedule, [targetDay]: copiedDayPeriods };
+}
+
+/** Seeds a schedule from a template's schedule, restricted to the target school's actual days. */
+export function applyTemplateToSchedule(
+  templateSchedule: Timetable['schedule'],
+  days: readonly string[]
+): Timetable['schedule'] {
+  const result = { Monday: [], Tuesday: [], Wednesday: [], Thursday: [], Friday: [], Saturday: [], Sunday: [] } as Timetable['schedule'];
+  days.forEach(day => {
+    const key = day as keyof Timetable['schedule'];
+    result[key] = (templateSchedule[key] || []).map(p => ({ ...p }));
+  });
+  return result;
+}
+
+/**
+ * Does `schedule` (a candidate — e.g. about to be pasted onto targetClass) double-book any teacher
+ * against another class's ALREADY-SAVED timetable for the same term+session? Non-blocking check —
+ * callers render the result as a warning, not a hard stop.
+ */
+export function detectCrossClassConflicts(
+  schedule: Timetable['schedule'],
+  days: readonly string[],
+  targetClass: string,
+  term: string,
+  session: string,
+  otherTimetables: Timetable[]
+): string[] {
+  const issues = new Set<string>();
+  const others = otherTimetables.filter(t => t.term === term && t.session === session && t.class !== targetClass);
+
+  days.forEach(day => {
+    const dayKey = day as keyof Timetable['schedule'];
+    const candidatePeriods = schedule[dayKey] || [];
+    candidatePeriods.forEach(period => {
+      if (!period.teacher) return;
+      others.forEach(other => {
+        const otherPeriods = other.schedule[dayKey] || [];
+        const clash = otherPeriods.find(p => p.teacher === period.teacher && p.startTime === period.startTime);
+        if (clash) {
+          issues.add(`${period.teacher} is already teaching ${other.class} on ${day} at ${period.startTime}`);
+        }
+      });
+    });
+  });
+
+  return [...issues];
+}

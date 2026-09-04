@@ -308,14 +308,38 @@ export default function TimetableManagement() {
   };
 
   const saveTimetable = async () => {
-    if (!timetable) return;
+    if (!timetable || !selectedClass) return;
     setSaving(true);
-    const docId = `${selectedClass}_${selectedTerm}_${currentSession}`.replace(/[\s/]/g, '_');
-    await setDoc(doc(db, 'timetables', docId), { ...timetable, updatedAt: serverTimestamp(), schoolId: schoolId ?? undefined })
-      .catch(e => handleFirestoreError(e, OperationType.WRITE, 'timetables'));
-    setSaving(false);
-    setSaved(true);
-    setTimeout(() => setSaved(false), 3000);
+    try {
+      const docId = `${selectedClass}_${selectedTerm}_${currentSession}`.replace(/[\s/]/g, '_');
+      // Rebuild each period with only defined fields — Firestore rejects `undefined`
+      // field values anywhere in the document (e.g. a period with no teacher assigned).
+      const cleanSchedule = Object.fromEntries(
+        Object.entries(timetable.schedule).map(([day, periods]) => [
+          day,
+          (periods as TimetablePeriod[]).map(p => {
+            const c: TimetablePeriod = { subject: p.subject, startTime: p.startTime, endTime: p.endTime };
+            if (p.slotId) c.slotId = p.slotId;
+            if (p.teacher) c.teacher = p.teacher;
+            return c;
+          }),
+        ])
+      ) as Timetable['schedule'];
+      const payload: Record<string, unknown> = {
+        ...timetable,
+        schedule: cleanSchedule,
+        updatedAt: serverTimestamp(),
+      };
+      if (schoolId) payload.schoolId = schoolId;
+      await setDoc(doc(db, 'timetables', docId), payload);
+      setSaved(true);
+      setTimeout(() => setSaved(false), 3000);
+    } catch (e) {
+      toast.error('Could not save the timetable — please try again.');
+      handleFirestoreError(e, OperationType.WRITE, 'timetables');
+    } finally {
+      setSaving(false);
+    }
   };
 
   const SUBJECT_COLORS = [

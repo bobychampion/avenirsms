@@ -15,6 +15,8 @@ import { db, getMessagingInstance } from '../firebase';
 
 const VAPID_KEY = import.meta.env.VITE_FCM_VAPID_KEY as string | undefined;
 
+let vapidWarningShown = false;
+
 // ── Permission & Token ────────────────────────────────────────────────────────
 
 /**
@@ -37,11 +39,16 @@ export async function initFCMForUser(uid: string): Promise<string | null> {
   if (!messaging) return null;
 
   if (!VAPID_KEY) {
-    console.warn(
-      '[FCM] VITE_FCM_VAPID_KEY is not set. ' +
-      'Get it from Firebase Console → Project Settings → Cloud Messaging ' +
-      '→ Web Push certificates → Generate key pair.'
-    );
+    // Push notifications are simply disabled until the key is configured — not an error.
+    // Warn once, and only in development, so the production console stays clean.
+    if (import.meta.env.DEV && !vapidWarningShown) {
+      vapidWarningShown = true;
+      console.info(
+        '[FCM] Web push disabled: VITE_FCM_VAPID_KEY is not set. ' +
+        'Add it from Firebase Console → Project Settings → Cloud Messaging ' +
+        '→ Web Push certificates → Generate key pair.'
+      );
+    }
     return null;
   }
 

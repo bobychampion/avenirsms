@@ -50,8 +50,11 @@ export function upsertPeriodForSlot(
     subject: data.subject.trim(),
     startTime: slot.startTime,
     endTime: slot.endTime,
-    teacher: data.teacher || undefined,
   };
+  // Firestore rejects `undefined` field values — only set `teacher` when one is assigned.
+  if (data.teacher && data.teacher.trim()) {
+    period.teacher = data.teacher.trim();
+  }
 
   return [...without, period];
 }

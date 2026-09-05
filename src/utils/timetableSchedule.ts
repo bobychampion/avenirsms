@@ -1,4 +1,4 @@
-import type { Timetable, TimetablePeriod, TimetablePeriodSlot } from '../types';
+import type { ClassSubject, Timetable, TimetablePeriod, TimetablePeriodSlot } from '../types';
 import { lessonSlots, sortedPeriodSlots } from './timetablePeriods';
 
 /** Find the scheduled lesson for a template slot (supports legacy data without slotId). */
@@ -57,6 +57,86 @@ export function upsertPeriodForSlot(
   }
 
   return [...without, period];
+}
+
+/**
+ * All periods scheduled for a given day+slot — 0, 1 (the normal case), or N (an elective/
+ * option block, where each entry carries its own classSubjectId). Same matching logic as
+ * findPeriodForSlot, but returns every match instead of just the first.
+ */
+export function findPeriodsForSlot(
+  dayPeriods: TimetablePeriod[],
+  slot: TimetablePeriodSlot,
+  allSlots: TimetablePeriodSlot[]
+): TimetablePeriod[] {
+  const byId = dayPeriods.filter(p => p.slotId === slot.id);
+  if (byId.length > 0) return byId;
+
+  const byTime = dayPeriods.filter(
+    p => !p.slotId && p.startTime === slot.startTime && p.endTime === slot.endTime
+  );
+  if (byTime.length > 0) return byTime;
+
+  const lessonIndex = lessonSlots(allSlots).findIndex(s => s.id === slot.id);
+  if (lessonIndex < 0) return [];
+
+  const legacyWithoutSlotId = dayPeriods.filter(p => !p.slotId);
+  const legacyMatch = legacyWithoutSlotId[lessonIndex];
+  return legacyMatch ? [legacyMatch] : [];
+}
+
+/**
+ * Replaces the full set of options at (day, slot) with `options` — the elective-block
+ * counterpart to upsertPeriodForSlot. Each option must carry a classSubjectId; pass a
+ * single-element array for what is effectively a plain period, though callers should
+ * prefer upsertPeriodForSlot for that case.
+ */
+export function upsertPeriodOptionsForSlot(
+  dayPeriods: TimetablePeriod[],
+  slot: TimetablePeriodSlot,
+  options: { classSubjectId: string; subject: string; teacher?: string }[],
+  allSlots: TimetablePeriodSlot[]
+): TimetablePeriod[] {
+  const cleared = upsertPeriodForSlot(dayPeriods, slot, null, allSlots);
+  const newPeriods: TimetablePeriod[] = options.map(o => {
+    const period: TimetablePeriod = {
+      slotId: slot.id,
+      subject: o.subject,
+      startTime: slot.startTime,
+      endTime: slot.endTime,
+      classSubjectId: o.classSubjectId,
+    };
+    if (o.teacher && o.teacher.trim()) period.teacher = o.teacher.trim();
+    return period;
+  });
+  return [...cleared, ...newPeriods];
+}
+
+/**
+ * Resolves which single option (if any) applies to a specific student — the one place
+ * "which option is this student's" is decided, reused by every personal/parent timetable
+ * view. Plain (non-elective) slots always resolve 'unique' without touching rosters.
+ */
+export function resolvePeriodForStudent(
+  periods: TimetablePeriod[],
+  studentId: string,
+  classSubjectsById: Record<string, ClassSubject>
+): { status: 'none' } | { status: 'unique'; period: TimetablePeriod } | { status: 'ambiguous'; periods: TimetablePeriod[] } {
+  if (periods.length === 0) return { status: 'none' };
+  if (periods.length === 1 && !periods[0].classSubjectId) {
+    return { status: 'unique', period: periods[0] };
+  }
+
+  const matches = periods.filter(p => {
+    if (!p.classSubjectId) return true; // no roster restriction — covers everyone
+    const cs = classSubjectsById[p.classSubjectId];
+    const roster = cs?.enrolledStudentIds;
+    return !roster || roster.length === 0 || roster.includes(studentId);
+  });
+
+  if (matches.length === 0) return { status: 'none' };
+  if (matches.length === 1) return { status: 'unique', period: matches[0] };
+  return { status: 'ambiguous', periods: matches };
 }
 
 /** Detect teacher double-booking within a single class timetable. */

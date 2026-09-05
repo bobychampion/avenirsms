@@ -6,7 +6,8 @@ import {
   collection, query, onSnapshot, where, addDoc, serverTimestamp,
   orderBy, updateDoc, doc, getDoc, getDocs, limit
 } from 'firebase/firestore';
-import { Student, Assignment, AssignmentSubmission, Message, Grade, Attendance, SchoolEvent, Invoice, Notification, TERMS, calculateGrade, scoreBadgeClasses, scoreRemark, scoreTextColorClass, visibleSkillLabels, SKILL_RATING_LABELS, SkillRating, SubjectAttendance, SpecialLesson, SpecialLessonAttendance } from '../types';
+import { Student, Assignment, AssignmentSubmission, Message, Grade, Attendance, SchoolEvent, Invoice, Notification, Timetable, ClassSubject, TERMS, calculateGrade, scoreBadgeClasses, scoreRemark, scoreTextColorClass, visibleSkillLabels, SKILL_RATING_LABELS, SkillRating, SubjectAttendance, SpecialLesson, SpecialLessonAttendance } from '../types';
+import { slotColumnHeaders, findPeriodsForSlot, resolvePeriodForStudent } from '../utils/timetableSchedule';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   BookOpen, Calendar, MessageSquare, Loader2, CheckCircle2, Clock,
@@ -24,13 +25,13 @@ import { formatCurrency } from '../utils/formatCurrency';
 import Avatar from '../components/Avatar';
 import toast from 'react-hot-toast';
 
-type TabType = 'progress' | 'attendance' | 'special_lessons' | 'assignments' | 'absences' | 'finance' | 'messages' | 'notifications' | 'report_card';
+type TabType = 'progress' | 'attendance' | 'special_lessons' | 'assignments' | 'absences' | 'finance' | 'messages' | 'notifications' | 'report_card' | 'timetable';
 
 export default function ParentPortal() {
   const { user, profile } = useAuth();
   const navigate = useNavigate();
   const schoolId = useSchoolId();
-  const { getGradingForClass, locale, currency, schoolName, logoUrl, reportShowLogo, reportFooterText, attendanceMode, currentSession, hiddenBehaviourTraits, assignmentsModuleEnabled } = useSchool();
+  const { getGradingForClass, locale, currency, schoolName, logoUrl, reportShowLogo, reportFooterText, attendanceMode, currentSession, hiddenBehaviourTraits, assignmentsModuleEnabled, classes, schoolDays, getPeriodSlotsForClass } = useSchool();
   // Children come from the shared useLinkedChildren hook so this page, the
   // mobile home, and the drop-off/pickup widget can never disagree about who
   // a guardian is linked to (primary and secondary alike).
@@ -56,6 +57,12 @@ export default function ParentPortal() {
   const [newMessage, setNewMessage] = useState({ receiverId: '', content: '' });
   const [reportCardTerm, setReportCardTerm] = useState<string>(TERMS[0]);
   const [reportCardSkills, setReportCardSkills] = useState<any>(null);
+
+  // Timetable tab — the child's home-class timetable, with elective/option blocks
+  // resolved down to just the one subject that applies to this specific child.
+  const [timetableTerm, setTimetableTerm] = useState<string>(TERMS[0]);
+  const [childTimetables, setChildTimetables] = useState<Timetable[]>([]);
+  const [childClassSubjects, setChildClassSubjects] = useState<Record<string, ClassSubject>>({});
 
   // Assignment submission state
   const [mySubmissions, setMySubmissions] = useState<AssignmentSubmission[]>([]);
@@ -530,9 +537,39 @@ export default function ParentPortal() {
     fetchSkills();
   }, [selectedChild, activeTab, reportCardTerm]);
 
+  // Timetable tab: the child's home-class timetable(s) for the selected term, plus that
+  // class's elective class_subjects (for resolving which option-block subject is theirs).
+  useEffect(() => {
+    if (!selectedChild || activeTab !== 'timetable' || !schoolId) { setChildTimetables([]); return; }
+    const unsubTt = onSnapshot(
+      query(
+        collection(db, 'timetables'),
+        where('schoolId', '==', schoolId),
+        where('class', '==', selectedChild.currentClass),
+        where('term', '==', timetableTerm),
+        where('session', '==', currentSession)
+      ),
+      snap => setChildTimetables(snap.docs.map(d => ({ id: d.id, ...d.data() } as Timetable))),
+      err => console.error('[ParentPortal] timetables fetch failed:', err.code, err.message)
+    );
+    const classId = classes.find(c => c.name === selectedChild.currentClass)?.id;
+    if (!classId) { setChildClassSubjects({}); return () => unsubTt(); }
+    const unsubCs = onSnapshot(
+      query(collection(db, 'class_subjects'), where('schoolId', '==', schoolId), where('classId', '==', classId)),
+      snap => {
+        const byId: Record<string, ClassSubject> = {};
+        snap.docs.forEach(d => { byId[d.id] = { id: d.id, ...d.data() } as ClassSubject; });
+        setChildClassSubjects(byId);
+      },
+      err => console.error('[ParentPortal] class_subjects fetch failed:', err.code, err.message)
+    );
+    return () => { unsubTt(); unsubCs(); };
+  }, [selectedChild, activeTab, timetableTerm, currentSession, schoolId, classes]);
+
   const tabs: { id: TabType; label: string; Icon: React.ElementType; badge?: number }[] = [
     { id: 'progress', label: 'Academic', Icon: TrendingUp },
     { id: 'report_card', label: 'Report Card', Icon: FileText },
+    { id: 'timetable', label: 'Timetable', Icon: Clock },
     { id: 'attendance', label: 'Attendance', Icon: CheckCircle2 },
     ...(mySpecialLessons.length > 0 ? [{ id: 'special_lessons' as TabType, label: 'Activities', Icon: Sparkles }] : []),
     ...(assignmentsModuleEnabled ? [{ id: 'assignments' as TabType, label: 'Assignments', Icon: BookOpen }] : []),
@@ -1761,6 +1798,88 @@ export default function ParentPortal() {
           </div>
         </div>
       )}
+
+      {/* ── TIMETABLE ── */}
+      {activeTab === 'timetable' && selectedChild && (() => {
+        const columns = slotColumnHeaders(getPeriodSlotsForClass(selectedChild.currentClass));
+        return (
+        <div className="space-y-6 max-w-3xl">
+          <div className="flex items-center gap-3">
+            <label className="text-sm font-bold text-slate-500">Term:</label>
+            <select value={timetableTerm} onChange={e => setTimetableTerm(e.target.value)}
+              className="px-3 py-2 rounded-xl border border-slate-200 text-sm font-medium outline-none focus:ring-2 focus:ring-indigo-500">
+              {TERMS.map(t => <option key={t} value={t}>{t}</option>)}
+            </select>
+            <span className="text-xs text-slate-400">{currentSession}</span>
+          </div>
+
+          {childTimetables.length === 0 ? (
+            <div className="py-16 text-center bg-slate-50 rounded-2xl border border-slate-100">
+              <Clock className="w-12 h-12 text-slate-200 mx-auto mb-4" />
+              <p className="text-slate-500">No timetable set up for {selectedChild.currentClass} yet.</p>
+            </div>
+          ) : (
+            childTimetables.map(tt => (
+              <div key={tt.id} className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+                <div className="bg-slate-900 text-white px-5 py-3">
+                  <span className="font-bold text-sm">{tt.class}</span>
+                  <span className="text-slate-400 text-xs ml-2">— {tt.term} · {tt.session}</span>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full min-w-[600px] text-sm">
+                    <thead>
+                      <tr className="bg-slate-50 border-b border-slate-200">
+                        <th className="px-4 py-2.5 text-left text-xs font-bold text-slate-500 uppercase tracking-wide w-24">Day</th>
+                        <th className="px-4 py-2.5 text-left text-xs font-bold text-slate-500 uppercase tracking-wide">Periods</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {schoolDays.map(day => {
+                        const dayPeriods = tt.schedule[day as keyof Timetable['schedule']] || [];
+                        const cells = columns.filter(s => s.type === 'lesson').map(slot => {
+                          const periods = findPeriodsForSlot(dayPeriods, slot, columns);
+                          const resolved = resolvePeriodForStudent(periods, selectedChild.id!, childClassSubjects);
+                          return { slot, resolved };
+                        }).filter(c => c.resolved.status !== 'none' || c.slot);
+                        return (
+                          <tr key={day} className="hover:bg-slate-50 transition-colors align-top">
+                            <td className="px-4 py-3 font-bold text-slate-700 text-sm">{day}</td>
+                            <td className="px-4 py-3">
+                              <div className="flex flex-wrap gap-2">
+                                {cells.map(({ slot, resolved }) => {
+                                  if (resolved.status === 'none') return null;
+                                  if (resolved.status === 'ambiguous') {
+                                    return (
+                                      <span key={slot.id} className="px-2.5 py-1.5 rounded-lg bg-rose-50 border border-rose-200 text-rose-700 text-xs font-semibold">
+                                        Scheduling conflict — enrolled in {resolved.periods.map(p => p.subject).join(' and ')} at {slot.startTime}. Contact the school office.
+                                      </span>
+                                    );
+                                  }
+                                  return (
+                                    <span key={slot.id} className="px-2.5 py-1.5 rounded-lg bg-indigo-50 border border-indigo-100 text-indigo-700 text-xs font-semibold">
+                                      {resolved.period.subject}
+                                      <span className="text-indigo-400 font-normal ml-1">{slot.startTime}</span>
+                                      {resolved.period.teacher && <span className="text-indigo-400 font-normal"> · {resolved.period.teacher}</span>}
+                                    </span>
+                                  );
+                                })}
+                                {cells.every(c => c.resolved.status === 'none') && (
+                                  <span className="text-xs text-slate-300">No periods</span>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+        );
+      })()}
 
       {/* ── NOTIFICATIONS ── */}
       {activeTab === 'notifications' && (

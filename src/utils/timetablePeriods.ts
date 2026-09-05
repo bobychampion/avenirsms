@@ -103,3 +103,20 @@ export function reindexSlots(slots: TimetablePeriodSlot[]): TimetablePeriodSlot[
 export function formatSlotHeader(slot: TimetablePeriodSlot): string {
   return `${slot.label}\n${slot.startTime}–${slot.endTime}`;
 }
+
+/** Per-level bell-schedule overrides, keyed by an entry in the school's schoolLevels list. */
+export type LevelPeriodOverrides = Record<string, TimetablePeriodSlot[]>;
+
+/**
+ * Resolves the effective bell-schedule slots for a given class level, falling back to the
+ * school-wide default when no per-level override exists (or no level is given), or when the
+ * override is present but empty.
+ */
+export function resolvePeriodSlotsForLevel(
+  level: string | undefined,
+  defaultSlots: TimetablePeriodSlot[],
+  levelOverrides?: LevelPeriodOverrides
+): TimetablePeriodSlot[] {
+  const override = level ? levelOverrides?.[level] : undefined;
+  return override?.length ? sortedPeriodSlots(override) : sortedPeriodSlots(defaultSlots);
+}

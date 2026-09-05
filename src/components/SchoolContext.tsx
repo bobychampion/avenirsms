@@ -19,7 +19,9 @@ import { SchoolClass, SCHOOL_CLASSES, SUBJECTS, CURRENT_SESSION, TERMS, GradingS
 import {
   DEFAULT_TIMETABLE_PERIODS,
   resolveTimetablePeriodSlots,
+  resolvePeriodSlotsForLevel,
   periodTimesFromSlots,
+  LevelPeriodOverrides,
 } from '../utils/timetablePeriods';
 import { SchoolSettings, defaultSettings } from '../pages/SchoolSettings';
 import { useAuth } from './FirebaseProvider';
@@ -50,6 +52,9 @@ interface SchoolContextValue {
   attendanceMode: 'daily_only' | 'daily_and_subject' | 'subject_only';
   periodTimes: string[];           // legacy start times — derived from timetablePeriods
   timetablePeriods: TimetablePeriodSlot[]; // school bell schedule for timetable columns
+  levelPeriodOverrides: LevelPeriodOverrides;
+  /** Resolves the effective bell-schedule slots for a class, honouring any per-level override. */
+  getPeriodSlotsForClass: (className: string) => TimetablePeriodSlot[];
   currentSession: string;          // from school_settings (dynamic, fallback CURRENT_SESSION)
   currentTerm: string;
   setCurrentTerm: (t: string) => void;
@@ -120,6 +125,8 @@ const SchoolContext = createContext<SchoolContextValue>({
   attendanceMode: 'daily_only',
   periodTimes: DEFAULT_PERIOD_TIMES,
   timetablePeriods: [...DEFAULT_TIMETABLE_PERIODS],
+  levelPeriodOverrides: {},
+  getPeriodSlotsForClass: () => [...DEFAULT_TIMETABLE_PERIODS],
   currentSession: CURRENT_SESSION,
   currentTerm: '1st Term',
   setCurrentTerm: () => {},
@@ -186,6 +193,7 @@ export function SchoolProvider({ children }: { children: React.ReactNode }) {
   const [attendanceMode, setAttendanceMode] = useState<'daily_only' | 'daily_and_subject' | 'subject_only'>('daily_only');
   const [periodTimes, setPeriodTimes] = useState<string[]>([...DEFAULT_PERIOD_TIMES]);
   const [timetablePeriods, setTimetablePeriods] = useState<TimetablePeriodSlot[]>([...DEFAULT_TIMETABLE_PERIODS]);
+  const [levelPeriodOverrides, setLevelPeriodOverrides] = useState<LevelPeriodOverrides>({});
   const [customSubjects, setCustomSubjects] = useState<string[]>([]);
   // Built-in subject names this school has switched off. The built-in list is a
   // Nigerian-curriculum set, so schools on other curricula (or any school that
@@ -298,6 +306,7 @@ export function SchoolProvider({ children }: { children: React.ReactNode }) {
       setGradingSystem('percentage');
       setCustomGradingScale([]);
       setLevelGradingOverrides({});
+      setLevelPeriodOverrides({});
       setGradingMode('ca_exam');
       setGradingRules([]);
       setGradingConfigHistory({});
@@ -343,6 +352,7 @@ export function SchoolProvider({ children }: { children: React.ReactNode }) {
           });
           setTimetablePeriods(resolvedSlots);
           setPeriodTimes(periodTimesFromSlots(resolvedSlots));
+          setLevelPeriodOverrides(data.levelPeriodOverrides || {});
           if (data.customSubjects) setCustomSubjects(data.customSubjects);
           setHiddenBuiltInSubjects(data.hiddenBuiltInSubjects ?? []);
           if (data.currentSession) setCurrentSession(data.currentSession);
@@ -504,6 +514,12 @@ export function SchoolProvider({ children }: { children: React.ReactNode }) {
     return resolveGradingForLevel(level, defaults, overrides);
   };
 
+  // Helper: resolve the effective bell-schedule slots for a class, honouring per-level overrides
+  const getPeriodSlotsForClass = (className: string): TimetablePeriodSlot[] => {
+    const level = classes.find(c => c.name === className)?.level;
+    return resolvePeriodSlotsForLevel(level, timetablePeriods, levelPeriodOverrides);
+  };
+
   // Helper: get subjects for a specific class (from SubjectDefinitions, falling back to all merged subjects)
   const getSubjectsForClass = (className: string): string[] => {
     const custom = subjectDefinitions.filter(s => s.assignedClasses.includes(className));
@@ -524,6 +540,8 @@ export function SchoolProvider({ children }: { children: React.ReactNode }) {
       attendanceMode,
       periodTimes,
       timetablePeriods,
+      levelPeriodOverrides,
+      getPeriodSlotsForClass,
       currentSession,
       currentTerm,
       setCurrentTerm,

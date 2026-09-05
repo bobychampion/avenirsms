@@ -2,9 +2,9 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { db, handleFirestoreError, OperationType } from '../firebase';
 import { collection, query, onSnapshot, doc, addDoc, setDoc, serverTimestamp, where } from 'firebase/firestore';
-import { Timetable, TimetablePeriod, TimetableTemplate, UserProfile } from '../types';
+import { ClassSubject, Timetable, TimetablePeriod, TimetableTemplate, UserProfile } from '../types';
 import { AnimatePresence, motion } from 'motion/react';
-import { Clock, X, Save, AlertTriangle, CheckCircle, Coffee, Settings, Copy, ClipboardPaste, LayoutTemplate, Files } from 'lucide-react';
+import { Clock, X, Save, AlertTriangle, CheckCircle, Coffee, Settings, Copy, ClipboardPaste, LayoutTemplate, Files, Split, Plus } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useClassSelectOptions, useSchool } from '../components/SchoolContext';
 import { useSchoolId } from '../hooks/useSchoolId';
@@ -14,7 +14,9 @@ import {
   detectTimetableConflicts,
   detectCrossClassConflicts,
   findPeriodForSlot,
+  findPeriodsForSlot,
   upsertPeriodForSlot,
+  upsertPeriodOptionsForSlot,
   copyDayPeriods,
   pasteDayIntoSchedule,
   pastePeriodIntoDay,
@@ -25,15 +27,17 @@ export default function TimetableManagement() {
   const schoolId = useSchoolId();
   const { profile } = useAuth();
   const classSelectOptions = useClassSelectOptions();
-  const { subjects, timetablePeriods, currentSession, terms, getSubjectsForClass, schoolDays } = useSchool();
-
-  const columns = useMemo(() => slotColumnHeaders(timetablePeriods), [timetablePeriods]);
+  const { subjects, currentSession, terms, getSubjectsForClass, schoolDays, getPeriodSlotsForClass, classes } = useSchool();
 
   const [timetables, setTimetables] = useState<Timetable[]>([]);
   const [teachers, setTeachers] = useState<UserProfile[]>([]);
   const [templates, setTemplates] = useState<TimetableTemplate[]>([]);
   const [selectedClass, setSelectedClass] = useState('');
   const [selectedTerm, setSelectedTerm] = useState<string>('1st Term');
+
+  // Bell schedule for the currently selected class — resolves any per-level override
+  // (e.g. Primary starting earlier than Secondary) instead of one school-wide schedule.
+  const columns = useMemo(() => slotColumnHeaders(getPeriodSlotsForClass(selectedClass)), [selectedClass, getPeriodSlotsForClass]);
   const [timetable, setTimetable] = useState<Timetable | null>(null);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -41,6 +45,12 @@ export default function TimetableManagement() {
   const [editTarget, setEditTarget] = useState<{ day: string; slotId: string } | null>(null);
   const [periodForm, setPeriodForm] = useState({ subject: '', teacher: '' });
   const [inlineConflict, setInlineConflict] = useState<string | null>(null);
+
+  // Elective/option blocks — a slot with 2+ concurrent subject options, each tied to a
+  // class_subjects doc whose enrolledStudentIds decides which students get which option.
+  const [classSubjectsForClass, setClassSubjectsForClass] = useState<ClassSubject[]>([]);
+  const [isElectiveBlock, setIsElectiveBlock] = useState(false);
+  const [electiveOptions, setElectiveOptions] = useState<{ classSubjectId: string; teacher: string }[]>([]);
 
   // Copy/paste clipboard — same-session convenience only, never persisted.
   const [clipboardCell, setClipboardCell] = useState<TimetablePeriod | null>(null);
@@ -91,6 +101,21 @@ export default function TimetableManagement() {
     }
   }, [timetables, selectedClass, selectedTerm, currentSession]);
 
+  // Elective-block candidates: this class's own subjects that have a student roster (a
+  // subject everyone takes has nothing to differentiate on, so it's excluded here).
+  useEffect(() => {
+    const classId = classes.find(c => c.name === selectedClass)?.id;
+    if (!schoolId || !classId) { setClassSubjectsForClass([]); return; }
+    const unsub = onSnapshot(
+      query(collection(db, 'class_subjects'), where('schoolId', '==', schoolId), where('classId', '==', classId)),
+      snap => {
+        const all = snap.docs.map(d => ({ id: d.id, ...d.data() } as ClassSubject));
+        setClassSubjectsForClass(all.filter(cs => (cs.enrolledStudentIds?.length ?? 0) > 0));
+      }
+    );
+    return () => unsub();
+  }, [schoolId, selectedClass, classes]);
+
   useEffect(() => {
     if (!timetable || !editTarget || !periodForm.teacher) {
       setInlineConflict(null);
@@ -124,18 +149,49 @@ export default function TimetableManagement() {
     const slot = columns.find(s => s.id === slotId);
     if (!slot || slot.type === 'break' || !timetable) return;
 
-    const existing = findPeriodForSlot(
+    const existingPeriods = findPeriodsForSlot(
       timetable.schedule[day as keyof typeof timetable.schedule] || [],
       slot,
       columns
     );
 
-    setPeriodForm({
-      subject: existing?.subject || subjects[0] || '',
-      teacher: existing?.teacher || '',
-    });
+    if (existingPeriods.length > 1) {
+      setIsElectiveBlock(true);
+      setElectiveOptions(existingPeriods.map(p => ({ classSubjectId: p.classSubjectId ?? '', teacher: p.teacher ?? '' })));
+      setPeriodForm({ subject: '', teacher: '' });
+    } else {
+      const existing = existingPeriods[0];
+      setIsElectiveBlock(false);
+      setElectiveOptions([]);
+      setPeriodForm({
+        subject: existing?.subject || subjects[0] || '',
+        teacher: existing?.teacher || '',
+      });
+    }
     setEditTarget({ day, slotId });
     setInlineConflict(null);
+  };
+
+  const addElectiveOption = () => {
+    const used = new Set(electiveOptions.map(o => o.classSubjectId));
+    const next = classSubjectsForClass.find(cs => !used.has(cs.id!));
+    if (!next) return;
+    setElectiveOptions(prev => [...prev, { classSubjectId: next.id!, teacher: next.teacherName ?? '' }]);
+  };
+
+  const removeElectiveOption = (index: number) => {
+    setElectiveOptions(prev => prev.filter((_, i) => i !== index));
+  };
+
+  const updateElectiveOption = (index: number, patch: Partial<{ classSubjectId: string; teacher: string }>) => {
+    setElectiveOptions(prev => prev.map((o, i) => {
+      if (i !== index) return o;
+      if (patch.classSubjectId) {
+        const cs = classSubjectsForClass.find(c => c.id === patch.classSubjectId);
+        return { classSubjectId: patch.classSubjectId, teacher: cs?.teacherName ?? '' };
+      }
+      return { ...o, ...patch };
+    }));
   };
 
   const savePeriod = () => {
@@ -145,14 +201,26 @@ export default function TimetableManagement() {
 
     const dayKey = editTarget.day as keyof typeof timetable.schedule;
     const dayPeriods = timetable.schedule[dayKey] || [];
-    const updatedDay = upsertPeriodForSlot(
-      dayPeriods,
-      slot,
-      periodForm.subject.trim()
-        ? { subject: periodForm.subject, teacher: periodForm.teacher || undefined }
-        : null,
-      columns
-    );
+
+    let updatedDay: TimetablePeriod[];
+    if (isElectiveBlock) {
+      const options = electiveOptions
+        .filter(o => o.classSubjectId)
+        .map(o => {
+          const cs = classSubjectsForClass.find(c => c.id === o.classSubjectId);
+          return { classSubjectId: o.classSubjectId, subject: cs?.subjectName ?? '', teacher: o.teacher || cs?.teacherName };
+        });
+      updatedDay = upsertPeriodOptionsForSlot(dayPeriods, slot, options, columns);
+    } else {
+      updatedDay = upsertPeriodForSlot(
+        dayPeriods,
+        slot,
+        periodForm.subject.trim()
+          ? { subject: periodForm.subject, teacher: periodForm.teacher || undefined }
+          : null,
+        columns
+      );
+    }
 
     const updated: Timetable = {
       ...timetable,
@@ -244,6 +312,10 @@ export default function TimetableManagement() {
         schoolId,
         name: templateNameInput.trim(),
         schedule: timetable.schedule,
+        // Snapshot of the columns this schedule was authored against, so applying it later onto
+        // a class with a different bell schedule (e.g. a different level) can remap correctly
+        // instead of carrying over stale slot IDs/times.
+        sourceColumns: columns,
         createdAt: serverTimestamp(),
         createdBy: profile?.uid ?? '',
       });
@@ -263,7 +335,16 @@ export default function TimetableManagement() {
     if (hasExisting && !window.confirm('This will replace your current unsaved timetable — continue?')) {
       return;
     }
-    setTimetable({ ...timetable, schedule: applyTemplateToSchedule(template.schedule, schoolDays) });
+    // Templates saved before per-level bell schedules existed have no sourceColumns — treat them
+    // as authored against this class's own current columns, reproducing today's behavior exactly.
+    const sourceColumns = template.sourceColumns?.length ? template.sourceColumns : columns;
+    const remappedSchedule = Object.fromEntries(
+      schoolDays.map(day => [
+        day,
+        copyDayPeriods(template.schedule[day as keyof Timetable['schedule']] || [], sourceColumns, columns),
+      ])
+    ) as Timetable['schedule'];
+    setTimetable({ ...timetable, schedule: applyTemplateToSchedule(remappedSchedule, schoolDays) });
     setShowTemplatePicker(false);
   };
 
@@ -271,22 +352,30 @@ export default function TimetableManagement() {
 
   const duplicateWarnings = useMemo(() => {
     if (!timetable || duplicateTargetClasses.length === 0) return [];
-    const remapped = Object.fromEntries(
-      schoolDays.map(day => [day, copyDayPeriods(timetable.schedule[day as keyof Timetable['schedule']] || [], columns, columns)])
-    ) as Timetable['schedule'];
-    return duplicateTargetClasses.flatMap(targetClass =>
-      detectCrossClassConflicts(remapped, schoolDays, targetClass, duplicateTerm, currentSession, timetables)
-    );
-  }, [timetable, duplicateTargetClasses, duplicateTerm, currentSession, timetables, schoolDays, columns]);
+    return duplicateTargetClasses.flatMap(targetClass => {
+      const targetColumns = slotColumnHeaders(getPeriodSlotsForClass(targetClass));
+      const remapped = Object.fromEntries(
+        schoolDays.map(day => [day, copyDayPeriods(timetable.schedule[day as keyof Timetable['schedule']] || [], columns, targetColumns)])
+      ) as Timetable['schedule'];
+      const conflicts = detectCrossClassConflicts(remapped, schoolDays, targetClass, duplicateTerm, currentSession, timetables);
+      const sourceLessonCount = columns.filter(s => s.type === 'lesson').length;
+      const targetLessonCount = targetColumns.filter(s => s.type === 'lesson').length;
+      const truncation = targetLessonCount < sourceLessonCount
+        ? [`${targetClass} has ${targetLessonCount} lesson periods vs ${selectedClass}'s ${sourceLessonCount} — ${sourceLessonCount - targetLessonCount} period(s) will be dropped.`]
+        : [];
+      return [...truncation, ...conflicts];
+    });
+  }, [timetable, duplicateTargetClasses, duplicateTerm, currentSession, timetables, schoolDays, columns, selectedClass, getPeriodSlotsForClass]);
 
   const confirmDuplicate = async () => {
     if (!timetable || duplicateTargetClasses.length === 0 || !schoolId) return;
     setDuplicating(true);
     try {
-      const remapped = Object.fromEntries(
-        schoolDays.map(day => [day, copyDayPeriods(timetable.schedule[day as keyof Timetable['schedule']] || [], columns, columns)])
-      ) as Timetable['schedule'];
       await Promise.all(duplicateTargetClasses.map(targetClass => {
+        const targetColumns = slotColumnHeaders(getPeriodSlotsForClass(targetClass));
+        const remapped = Object.fromEntries(
+          schoolDays.map(day => [day, copyDayPeriods(timetable.schedule[day as keyof Timetable['schedule']] || [], columns, targetColumns)])
+        ) as Timetable['schedule'];
         const docId = `${targetClass}_${duplicateTerm}_${currentSession}`.replace(/[\s/]/g, '_');
         return setDoc(doc(db, 'timetables', docId), {
           class: targetClass,
@@ -505,10 +594,37 @@ export default function TimetableManagement() {
                         );
                       }
 
-                      const period = findPeriodForSlot(dayPeriods, slot, columns);
+                      const periodsHere = findPeriodsForSlot(dayPeriods, slot, columns);
+                      const period = periodsHere[0];
                       return (
                         <td key={slot.id} className="px-2 py-2 text-center" onContextMenu={e => openCellContextMenu(e, day, slot.id)}>
-                          {period ? (
+                          {periodsHere.length > 1 ? (
+                            <button
+                              type="button"
+                              onClick={() => openEditModal(day, slot.id)}
+                              className="relative group w-full rounded-xl border border-indigo-200 bg-indigo-50/40 px-2 py-1.5 text-xs text-left"
+                            >
+                              <span className="absolute -top-1.5 -left-1.5 flex items-center gap-0.5 px-1.5 py-0.5 rounded-full bg-indigo-600 text-white text-[9px] font-bold">
+                                <Split className="w-2.5 h-2.5" /> {periodsHere.length}
+                              </span>
+                              <div className="space-y-0.5 mt-1">
+                                {periodsHere.map((p, i) => (
+                                  <p key={i} className="truncate text-[10px] font-semibold text-indigo-800">
+                                    {p.subject}{p.teacher ? ` · ${p.teacher}` : ''}
+                                  </p>
+                                ))}
+                              </div>
+                              <span
+                                role="button"
+                                tabIndex={0}
+                                onClick={e => { e.stopPropagation(); clearPeriod(day, slot.id); }}
+                                onKeyDown={e => { if (e.key === 'Enter') { e.stopPropagation(); clearPeriod(day, slot.id); } }}
+                                className="absolute -top-1 -right-1 w-4 h-4 bg-rose-500 text-white rounded-full text-[10px] opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center"
+                              >
+                                ×
+                              </span>
+                            </button>
+                          ) : period ? (
                             <button
                               type="button"
                               onClick={() => openEditModal(day, slot.id)}
@@ -567,44 +683,105 @@ export default function TimetableManagement() {
                   <X className="w-4 h-4" />
                 </button>
               </div>
-              <div className="space-y-4">
-                <div>
-                  <label className="text-xs font-bold text-slate-500 uppercase tracking-wide block mb-1">Subject</label>
-                  <select
-                    value={periodForm.subject}
-                    onChange={e => setPeriodForm(p => ({ ...p, subject: e.target.value }))}
-                    className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none bg-white text-sm"
-                  >
-                    {(selectedClass ? getSubjectsForClass(selectedClass) : subjects).map(s => (
-                      <option key={s}>{s}</option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label className="text-xs font-bold text-slate-500 uppercase tracking-wide block mb-1">Teacher (optional)</label>
-                  <select
-                    value={periodForm.teacher}
-                    onChange={e => setPeriodForm(p => ({ ...p, teacher: e.target.value }))}
-                    className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none bg-white text-sm"
-                  >
-                    <option value="">Unassigned</option>
-                    {teachers.map(t => <option key={t.uid} value={t.displayName}>{t.displayName}</option>)}
-                  </select>
-                  {inlineConflict && (
-                    <p className="mt-1.5 flex items-start gap-1.5 text-xs text-amber-700">
-                      <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
-                      {inlineConflict}
+              <label className="flex items-center gap-2 mb-4 px-3 py-2 rounded-xl border border-slate-200 bg-slate-50 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={isElectiveBlock}
+                  onChange={e => { setIsElectiveBlock(e.target.checked); if (!e.target.checked) setElectiveOptions([]); }}
+                  className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                />
+                <span className="text-xs font-semibold text-slate-700">This period is an elective/option block (students split by subject)</span>
+              </label>
+
+              {isElectiveBlock ? (
+                <div className="space-y-3">
+                  {classSubjectsForClass.length === 0 ? (
+                    <p className="text-xs text-slate-400 italic">
+                      No elective subjects with a student roster are set up for this class yet — add them under Class Management first.
                     </p>
+                  ) : (
+                    <>
+                      {electiveOptions.map((opt, i) => (
+                        <div key={i} className="flex items-center gap-2 border border-slate-200 rounded-xl p-2.5">
+                          <select
+                            value={opt.classSubjectId}
+                            onChange={e => updateElectiveOption(i, { classSubjectId: e.target.value })}
+                            className="flex-1 px-2 py-1.5 rounded-lg border border-slate-200 text-xs bg-white outline-none focus:ring-2 focus:ring-indigo-500"
+                          >
+                            <option value="">Select subject…</option>
+                            {classSubjectsForClass
+                              .filter(cs => cs.id === opt.classSubjectId || !electiveOptions.some(o => o.classSubjectId === cs.id))
+                              .map(cs => (
+                                <option key={cs.id} value={cs.id}>{cs.subjectName} ({cs.enrolledStudentIds?.length ?? 0} students)</option>
+                              ))}
+                          </select>
+                          <select
+                            value={opt.teacher}
+                            onChange={e => updateElectiveOption(i, { teacher: e.target.value })}
+                            className="flex-1 px-2 py-1.5 rounded-lg border border-slate-200 text-xs bg-white outline-none focus:ring-2 focus:ring-indigo-500"
+                          >
+                            <option value="">Unassigned</option>
+                            {teachers.map(t => <option key={t.uid} value={t.displayName}>{t.displayName}</option>)}
+                          </select>
+                          <button type="button" onClick={() => removeElectiveOption(i)} className="p-1.5 text-slate-400 hover:text-red-500">
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      ))}
+                      <button
+                        type="button"
+                        onClick={addElectiveOption}
+                        disabled={electiveOptions.length >= classSubjectsForClass.length}
+                        className="flex items-center gap-1.5 text-xs font-semibold text-indigo-600 hover:text-indigo-800 disabled:opacity-40"
+                      >
+                        <Plus className="w-3.5 h-3.5" /> Add option
+                      </button>
+                      {electiveOptions.length < 2 && (
+                        <p className="text-xs text-amber-600">Add at least 2 options to save this as a block.</p>
+                      )}
+                    </>
                   )}
                 </div>
-              </div>
+              ) : (
+                <div className="space-y-4">
+                  <div>
+                    <label className="text-xs font-bold text-slate-500 uppercase tracking-wide block mb-1">Subject</label>
+                    <select
+                      value={periodForm.subject}
+                      onChange={e => setPeriodForm(p => ({ ...p, subject: e.target.value }))}
+                      className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none bg-white text-sm"
+                    >
+                      {(selectedClass ? getSubjectsForClass(selectedClass) : subjects).map(s => (
+                        <option key={s}>{s}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-xs font-bold text-slate-500 uppercase tracking-wide block mb-1">Teacher (optional)</label>
+                    <select
+                      value={periodForm.teacher}
+                      onChange={e => setPeriodForm(p => ({ ...p, teacher: e.target.value }))}
+                      className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none bg-white text-sm"
+                    >
+                      <option value="">Unassigned</option>
+                      {teachers.map(t => <option key={t.uid} value={t.displayName}>{t.displayName}</option>)}
+                    </select>
+                    {inlineConflict && (
+                      <p className="mt-1.5 flex items-start gap-1.5 text-xs text-amber-700">
+                        <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+                        {inlineConflict}
+                      </p>
+                    )}
+                  </div>
+                </div>
+              )}
               <div className="flex justify-end gap-2 mt-6">
                 <button onClick={() => setEditTarget(null)} className="px-4 py-2 text-sm text-slate-600 hover:bg-slate-100 rounded-xl">
                   Cancel
                 </button>
                 <button
                   onClick={savePeriod}
-                  disabled={!periodForm.subject.trim()}
+                  disabled={isElectiveBlock ? electiveOptions.filter(o => o.classSubjectId).length < 2 : !periodForm.subject.trim()}
                   className="px-5 py-2 bg-indigo-600 text-white font-bold rounded-xl hover:bg-indigo-700 text-sm disabled:opacity-50"
                 >
                   Save
@@ -732,6 +909,9 @@ export default function TimetableManagement() {
                     const scheduleArrays = Object.values(t.schedule) as TimetablePeriod[][];
                     const periodCount = scheduleArrays.flat().length;
                     const dayCount = scheduleArrays.filter(arr => arr.length > 0).length;
+                    const sourceLessonCount = (t.sourceColumns ?? columns).filter(s => s.type === 'lesson').length;
+                    const targetLessonCount = columns.filter(s => s.type === 'lesson').length;
+                    const willTruncate = t.sourceColumns?.length && targetLessonCount < sourceLessonCount;
                     return (
                       <button
                         key={t.id}
@@ -740,6 +920,12 @@ export default function TimetableManagement() {
                       >
                         <p className="font-bold text-sm text-slate-800">{t.name}</p>
                         <p className="text-xs text-slate-400 mt-0.5">{periodCount} periods across {dayCount} days</p>
+                        {willTruncate && (
+                          <p className="text-xs text-amber-600 mt-1 flex items-center gap-1">
+                            <AlertTriangle className="w-3 h-3 shrink-0" />
+                            Saved with {sourceLessonCount} lesson periods — this class has {targetLessonCount}. Periods beyond {targetLessonCount} will be dropped.
+                          </p>
+                        )}
                       </button>
                     );
                   })}
@@ -800,7 +986,7 @@ export default function TimetableManagement() {
                 <div className="mt-3 p-3 bg-amber-50 rounded-xl border border-amber-200">
                   <div className="flex items-center gap-2 mb-1">
                     <AlertTriangle className="w-4 h-4 text-amber-600" />
-                    <p className="text-xs font-bold text-amber-700 uppercase tracking-wide">Possible Teacher Conflicts</p>
+                    <p className="text-xs font-bold text-amber-700 uppercase tracking-wide">Heads Up</p>
                   </div>
                   {duplicateWarnings.map((w, i) => <p key={i} className="text-xs text-amber-700 ml-6">{w}</p>)}
                 </div>

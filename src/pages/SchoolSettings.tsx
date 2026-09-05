@@ -16,6 +16,7 @@ import {
 import TimetablePeriodEditor from '../components/TimetablePeriodEditor';
 import {
   TimetablePeriodSlot,
+  LevelPeriodOverrides,
   DEFAULT_TIMETABLE_PERIODS,
   resolveTimetablePeriodSlots,
   periodTimesFromSlots,
@@ -93,6 +94,8 @@ export interface SchoolSettings {
   periodTimes: string[];
   /** School bell schedule — drives dynamic timetable columns */
   timetablePeriods: TimetablePeriodSlot[];
+  /** Per-level bell-schedule overrides (keyed by entry in schoolLevels), e.g. Primary starting earlier than Secondary. */
+  levelPeriodOverrides?: LevelPeriodOverrides;
   /** Opt-in weekend class days (e.g. ['Saturday'] for weekend lessons/exam prep). Empty = Mon–Fri only. */
   weekendDays: WeekendDay[];
   /**
@@ -287,6 +290,7 @@ export const defaultSettings: SchoolSettings = {
   hiddenBuiltInSubjects: [],
   periodTimes: periodTimesFromSlots(DEFAULT_TIMETABLE_PERIODS),
   timetablePeriods: [...DEFAULT_TIMETABLE_PERIODS],
+  levelPeriodOverrides: {},
   weekendDays: [],
   attendanceMode: 'daily_only',
   // Internationalisation
@@ -571,6 +575,64 @@ function LevelGradingOverridesEditor({
                   <CustomGradeScaleEditor
                     scale={ov.customGradingScale ?? []}
                     onChange={s => setOverride(level, { ...ov, customGradingScale: s })}
+                  />
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ─── Per-Level Bell Schedule Override Editor ───────────────────────────────────
+function LevelPeriodOverridesEditor({
+  levels, overrides, defaultSlots, onChange
+}: {
+  levels: string[];
+  overrides: LevelPeriodOverrides;
+  defaultSlots: TimetablePeriodSlot[];
+  onChange: (overrides: LevelPeriodOverrides) => void;
+}) {
+  const setOverride = (level: string, slots: TimetablePeriodSlot[] | null) => {
+    const next = { ...overrides };
+    if (slots) next[level] = slots; else delete next[level];
+    onChange(next);
+  };
+
+  return (
+    <div>
+      <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">
+        Per-Level Bell Schedules
+      </label>
+      <p className="text-xs text-slate-500 mb-3">
+        Give specific levels their own period times — e.g. Primary starting earlier than Secondary.
+        Levels left as "Use school default" follow the School Day Periods above.
+      </p>
+      {levels.length === 0 && <span className="text-xs text-slate-400 italic">Add grade/year levels above first</span>}
+      <div className="space-y-2">
+        {levels.map(level => {
+          const ov = overrides[level];
+          const isCustom = !!ov;
+          return (
+            <div key={level} className="border border-slate-200 rounded-xl p-3">
+              <div className="flex items-center gap-3">
+                <span className="flex-1 text-xs font-semibold text-slate-700">{level}</span>
+                <select
+                  value={isCustom ? 'custom' : ''}
+                  onChange={e => setOverride(level, e.target.value === 'custom' ? [...(ov ?? defaultSlots)] : null)}
+                  className="px-2 py-1.5 rounded-lg border border-slate-200 text-xs outline-none focus:ring-2 focus:ring-indigo-500"
+                >
+                  <option value="">Use school default</option>
+                  <option value="custom">Custom schedule for this level</option>
+                </select>
+              </div>
+              {isCustom && (
+                <div className="mt-3">
+                  <TimetablePeriodEditor
+                    slots={ov}
+                    onChange={slots => setOverride(level, slots)}
                   />
                 </div>
               )}
@@ -2003,6 +2065,14 @@ export default function SchoolSettingsPage() {
               field('periodTimes', periodTimesFromSlots(slots));
             }}
           />
+          <div className="mt-6 pt-6 border-t border-slate-100">
+            <LevelPeriodOverridesEditor
+              levels={form.schoolLevels}
+              overrides={form.levelPeriodOverrides ?? {}}
+              defaultSlots={form.timetablePeriods}
+              onChange={ov => field('levelPeriodOverrides', ov)}
+            />
+          </div>
         </section>
         </div>
       )}

@@ -1,3 +1,5 @@
+import type { TimetablePeriodSlot } from './utils/timetablePeriods';
+
 export type ApplicationStatus = 'pending' | 'reviewing' | 'approved' | 'rejected';
 
 export interface Application {
@@ -325,12 +327,20 @@ export interface TimetablePeriod {
   startTime: string;
   endTime: string;
   teacher?: string;
+  /**
+   * Elective/option-block marker. When two or more TimetablePeriod entries share the same
+   * (day, slotId), each carries this — it points at the ClassSubject doc whose
+   * enrolledStudentIds decides which students get this specific option. Absent on every
+   * normal (non-elective) period — the default, unchanged path.
+   */
+  classSubjectId?: string;
 }
 
-export type { TimetablePeriodSlot, TimetablePeriodSlotType } from './utils/timetablePeriods';
+export type { TimetablePeriodSlot, TimetablePeriodSlotType, LevelPeriodOverrides } from './utils/timetablePeriods';
 export {
   DEFAULT_TIMETABLE_PERIODS,
   resolveTimetablePeriodSlots,
+  resolvePeriodSlotsForLevel,
   sortedPeriodSlots,
   lessonSlots,
   periodTimesFromSlots,
@@ -360,6 +370,13 @@ export interface TimetableTemplate {
   name: string;
   /** Same weekday-keyed shape as Timetable['schedule'], reused as-is. */
   schedule: Timetable['schedule'];
+  /**
+   * Snapshot of the lesson/break slots this template's schedule was authored against — lets
+   * applying it onto a class with a different bell schedule (e.g. a different level) remap by
+   * lesson-index instead of carrying over stale slot IDs/times. Absent on templates saved before
+   * per-level bell schedules existed; callers should fall back to the target's own columns.
+   */
+  sourceColumns?: TimetablePeriodSlot[];
   createdAt: any;
   createdBy: string; // uid, display-only — no permission logic depends on it
 }

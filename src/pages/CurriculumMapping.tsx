@@ -6,6 +6,7 @@ import {
 } from 'firebase/firestore';
 import { useSchoolId } from '../hooks/useSchoolId';
 import { useSchool } from '../components/SchoolContext';
+import { LevelSelect } from '../components/ClassSelect';
 import { CurriculumItem, CurriculumDocument, SCHOOL_CLASSES, SUBJECTS } from '../types';
 import { generateCurriculumObjective, summarizeCurriculumDocument } from '../services/geminiService';
 import {
@@ -135,7 +136,7 @@ function AITrainingTab() {
   const { user } = useAuth();
   const schoolId = useSchoolId();
   const { classes, subjects: allSubjects } = useSchool();
-  const levels = classes.length > 0 ? Array.from(new Set(classes.map(c => c.level))).sort() : SCHOOL_CLASSES;
+  const levels = classes.length > 0 ? Array.from(new Set<string>(classes.map(c => c.level))).sort() : SCHOOL_CLASSES;
   const [docs, setDocs] = useState<CurriculumDocument[]>([] as CurriculumDocument[]);
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<string>('');
@@ -349,14 +350,13 @@ function AITrainingTab() {
               <option value="">All Subjects</option>
               {allSubjects.map(s => <option key={s}>{s}</option>)}
             </select>
-            <select
+            <LevelSelect
               value={filterLevel}
               onChange={e => setFilterLevel(e.target.value)}
+              options={levels}
+              placeholder="All Levels"
               className="px-3 py-2 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none bg-white text-xs font-medium"
-            >
-              <option value="">All Levels</option>
-              {levels.map(c => <option key={c}>{c}</option>)}
-            </select>
+            />
           </div>
         </div>
 
@@ -660,7 +660,7 @@ function AIDocumentImportPanel({
 export default function CurriculumMapping() {
   const schoolId = useSchoolId();
   const { classes } = useSchool();
-  const levels = classes.length > 0 ? Array.from(new Set(classes.map(c => c.level))).sort() : SCHOOL_CLASSES;
+  const levels = classes.length > 0 ? Array.from(new Set<string>(classes.map(c => c.level))).sort() : SCHOOL_CLASSES;
   const [activeTab, setActiveTab] = useState<TabId>('mapping');
   const [items, setItems] = useState<CurriculumItem[]>([]);
   const [selectedSubject, setSelectedSubject] = useState(SUBJECTS[0]);

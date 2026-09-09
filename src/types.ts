@@ -1148,6 +1148,31 @@ export const SCHOOL_CLASSES = [
   'SSS 1', 'SSS 2', 'SSS 3'
 ];
 
+export type SchoolDivision = 'Primary' | 'Secondary';
+export const SCHOOL_DIVISIONS: SchoolDivision[] = ['Primary', 'Secondary'];
+
+/**
+ * Resolve which division a year-level belongs to.
+ *
+ * `schoolLevels` is the school's ordered promotion sequence; `secondaryStartLevel`
+ * is the first entry in it that counts as Secondary. Everything before that index —
+ * Kindergarten, Nursery and Primary levels included — is Primary. When
+ * `secondaryStartLevel` is unset or not found in `schoolLevels`, the school has no
+ * Primary/Secondary split and every level resolves to 'Primary'.
+ */
+export function divisionOfLevel(
+  levelName: string | undefined | null,
+  schoolLevels: string[],
+  secondaryStartLevel?: string | null,
+): SchoolDivision {
+  if (!secondaryStartLevel) return 'Primary';
+  const boundary = schoolLevels.indexOf(secondaryStartLevel);
+  if (boundary === -1) return 'Primary';
+  const idx = levelName ? schoolLevels.indexOf(levelName) : -1;
+  if (idx === -1) return 'Primary';
+  return idx >= boundary ? 'Secondary' : 'Primary';
+}
+
 export const NIGERIAN_REGULATIONS = {
   minAgePrimary1: 6,
   minAgeJSS1: 10,

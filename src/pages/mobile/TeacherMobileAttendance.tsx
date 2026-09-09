@@ -12,6 +12,7 @@ import { cn } from '../../lib/utils';
 import toast from 'react-hot-toast';
 import { useSchoolId } from '../../hooks/useSchoolId';
 import { useTeacherAssignments } from '../../hooks/useTeacherAssignments';
+import { ClassSelect } from '../../components/ClassSelect';
 
 type AttStatus = 'present' | 'absent' | 'late';
 
@@ -152,14 +153,13 @@ export default function TeacherMobileAttendance() {
         <div className="flex gap-2">
           {/* Class selector */}
           <div className="relative flex-1">
-            <select
+            <ClassSelect
               value={selectedClass}
               onChange={e => setSelectedClass(e.target.value)}
+              options={assignedClasses}
+              placeholder={assignedClasses.length === 0 ? 'No classes' : undefined}
               className="w-full appearance-none bg-white border border-slate-200 rounded-xl px-3 py-2.5 text-sm font-medium text-slate-800 shadow-sm focus:outline-none focus:ring-2 focus:ring-emerald-400 pr-8"
-            >
-              {assignedClasses.map(c => <option key={c} value={c}>{c}</option>)}
-              {assignedClasses.length === 0 && <option value="">No classes</option>}
-            </select>
+            />
             <ChevronDown className="absolute right-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
           </div>
           {/* Date */}

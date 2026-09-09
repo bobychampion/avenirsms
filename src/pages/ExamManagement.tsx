@@ -12,7 +12,8 @@ import {
   ChevronDown, ChevronUp, CheckCircle, XCircle, Copy, Loader2,
   AlertCircle, Download,
 } from 'lucide-react';
-import { useClassSelectOptions, useSchool } from '../components/SchoolContext';
+import { useSchool } from '../components/SchoolContext';
+import { ClassOptions, LevelSelect } from '../components/ClassSelect';
 import { useAuth } from '../components/FirebaseProvider';
 import { useSchoolId } from '../hooks/useSchoolId';
 import { generateQuestionBatch } from '../services/geminiService';
@@ -37,7 +38,7 @@ type TabId = 'exams' | 'question_bank' | 'cbt' | 'results';
 function QuestionBankTab() {
   const { user } = useAuth();
   const schoolId = useSchoolId();
-  const { subjects: allSubjects } = useSchool();
+  const { subjects: allSubjects, schoolLevels } = useSchool();
   const [questions, setQuestions] = useState<QuestionBankItem[]>([]);
   const [filterSubject, setFilterSubject] = useState(SUBJECTS[0]);
   const [filterLevel, setFilterLevel] = useState('');
@@ -160,11 +161,9 @@ function QuestionBankTab() {
             <option value="">All Subjects</option>
             {allSubjects.map(s => <option key={s}>{s}</option>)}
           </select>
-          <select value={filterLevel} onChange={e => setFilterLevel(e.target.value)}
-            className="px-3 py-2 rounded-xl border border-slate-200 text-xs font-medium bg-white outline-none focus:ring-2 focus:ring-indigo-500">
-            <option value="">All Levels</option>
-            {SCHOOL_CLASSES.map(c => <option key={c}>{c}</option>)}
-          </select>
+          <LevelSelect value={filterLevel} onChange={e => setFilterLevel(e.target.value)}
+            options={schoolLevels} placeholder="All Levels"
+            className="px-3 py-2 rounded-xl border border-slate-200 text-xs font-medium bg-white outline-none focus:ring-2 focus:ring-indigo-500" />
           <select value={filterSource} onChange={e => setFilterSource(e.target.value)}
             className="px-3 py-2 rounded-xl border border-slate-200 text-xs font-medium bg-white outline-none focus:ring-2 focus:ring-indigo-500">
             <option value="">All Sources</option>
@@ -257,10 +256,9 @@ function QuestionBankTab() {
             </div>
             <div>
               <label className="text-xs font-bold text-slate-500 uppercase tracking-wide block mb-1.5">Level</label>
-              <select value={genForm.level} onChange={e => setGenForm(p => ({ ...p, level: e.target.value }))}
-                className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none bg-white text-sm">
-                {SCHOOL_CLASSES.map(c => <option key={c}>{c}</option>)}
-              </select>
+              <LevelSelect value={genForm.level} onChange={e => setGenForm(p => ({ ...p, level: e.target.value }))}
+                options={schoolLevels}
+                className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none bg-white text-sm" />
             </div>
             <div>
               <label className="text-xs font-bold text-slate-500 uppercase tracking-wide block mb-1.5">Topics (comma-separated)</label>
@@ -318,10 +316,9 @@ function QuestionBankTab() {
                   </div>
                   <div>
                     <label className="text-xs font-bold text-slate-500 uppercase tracking-wide block mb-1">Level</label>
-                    <select value={addForm.level} onChange={e => setAddForm(p => ({ ...p, level: e.target.value }))}
-                      className="w-full px-3 py-2.5 rounded-xl border border-slate-200 text-sm outline-none focus:ring-2 focus:ring-indigo-500 bg-white">
-                      {SCHOOL_CLASSES.map(c => <option key={c}>{c}</option>)}
-                    </select>
+                    <LevelSelect value={addForm.level} onChange={e => setAddForm(p => ({ ...p, level: e.target.value }))}
+                      options={schoolLevels}
+                      className="w-full px-3 py-2.5 rounded-xl border border-slate-200 text-sm outline-none focus:ring-2 focus:ring-indigo-500 bg-white" />
                   </div>
                 </div>
                 <div>
@@ -383,7 +380,6 @@ function CBTExamsTab() {
   const { user } = useAuth();
   const schoolId = useSchoolId();
   const { subjects: allSubjects } = useSchool();
-  const classSelectOptions = useClassSelectOptions();
   const [cbtExams, setCbtExams] = useState<CBTExam[]>([]);
   const [questions, setQuestions] = useState<QuestionBankItem[]>([]);
   const [showModal, setShowModal] = useState(false);
@@ -592,8 +588,7 @@ function CBTExamsTab() {
                     <label className="text-xs font-bold text-slate-500 uppercase tracking-wide block mb-1">Target Class</label>
                     <select value={form.targetClass} onChange={e => setForm(p => ({ ...p, targetClass: e.target.value }))}
                       className="w-full px-3 py-2.5 rounded-xl border border-slate-200 text-sm outline-none focus:ring-2 focus:ring-indigo-500 bg-white">
-                      <option value="">Select class</option>
-                      {classSelectOptions.map(o => <option key={o.key} value={o.value}>{o.label}</option>)}
+                      <ClassOptions placeholder="Select class" />
                     </select>
                   </div>
                 </div>
@@ -782,7 +777,6 @@ function ResultsTab() {
 export default function ExamManagement() {
   const schoolId = useSchoolId();
   const { subjects: allSubjects } = useSchool();
-  const classSelectOptions = useClassSelectOptions();
   const [activeTab, setActiveTab] = useState<TabId>('exams');
   const [exams, setExams] = useState<Exam[]>([]);
   const [seatings, setSeatings] = useState<ExamSeating[]>([]);
@@ -1025,7 +1019,7 @@ export default function ExamManagement() {
                     <label className="text-xs font-bold text-slate-500 uppercase tracking-wide block mb-1">Class</label>
                     <select value={examForm.class} onChange={e => setExamForm(p => ({ ...p, class: e.target.value }))}
                       className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none bg-white text-sm">
-                      {classSelectOptions.map(o => <option key={o.key} value={o.value}>{o.label}</option>)}
+                      <ClassOptions />
                     </select>
                   </div>
                 </div>

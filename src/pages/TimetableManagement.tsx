@@ -7,6 +7,7 @@ import { AnimatePresence, motion } from 'motion/react';
 import { Clock, X, Save, AlertTriangle, CheckCircle, Coffee, Settings, Copy, ClipboardPaste, LayoutTemplate, Files, Split, Plus } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useClassSelectOptions, useSchool } from '../components/SchoolContext';
+import { ClassOptions } from '../components/ClassSelect';
 import { useSchoolId } from '../hooks/useSchoolId';
 import { useAuth } from '../components/FirebaseProvider';
 import { slotColumnHeaders } from '../utils/timetableSchedule';
@@ -27,7 +28,7 @@ export default function TimetableManagement() {
   const schoolId = useSchoolId();
   const { profile } = useAuth();
   const classSelectOptions = useClassSelectOptions();
-  const { subjects, currentSession, terms, getSubjectsForClass, schoolDays, getPeriodSlotsForClass, classes } = useSchool();
+  const { subjects, currentSession, terms, getSubjectsForClass, schoolDays, getPeriodSlotsForClass, classes, hasDivisions, divisionOfClass } = useSchool();
 
   const [timetables, setTimetables] = useState<Timetable[]>([]);
   const [teachers, setTeachers] = useState<UserProfile[]>([]);
@@ -468,8 +469,7 @@ export default function TimetableManagement() {
             <label className="text-xs font-bold text-slate-500 uppercase tracking-wide block mb-1.5">Class</label>
             <select value={selectedClass} onChange={e => setSelectedClass(e.target.value)}
               className="px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none bg-white text-sm">
-              <option value="">Select class…</option>
-              {classSelectOptions.map(o => <option key={o.key} value={o.value}>{o.label}</option>)}
+              <ClassOptions placeholder="Select class…" />
             </select>
           </div>
           <div>
@@ -967,19 +967,32 @@ export default function TimetableManagement() {
 
               <label className="text-xs font-bold text-slate-500 uppercase tracking-wide block mb-1.5">Target Classes</label>
               <div className="space-y-1 max-h-48 overflow-y-auto border border-slate-100 rounded-xl p-2">
-                {classSelectOptions.filter(o => o.value !== selectedClass).map(o => (
-                  <label key={o.key} className="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-slate-50 cursor-pointer text-sm">
-                    <input
-                      type="checkbox"
-                      checked={duplicateTargetClasses.includes(o.value)}
-                      onChange={e => setDuplicateTargetClasses(prev =>
-                        e.target.checked ? [...prev, o.value] : prev.filter(c => c !== o.value)
+                {(hasDivisions ? (['Primary', 'Secondary'] as const) : (['Primary'] as const)).map(div => {
+                  const rows = classSelectOptions.filter(o =>
+                    o.value !== selectedClass && (!hasDivisions || divisionOfClass(o.value) === div)
+                  );
+                  if (rows.length === 0) return null;
+                  return (
+                    <React.Fragment key={div}>
+                      {hasDivisions && (
+                        <p className="text-[10px] font-bold uppercase tracking-wide text-slate-400 px-2 pt-1.5">{div}</p>
                       )}
-                      className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
-                    />
-                    {o.label}
-                  </label>
-                ))}
+                      {rows.map(o => (
+                        <label key={o.key} className="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-slate-50 cursor-pointer text-sm">
+                          <input
+                            type="checkbox"
+                            checked={duplicateTargetClasses.includes(o.value)}
+                            onChange={e => setDuplicateTargetClasses(prev =>
+                              e.target.checked ? [...prev, o.value] : prev.filter(c => c !== o.value)
+                            )}
+                            className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                          />
+                          {o.label}
+                        </label>
+                      ))}
+                    </React.Fragment>
+                  );
+                })}
               </div>
 
               {duplicateWarnings.length > 0 && (

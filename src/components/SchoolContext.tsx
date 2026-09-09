@@ -12,10 +12,10 @@
  * Usage:
  *   const { classes, subjects, schoolLevels, periodTimes, currentSession, currentTerm } = useSchool();
  */
-import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
+import React, { createContext, useContext, useEffect, useMemo, useState, useCallback } from 'react';
 import { db } from '../firebase';
 import { collection, onSnapshot, orderBy, query, doc, where } from 'firebase/firestore';
-import { SchoolClass, SCHOOL_CLASSES, SUBJECTS, CURRENT_SESSION, TERMS, GradingSystem, CustomGradeScale, LevelGradingOverride, GradingMode, GradingRule, GradingConfigSnapshot, resolveGradingForLevel, SubjectDefinition, TimetablePeriodSlot, DAYS_OF_WEEK, WeekendDay } from '../types';
+import { SchoolClass, SCHOOL_CLASSES, SUBJECTS, CURRENT_SESSION, TERMS, GradingSystem, CustomGradeScale, LevelGradingOverride, GradingMode, GradingRule, GradingConfigSnapshot, resolveGradingForLevel, SubjectDefinition, TimetablePeriodSlot, DAYS_OF_WEEK, WeekendDay, SchoolDivision, SCHOOL_DIVISIONS, divisionOfLevel } from '../types';
 import {
   DEFAULT_TIMETABLE_PERIODS,
   resolveTimetablePeriodSlots,
@@ -46,6 +46,18 @@ interface SchoolContextValue {
   classNames: string[];            // derived string list for selects
   subjects: string[];              // merged: built-in SUBJECTS + school customSubjects
   schoolLevels: string[];          // from school_settings (dynamic, fallback SCHOOL_CLASSES)
+  /** First entry in schoolLevels that belongs to the Secondary division. '' = school not split. */
+  secondaryStartLevel: string;
+  /** True when the school has configured a Primary/Secondary split (secondaryStartLevel is set and valid). */
+  hasDivisions: boolean;
+  /** Division a level name belongs to. Returns 'Primary' when the school isn't split. */
+  divisionOfLevel: (levelName: string | undefined | null) => SchoolDivision;
+  /** Division a class (by name) belongs to, via its level. Returns 'Primary' when the school isn't split. */
+  divisionOfClass: (className: string) => SchoolDivision;
+  /** Classes grouped by division, each list in promotion order. Secondary is empty when the school isn't split. */
+  classesByDivision: Record<SchoolDivision, SchoolClass[]>;
+  /** Class-name lists grouped by division, in promotion order. */
+  classNamesByDivision: Record<SchoolDivision, string[]>;
   weekendDays: WeekendDay[];       // opt-in weekend class days from school_settings
   schoolDays: string[];            // DAYS_OF_WEEK + any enabled weekendDays, in calendar order
   /** 'daily_only' (default) | 'daily_and_subject' | 'subject_only' — from school_settings */
@@ -120,6 +132,12 @@ const SchoolContext = createContext<SchoolContextValue>({
   classNames: SCHOOL_CLASSES,
   subjects: SUBJECTS,
   schoolLevels: SCHOOL_CLASSES,
+  secondaryStartLevel: '',
+  hasDivisions: false,
+  divisionOfLevel: () => 'Primary',
+  divisionOfClass: () => 'Primary',
+  classesByDivision: { Primary: [], Secondary: [] },
+  classNamesByDivision: { Primary: SCHOOL_CLASSES, Secondary: [] },
   weekendDays: [],
   schoolDays: [...DAYS_OF_WEEK],
   attendanceMode: 'daily_only',
@@ -189,6 +207,7 @@ export function SchoolProvider({ children }: { children: React.ReactNode }) {
 
   // Dynamic settings from school_settings/{schoolId}
   const [schoolLevels, setSchoolLevels] = useState<string[]>([...SCHOOL_CLASSES]);
+  const [secondaryStartLevel, setSecondaryStartLevel] = useState<string>('');
   const [weekendDays, setWeekendDays] = useState<WeekendDay[]>([]);
   const [attendanceMode, setAttendanceMode] = useState<'daily_only' | 'daily_and_subject' | 'subject_only'>('daily_only');
   const [periodTimes, setPeriodTimes] = useState<string[]>([...DEFAULT_PERIOD_TIMES]);
@@ -290,6 +309,7 @@ export function SchoolProvider({ children }: { children: React.ReactNode }) {
     if (!schoolId) {
       // super_admin returning to platform dashboard — reset everything to defaults
       setSchoolLevels([...SCHOOL_CLASSES]);
+      setSecondaryStartLevel('');
       setWeekendDays([]);
       setAttendanceMode('daily_only');
       setPeriodTimes([...DEFAULT_PERIOD_TIMES]);
@@ -344,6 +364,7 @@ export function SchoolProvider({ children }: { children: React.ReactNode }) {
         if (snap.exists()) {
           const data = { ...defaultSettings, ...snap.data() } as SchoolSettings;
           if (data.schoolLevels?.length) setSchoolLevels(data.schoolLevels);
+          setSecondaryStartLevel(data.secondaryStartLevel || '');
           setWeekendDays(data.weekendDays || []);
           setAttendanceMode(data.attendanceMode || 'daily_only');
           const resolvedSlots = resolveTimetablePeriodSlots({
@@ -446,6 +467,33 @@ export function SchoolProvider({ children }: { children: React.ReactNode }) {
     return { classes: sorted, classNames: [...new Set(sorted.map(c => c.name))] };
   }, [rawClasses, schoolLevels]);
 
+  // ── Primary / Secondary division split ───────────────────────────────────────
+  // A single boundary (secondaryStartLevel) drawn through the ordered schoolLevels
+  // list. Everything before it — Kindergarten/Nursery/Primary — is Primary.
+  const hasDivisions = secondaryStartLevel !== '' && schoolLevels.indexOf(secondaryStartLevel) > 0;
+  const divisionOfLevelFn = useCallback(
+    (levelName: string | undefined | null): SchoolDivision =>
+      divisionOfLevel(levelName, schoolLevels, hasDivisions ? secondaryStartLevel : ''),
+    [schoolLevels, secondaryStartLevel, hasDivisions],
+  );
+  const divisionOfClassFn = useCallback(
+    (className: string): SchoolDivision => {
+      const cls = classes.find(c => c.name === className);
+      // class.level normally holds the level name; fall back to the class name itself
+      // for older class docs that never set a distinct level.
+      return divisionOfLevelFn(cls?.level || className);
+    },
+    [classes, divisionOfLevelFn],
+  );
+  const { classesByDivision, classNamesByDivision } = useMemo(() => {
+    const byDiv: Record<SchoolDivision, SchoolClass[]> = { Primary: [], Secondary: [] };
+    for (const c of classes) byDiv[divisionOfLevelFn(c.level || c.name)].push(c);
+    const names = Object.fromEntries(
+      SCHOOL_DIVISIONS.map(d => [d, [...new Set(byDiv[d].map(c => c.name))]]),
+    ) as Record<SchoolDivision, string[]>;
+    return { classesByDivision: byDiv, classNamesByDivision: names };
+  }, [classes, divisionOfLevelFn]);
+
   // Subscribe to /subjects collection filtered by schoolId
   useEffect(() => {
     if (!schoolId) {
@@ -535,6 +583,12 @@ export function SchoolProvider({ children }: { children: React.ReactNode }) {
       classNames,
       subjects: mergedSubjects,
       schoolLevels,
+      secondaryStartLevel,
+      hasDivisions,
+      divisionOfLevel: divisionOfLevelFn,
+      divisionOfClass: divisionOfClassFn,
+      classesByDivision,
+      classNamesByDivision,
       weekendDays,
       schoolDays,
       attendanceMode,

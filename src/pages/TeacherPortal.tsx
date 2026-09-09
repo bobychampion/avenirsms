@@ -17,6 +17,7 @@ import { useSchool } from '../components/SchoolContext';
 import { useSchoolId } from '../hooks/useSchoolId';
 import { useTeacherAssignments } from '../hooks/useTeacherAssignments';
 import Avatar from '../components/Avatar';
+import { ClassSelect } from '../components/ClassSelect';
 import {
   BookOpen, Users, MessageSquare, Plus, Send, Loader2,
   Calendar, CheckCircle2, Clock, Filter, Search,
@@ -1526,13 +1527,12 @@ export default function TeacherPortal() {
             <>
               <div className="flex items-center gap-4">
                 <Filter className="w-5 h-5 text-slate-400" />
-                <select
+                <ClassSelect
                   value={selectedClass}
                   onChange={e => setSelectedClass(e.target.value)}
+                  options={myAssignedClasses}
                   className="px-4 py-2 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none bg-white font-medium text-sm"
-                >
-                  {myAssignedClasses.map(c => <option key={c} value={c}>{c}</option>)}
-                </select>
+                />
                 <span className="text-sm text-slate-400 font-medium">{students.length} students</span>
               </div>
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
@@ -1591,13 +1591,13 @@ export default function TeacherPortal() {
               <div className="flex flex-wrap items-center gap-3">
                 <div className="flex items-center gap-2">
                   <Filter className="w-4 h-4 text-slate-400" />
-                  <select
+                  <ClassSelect
                     value={selectedClass}
                     onChange={e => setSelectedClass(e.target.value)}
+                    options={attendanceClasses}
+                    renderLabel={c => isCoveringToday(c) && !myAssignedClasses.includes(c) ? `${c} (cover)` : c}
                     className="px-3 py-2 rounded-xl border border-slate-200 text-sm font-medium outline-none focus:ring-2 focus:ring-indigo-500"
-                  >
-                    {attendanceClasses.map(c => <option key={c} value={c}>{isCoveringToday(c) && !myAssignedClasses.includes(c) ? `${c} (cover)` : c}</option>)}
-                  </select>
+                  />
                   {isCoveringToday(selectedClass) && !myAssignedClasses.includes(selectedClass) && (
                     <span className="text-[10px] font-bold uppercase tracking-wide px-2 py-1 rounded-lg bg-violet-100 text-violet-700">Cover · today</span>
                   )}
@@ -1738,13 +1738,13 @@ export default function TeacherPortal() {
               <div className="flex flex-wrap items-center gap-3">
                 <div className="flex items-center gap-2">
                   <Filter className="w-4 h-4 text-slate-400" />
-                  <select
+                  <ClassSelect
                     value={selectedClass}
                     onChange={e => { setSelectedClass(e.target.value); setSubjectAttendanceTimetablePeriodId(undefined); }}
+                    options={attendanceClasses}
+                    renderLabel={c => isCoveringToday(c) && !myAssignedClasses.includes(c) ? `${c} (cover)` : c}
                     className="px-3 py-2 rounded-xl border border-slate-200 text-sm font-medium outline-none focus:ring-2 focus:ring-indigo-500"
-                  >
-                    {attendanceClasses.map(c => <option key={c} value={c}>{isCoveringToday(c) && !myAssignedClasses.includes(c) ? `${c} (cover)` : c}</option>)}
-                  </select>
+                  />
                   {isCoveringToday(selectedClass) && !myAssignedClasses.includes(selectedClass) && (
                     <span className="text-[10px] font-bold uppercase tracking-wide px-2 py-1 rounded-lg bg-violet-100 text-violet-700">Cover · today</span>
                   )}
@@ -2052,10 +2052,8 @@ export default function TeacherPortal() {
             <div className="flex flex-wrap items-center gap-3 mb-6">
               <div className="flex items-center gap-2">
                 <Filter className="w-4 h-4 text-slate-400" />
-                <select value={selectedClass} onChange={e => setSelectedClass(e.target.value)}
-                  className="px-3 py-2 rounded-xl border border-slate-200 text-sm font-medium outline-none focus:ring-2 focus:ring-indigo-500">
-                  {myAssignedClasses.map(c => <option key={c}>{c}</option>)}
-                </select>
+                <ClassSelect value={selectedClass} onChange={e => setSelectedClass(e.target.value)} options={myAssignedClasses}
+                  className="px-3 py-2 rounded-xl border border-slate-200 text-sm font-medium outline-none focus:ring-2 focus:ring-indigo-500" />
               </div>
               <select value={gradeSubject} onChange={e => setGradeSubject(e.target.value)}
                 className="px-3 py-2 rounded-xl border border-slate-200 text-sm font-medium outline-none focus:ring-2 focus:ring-indigo-500">
@@ -2180,10 +2178,9 @@ export default function TeacherPortal() {
             <div className="flex flex-wrap items-center gap-3 mb-2">
               <div className="flex items-center gap-2">
                 <Filter className="w-4 h-4 text-slate-400" />
-                <select value={selectedClass} onChange={e => setSelectedClass(e.target.value)}
-                  className="px-3 py-2 rounded-xl border border-slate-200 text-sm font-medium outline-none focus:ring-2 focus:ring-indigo-500">
-                  {attendanceClasses.map(c => <option key={c}>{isCoveringToday(c) && !myAssignedClasses.includes(c) ? `${c} (cover)` : c}</option>)}
-                </select>
+                <ClassSelect value={selectedClass} onChange={e => setSelectedClass(e.target.value)} options={attendanceClasses}
+                  renderLabel={c => isCoveringToday(c) && !myAssignedClasses.includes(c) ? `${c} (cover)` : c}
+                  className="px-3 py-2 rounded-xl border border-slate-200 text-sm font-medium outline-none focus:ring-2 focus:ring-indigo-500" />
               </div>
               {isCoveringToday(selectedClass) && !myAssignedClasses.includes(selectedClass) && (
                 <span className="text-[10px] font-bold uppercase tracking-wide px-2 py-1 rounded-lg bg-violet-100 text-violet-700">Cover · today</span>
@@ -2293,10 +2290,9 @@ export default function TeacherPortal() {
               </div>
               <div className="space-y-1">
                 <label className="text-xs font-bold text-slate-400 uppercase">Class</label>
-                <select value={newAssignment.class} onChange={e => setNewAssignment({ ...newAssignment, class: e.target.value })}
-                  className="w-full px-4 py-2 rounded-xl border border-slate-200 outline-none text-sm">
-                  {(myAssignedClasses.length > 0 ? myAssignedClasses : allClasses).map(c => <option key={c} value={c}>{c}</option>)}
-                </select>
+                <ClassSelect value={newAssignment.class} onChange={e => setNewAssignment({ ...newAssignment, class: e.target.value })}
+                  options={myAssignedClasses.length > 0 ? myAssignedClasses : allClasses}
+                  className="w-full px-4 py-2 rounded-xl border border-slate-200 outline-none text-sm" />
               </div>
               <div className="space-y-1">
                 <label className="text-xs font-bold text-slate-400 uppercase">Due Date</label>
@@ -2681,10 +2677,8 @@ export default function TeacherPortal() {
 
               <div>
                 <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block mb-1.5">Class Level</label>
-                <select value={aiLevel} onChange={e => setAiLevel(e.target.value)}
-                  className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-violet-500 outline-none text-sm">
-                  {allClasses.map(c => <option key={c}>{c}</option>)}
-                </select>
+                <ClassSelect value={aiLevel} onChange={e => setAiLevel(e.target.value)} options={allClasses}
+                  className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-violet-500 outline-none text-sm" />
               </div>
 
               <div>

@@ -8,6 +8,7 @@ import { useAuth } from '../../components/FirebaseProvider';
 import { Student, CurriculumItem } from '../../types';
 import { useTeacherOverviewData } from './hooks/useTeacherOverviewData';
 import CurriculumTracker from './CurriculumTracker';
+import { ClassSelect } from '../../components/ClassSelect';
 import toast from 'react-hot-toast';
 
 interface CurriculumPageProps {
@@ -104,13 +105,12 @@ export default function CurriculumPage({
     <div className="space-y-4">
       <div className="flex items-center gap-4">
         <Filter className="w-5 h-5 text-slate-400" />
-        <select
+        <ClassSelect
           value={selectedClass}
           onChange={e => onSelectClass(e.target.value)}
+          options={myAssignedClasses}
           className="px-4 py-2 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none bg-white font-medium text-sm"
-        >
-          {myAssignedClasses.map(c => <option key={c} value={c}>{c}</option>)}
-        </select>
+        />
         <span className="text-sm text-slate-400 font-medium">{currentTerm} · {currentSession}</span>
       </div>
 

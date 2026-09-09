@@ -8,6 +8,7 @@ import {
   orderBy, getDocs, writeBatch, doc, where
 } from 'firebase/firestore';
 import { Student, SCHOOL_CLASSES } from '../types';
+import { ClassSelect } from '../components/ClassSelect';
 import toast from 'react-hot-toast';
 import { motion, AnimatePresence } from 'motion/react';
 import {
@@ -224,10 +225,8 @@ export default function NotificationComposer() {
                 </div>
 
                 {form.target === 'class' && (
-                  <select value={form.targetClass} onChange={e => setForm(f => ({ ...f, targetClass: e.target.value }))}
-                    className="mt-3 w-full px-4 py-2 rounded-xl border border-slate-200 text-sm outline-none focus:ring-2 focus:ring-indigo-500">
-                    {SCHOOL_CLASSES.map(c => <option key={c}>{c}</option>)}
-                  </select>
+                  <ClassSelect value={form.targetClass} onChange={e => setForm(f => ({ ...f, targetClass: e.target.value }))}
+                    className="mt-3 w-full px-4 py-2 rounded-xl border border-slate-200 text-sm outline-none focus:ring-2 focus:ring-indigo-500" />
                 )}
                 {form.target === 'student' && (
                   <select value={form.studentId} onChange={e => setForm(f => ({ ...f, studentId: e.target.value }))}

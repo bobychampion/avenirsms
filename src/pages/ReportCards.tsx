@@ -4,7 +4,8 @@ import { collection, query, where, getDocs } from 'firebase/firestore';
 import { Student, Grade, GradingMode, calculateGrade, scoreRemark, scoreTextColorClass, gradingScaleLegend, formatDate, StudentSkillRecord, StudentSkills, visibleSkillLabels, SKILL_RATING_LABELS, SkillRating } from '../types';
 import { generateReportSummary } from '../services/geminiService';
 import toast from 'react-hot-toast';
-import { useClassSelectOptions, useSchool } from '../components/SchoolContext';
+import { useSchool } from '../components/SchoolContext';
+import { ClassOptions } from '../components/ClassSelect';
 import { useSchoolId } from '../hooks/useSchoolId';
 import { FileText, Printer, Sparkles, ChevronDown, Users } from 'lucide-react';
 import Avatar from '../components/Avatar';
@@ -34,7 +35,6 @@ function reportCardColCount(mode: GradingMode): number {
 }
 
 export default function ReportCards() {
-  const classSelectOptions = useClassSelectOptions();
   const { getGradingForClass, currentSession, schoolName, logoUrl, reportShowLogo, reportFooterText, hiddenBehaviourTraits } = useSchool();
   const schoolId = useSchoolId();
   const [selectedClass, setSelectedClass] = useState('');
@@ -123,7 +123,7 @@ export default function ReportCards() {
             <label className="text-xs font-bold text-slate-500 uppercase tracking-wide block mb-1.5">Class</label>
             <select value={selectedClass} onChange={e => setSelectedClass(e.target.value)}
               className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none bg-white text-sm">
-              {classSelectOptions.map(o => <option key={o.key} value={o.value}>{o.label}</option>)}
+              <ClassOptions />
             </select>
           </div>
           <div className="flex-1 min-w-[140px]">

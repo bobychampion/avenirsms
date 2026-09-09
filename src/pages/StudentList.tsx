@@ -2,22 +2,24 @@ import React, { useState, useEffect } from 'react';
 import { useSearchParams, Link } from 'react-router-dom';
 import { db, handleFirestoreError, OperationType } from '../firebase';
 import { collection, query, onSnapshot, orderBy, where } from 'firebase/firestore';
-import { Student, SCHOOL_CLASSES, SchoolClass } from '../types';
+import { Student } from '../types';
 import { useSchoolId } from '../hooks/useSchoolId';
 import { motion } from 'motion/react';
 import { Search, Filter, User, Phone, Mail, Calendar, ArrowRight, ArrowLeft, ChevronLeft, ChevronRight, Download, UserX } from 'lucide-react';
 import { exportStudentsCsv } from '../services/dataExport/csvModules';
 import Avatar from '../components/Avatar';
+import { ClassSelect } from '../components/ClassSelect';
+import { useSchool } from '../components/SchoolContext';
 
 const PAGE_SIZE = 20;
 
 export default function StudentList() {
   const schoolId = useSchoolId();
+  const { hasDivisions, divisionOfClass } = useSchool();
   const [searchParams, setSearchParams] = useSearchParams();
   const initialClass = searchParams.get('class') || 'all';
 
   const [students, setStudents] = useState<Student[]>([]);
-  const [classes, setClasses] = useState<SchoolClass[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [classFilter, setClassFilter] = useState(initialClass);
@@ -33,14 +35,8 @@ export default function StudentList() {
       setLoading(false);
     }, (error) => handleFirestoreError(error, OperationType.LIST, 'students'));
 
-    const classesQuery = query(collection(db, 'classes'), where('schoolId', '==', schoolId!));
-    const unsubscribeClasses = onSnapshot(classesQuery, (snapshot) => {
-      setClasses(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as SchoolClass)));
-    });
-
     return () => {
       unsubscribe();
-      unsubscribeClasses();
     };
   }, [schoolId]);
 
@@ -72,6 +68,20 @@ export default function StudentList() {
 
     return matchesSearch && matchesClass && matchesWithdrawn;
   });
+
+  // With a Primary/Secondary split configured, cluster the cards by division
+  // (Primary first) then class then name, so the tags below read in order.
+  if (hasDivisions) {
+    filteredStudents.sort((a, b) => {
+      const da = divisionOfClass(a.currentClass);
+      const dbv = divisionOfClass(b.currentClass);
+      if (da !== dbv) return da === 'Primary' ? -1 : 1;
+      if (a.currentClass !== b.currentClass) {
+        return String(a.currentClass).localeCompare(String(b.currentClass), undefined, { numeric: true });
+      }
+      return a.studentName.localeCompare(b.studentName);
+    });
+  }
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10">
@@ -123,18 +133,12 @@ export default function StudentList() {
         </div>
         <div className="relative min-w-[200px]">
           <Filter className="w-5 h-5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-          <select
+          <ClassSelect
             value={classFilter}
             onChange={e => setClassFilter(e.target.value)}
+            firstOption={{ value: 'all', label: 'All Classes' }}
             className="w-full pl-10 pr-8 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none transition-all appearance-none bg-white font-medium text-slate-700"
-          >
-            <option value="all">All Classes</option>
-            {classes.length > 0 ? (
-              classes.map(c => <option key={c.id} value={c.name}>{c.name} ({c.level})</option>)
-            ) : (
-              SCHOOL_CLASSES.map(c => <option key={c} value={c}>{c}</option>)
-            )}
-          </select>
+          />
         </div>
       </div>
 
@@ -169,6 +173,15 @@ export default function StudentList() {
                   <div className="px-3 py-1 bg-slate-50 rounded-full border border-slate-100 text-xs font-bold text-slate-600">
                     {student.currentClass}
                   </div>
+                  {hasDivisions && (
+                    <div className={`px-2.5 py-0.5 rounded-full border text-[10px] font-bold uppercase tracking-wider ${
+                      divisionOfClass(student.currentClass) === 'Secondary'
+                        ? 'bg-indigo-50 border-indigo-100 text-indigo-600'
+                        : 'bg-amber-50 border-amber-100 text-amber-700'
+                    }`}>
+                      {divisionOfClass(student.currentClass)}
+                    </div>
+                  )}
                   {student.admissionStatus === 'withdrawn' && (
                     <div className="px-2.5 py-0.5 bg-rose-50 rounded-full border border-rose-100 text-[10px] font-bold text-rose-600 uppercase tracking-wider">
                       Withdrawn

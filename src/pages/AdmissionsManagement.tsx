@@ -21,6 +21,7 @@ import {
 } from 'lucide-react';
 import { Application, ApplicationStatus, Student, Guardian, CURRENT_SESSION, formatDate } from '../types';
 import { useSchool } from '../components/SchoolContext';
+import { ClassSelect } from '../components/ClassSelect';
 import { stripUndefined } from '../utils/firestoreSanitize';
 import { resolveGuardianAccount, normalizeGuardianEmail } from '../services/guardianAccountService';
 import { assertNotSuperAdminEmail } from '../utils/superAdminGuard';
@@ -277,7 +278,7 @@ function DirectAdmitModal({
 }) {
   const { user, profile } = useAuth();
   const schoolId = useSchoolId();
-  const { classNames, identityDocumentLabel, identityDocumentHint } = useSchool();
+  const { identityDocumentLabel, identityDocumentHint } = useSchool();
   const [form, setForm] = useState<DirectAdmitForm>(EMPTY_FORM);
   const [step, setStep] = useState(1); // 1-Student Info, 2-Guardian, 3-Siblings & Class, 4-Review
   const [saving, setSaving] = useState(false);
@@ -810,11 +811,9 @@ function DirectAdmitModal({
             <div className="space-y-5">
               <div>
                 <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Assign to Class *</label>
-                <select value={form.classApplyingFor} onChange={e => f('classApplyingFor', e.target.value)}
-                  className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm">
-                  <option value="">— Select a class —</option>
-                  {classNames.map(c => <option key={c}>{c}</option>)}
-                </select>
+                <ClassSelect value={form.classApplyingFor} onChange={e => f('classApplyingFor', e.target.value)}
+                  placeholder="— Select a class —"
+                  className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm" />
               </div>
 
               <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100">
@@ -938,7 +937,6 @@ type TabType = 'pipeline' | 'all' | 'stats';
 export default function AdmissionsManagement() {
   const navigate = useNavigate();
   const schoolId = useSchoolId();
-  const { classNames } = useSchool();
   const [applications, setApplications] = useState<Application[]>([]);
   const [students, setStudents] = useState<Student[]>([]);
   const [loading, setLoading] = useState(true);
@@ -1210,11 +1208,9 @@ export default function AdmissionsManagement() {
               <option value="approved">Approved</option>
               <option value="rejected">Rejected</option>
             </select>
-            <select value={classFilter} onChange={e => setClassFilter(e.target.value)}
-              className="px-4 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm font-medium">
-              <option value="all">All Classes</option>
-              {classNames.map(c => <option key={c}>{c}</option>)}
-            </select>
+            <ClassSelect value={classFilter} onChange={e => setClassFilter(e.target.value)}
+              firstOption={{ value: 'all', label: 'All Classes' }}
+              className="px-4 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm font-medium" />
           </div>
 
           {loading ? (

@@ -7,6 +7,7 @@ import * as XLSX from 'xlsx';
 import { db } from '../firebase';
 import { useSchoolId } from '../hooks/useSchoolId';
 import { useSchool } from '../components/SchoolContext';
+import { ClassSelect } from '../components/ClassSelect';
 import { useAuth } from '../components/FirebaseProvider';
 import type { LessonCoverage as LessonCoverageRecord, LessonStatus, LessonType } from '../types';
 import {
@@ -419,15 +420,14 @@ export default function LessonCoverage() {
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-xs font-medium text-slate-500 mb-1.5">Class *</label>
-                  <select
+                  <ClassSelect
                     value={fClass}
                     onChange={e => { setFClass(e.target.value); setFSubject(''); }}
                     required
+                    options={classNames}
+                    placeholder="Select class…"
                     className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                  >
-                    <option value="">Select class…</option>
-                    {classNames.map(c => <option key={c} value={c}>{c}</option>)}
-                  </select>
+                  />
                 </div>
                 <div>
                   <label className="block text-xs font-medium text-slate-500 mb-1.5">Subject *</label>
@@ -615,11 +615,9 @@ export default function LessonCoverage() {
                 <option value="">All Terms</option>
                 {terms.map(t => <option key={t} value={t}>{t}</option>)}
               </select>
-              <select value={logClass} onChange={e => setLogClass(e.target.value)}
-                className="px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
-                <option value="">All Classes</option>
-                {classNames.map(c => <option key={c} value={c}>{c}</option>)}
-              </select>
+              <ClassSelect value={logClass} onChange={e => setLogClass(e.target.value)}
+                options={classNames} placeholder="All Classes"
+                className="px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
               <select value={logSubject} onChange={e => setLogSubject(e.target.value)}
                 className="px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
                 <option value="">All Subjects</option>
@@ -781,14 +779,13 @@ export default function LessonCoverage() {
 
             {/* Class filter (curriculum view) */}
             {reportView === 'curriculum' && (
-              <select
+              <ClassSelect
                 value={rClass}
                 onChange={e => setRClass(e.target.value)}
+                options={classNames}
+                placeholder="All Classes"
                 className="px-3 py-2 border border-slate-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
-              >
-                <option value="">All Classes</option>
-                {classNames.map(c => <option key={c} value={c}>{c}</option>)}
-              </select>
+              />
             )}
 
             {/* Teaching weeks (only shows when a class is selected — enables planned calculation) */}

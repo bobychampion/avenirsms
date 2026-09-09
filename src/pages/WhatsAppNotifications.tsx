@@ -6,7 +6,7 @@ import { Student, Invoice, CURRENT_SESSION, TERMS, formatNaira } from '../types'
 import { motion, AnimatePresence } from 'motion/react';
 import toast from 'react-hot-toast';
 import { generateFeeReminderDraft } from '../services/geminiService';
-import { useClassSelectOptions } from '../components/SchoolContext';
+import { ClassOptions } from '../components/ClassSelect';
 import { useSchoolId } from '../hooks/useSchoolId';
 import {
   MessageSquare, Send, Users, Filter, CheckCircle2, Loader2,
@@ -96,7 +96,6 @@ function openWhatsApp(phone: string, message: string) {
 
 export default function WhatsAppNotifications() {
   const { profile } = useAuth();
-  const classSelectOptions = useClassSelectOptions();
   const schoolId = useSchoolId();
   const [students, setStudents] = useState<Student[]>([]);
   const [invoices, setInvoices] = useState<Invoice[]>([]);
@@ -283,8 +282,7 @@ export default function WhatsAppNotifications() {
                 onChange={e => setClassFilter(e.target.value)}
                 className="w-full px-3 py-2.5 rounded-xl border border-slate-300 text-sm focus:ring-2 focus:ring-green-500 focus:border-green-500"
               >
-                <option value="all">All Classes</option>
-                {classSelectOptions.map(o => <option key={o.key} value={o.value}>{o.label}</option>)}
+                <ClassOptions firstOption={{ value: 'all', label: 'All Classes' }} />
               </select>
             </div>
 

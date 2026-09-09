@@ -2,7 +2,8 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { db, handleFirestoreError, OperationType } from '../firebase';
 import { doc, onSnapshot, updateDoc, serverTimestamp, collection, query, where, getDocs, arrayUnion, arrayRemove } from 'firebase/firestore';
-import { Student, SCHOOL_CLASSES, SchoolClass, Grade, CURRENT_SESSION, TERMS } from '../types';
+import { Student, Grade, CURRENT_SESSION, TERMS } from '../types';
+import { ClassSelect } from '../components/ClassSelect';
 import { motion, AnimatePresence } from 'motion/react';
 import toast from 'react-hot-toast';
 import { generateStudentInsights } from '../services/geminiService';
@@ -39,7 +40,6 @@ export default function StudentProfile() {
   const { isConnected } = useStorageSettings();
   const schoolId = useSchoolId();
   const [student, setStudent] = useState<Student | null>(null);
-  const [classes, setClasses] = useState<SchoolClass[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [formData, setFormData] = useState<Partial<Student>>({});
@@ -71,15 +71,6 @@ export default function StudentProfile() {
 
     return () => unsubscribe();
   }, [id]);
-
-  useEffect(() => {
-    if (!schoolId) return;
-    const q = query(collection(db, 'classes'), where('schoolId', '==', schoolId!));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      setClasses(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as SchoolClass)));
-    });
-    return () => unsubscribe();
-  }, [schoolId]);
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
     const { name, value } = e.target;
@@ -536,21 +527,13 @@ export default function StudentProfile() {
               </div>
               <div className="space-y-2">
                 <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">Current Class</label>
-                <select
+                <ClassSelect
                   name="currentClass"
                   value={formData.currentClass || ''}
                   onChange={handleInputChange}
+                  placeholder="Select Class..."
                   className="w-full px-4 py-2 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none bg-white"
-                >
-                  <option value="">Select Class...</option>
-                  {classes.map(cls => (
-                    <option key={cls.id} value={cls.name}>{cls.name} ({cls.level})</option>
-                  ))}
-                  {/* Fallback to default classes if no custom classes defined */}
-                  {classes.length === 0 && SCHOOL_CLASSES.map(cls => (
-                    <option key={cls} value={cls}>{cls}</option>
-                  ))}
-                </select>
+                />
               </div>
               <div className="space-y-2">
                 <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">{identityDocumentLabel}</label>

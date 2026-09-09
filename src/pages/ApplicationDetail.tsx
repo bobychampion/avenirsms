@@ -24,6 +24,7 @@ import {
 import { differenceInYears, parseISO } from 'date-fns';
 import { StatusBadge } from './AdminDashboard';
 import { useSchool } from '../components/SchoolContext';
+import { ClassSelect } from '../components/ClassSelect';
 import toast from 'react-hot-toast';
 
 // ─── Guardian panel ───────────────────────────────────────────────────────────
@@ -348,7 +349,7 @@ function GuardianPanel({
 export default function ApplicationDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { schoolId, classNames, identityDocumentLabel } = useSchool();
+  const { schoolId, identityDocumentLabel } = useSchool();
   const { settings: schoolSettings } = useSchoolSettings();
   const [application, setApplication] = useState<Application | null>(null);
   const [loading, setLoading] = useState(true);
@@ -953,11 +954,9 @@ export default function ApplicationDetail() {
               <School className="w-5 h-5 text-indigo-600" /> Class Assignment
             </h3>
             <p className="text-sm text-slate-500 mb-3">Confirm or override the class this student will be admitted into.</p>
-            <select value={guardianForm.classAssignment} onChange={e => gf('classAssignment', e.target.value)}
-              className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm font-medium">
-              <option value="">— Use applied class ({application.classApplyingFor}) —</option>
-              {classNames.map(c => <option key={c}>{c}</option>)}
-            </select>
+            <ClassSelect value={guardianForm.classAssignment} onChange={e => gf('classAssignment', e.target.value)}
+              placeholder={`— Use applied class (${application.classApplyingFor}) —`}
+              className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm font-medium" />
           </div>
 
           {/* Guardian & Sibling Linking */}

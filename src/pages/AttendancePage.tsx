@@ -14,6 +14,7 @@ import {
   BarChart3, Filter, Calendar, Users, Sparkles, Bell, Download
 } from 'lucide-react';
 import { exportAttendanceCsv, exportSubjectAttendanceCsv, exportSpecialLessonAttendanceCsv } from '../services/dataExport/csvModules';
+import { ClassSelect } from '../components/ClassSelect';
 
 type AttendanceStatus = 'present' | 'absent' | 'late';
 
@@ -420,14 +421,13 @@ export default function AttendancePage() {
         <div className="flex flex-wrap gap-4 items-end">
           <div className="flex-1 min-w-[160px]">
             <label className="text-xs font-bold text-slate-500 uppercase tracking-wide block mb-1.5">Class</label>
-            <select
+            <ClassSelect
               value={selectedClass}
               onChange={e => setSelectedClass(e.target.value)}
+              options={classRows.map(c => c.name)}
+              placeholder="Select class..."
               className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none bg-white text-sm"
-            >
-              <option value="">Select class...</option>
-              {classRows.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
-            </select>
+            />
           </div>
           <div className="flex-1 min-w-[160px]">
             <label className="text-xs font-bold text-slate-500 uppercase tracking-wide block mb-1.5">Date</label>

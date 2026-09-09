@@ -8,7 +8,8 @@ import { motion, AnimatePresence } from 'motion/react';
 import toast from 'react-hot-toast';
 import { ConfirmDialog } from '../components/Toast';
 import { generateFeeReminderDraft } from '../services/geminiService';
-import { useClassSelectOptions, useSchool } from '../components/SchoolContext';
+import { useSchool } from '../components/SchoolContext';
+import { ClassOptions } from '../components/ClassSelect';
 import { useSchoolId } from '../hooks/useSchoolId';
 import { formatCurrency } from '../utils/formatCurrency';
 import {
@@ -22,7 +23,6 @@ import { DOCUMENT_TITLE_DEFAULT } from '../constants/appMeta';
 
 export default function FinancialManagement() {
   const { profile } = useAuth();
-  const classSelectOptions = useClassSelectOptions();
   const { locale, currency } = useSchool();
   const schoolId = useSchoolId();
   const fmt = (amount: number) => formatCurrency(amount, locale, currency);
@@ -1221,8 +1221,7 @@ export default function FinancialManagement() {
                       <select value={scheduleForm.targetClass}
                         onChange={e => { setScheduleForm(p => ({ ...p, targetClass: e.target.value })); setExcludedStudentIds(new Set()); }}
                         required className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm bg-white">
-                        <option value="">Select class…</option>
-                        {classSelectOptions.map(o => <option key={o.key} value={o.value}>{o.label}</option>)}
+                        <ClassOptions placeholder="Select class…" />
                       </select>
                     </div>
                   )}

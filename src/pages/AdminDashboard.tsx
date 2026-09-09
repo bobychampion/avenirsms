@@ -201,7 +201,7 @@ function computeLiveClasses(
 
 export default function AdminDashboard() {
   const { user } = useAuth();
-  const { locale, currency, schoolDays } = useSchool();
+  const { locale, currency, schoolDays, hasDivisions, divisionOfClass } = useSchool();
   const schoolId = useSchoolId();
   const fmt = (amount: number) => formatCurrency(amount, locale, currency);
 
@@ -219,6 +219,7 @@ export default function AdminDashboard() {
   const [pendingAbsences, setPendingAbsences] = useState(0);
   const [gradeDistribution, setGradeDistribution] = useState<{ grade: string; count: number }[]>([]);
   const [classEnrollment, setClassEnrollment] = useState<{ name: string; students: number }[]>([]);
+  const [divisionEnrollment, setDivisionEnrollment] = useState<{ Primary: number; Secondary: number }>({ Primary: 0, Secondary: 0 });
   const [revenueByMonth, setRevenueByMonth] = useState<{ month: string; revenue: number; expenses: number }[]>([]);
   const [attendanceByDay, setAttendanceByDay] = useState<{ date: string; present: number; absent: number; late: number }[]>([]);
   const [loading, setLoading] = useState(true);
@@ -409,6 +410,9 @@ export default function AdminDashboard() {
           .slice(0, 8)
           .map(([name, students]) => ({ name, students }))
       );
+      const divEnr = { Primary: 0, Secondary: 0 };
+      Object.entries(cc).forEach(([name, n]) => { divEnr[divisionOfClass(name)] += n; });
+      setDivisionEnrollment(divEnr);
 
       // Revenue by month (from payments)
       const revMap: Record<string, { revenue: number; expenses: number }> = {};
@@ -1265,6 +1269,22 @@ export default function AdminDashboard() {
             {/* Class Enrollment Bar */}
             <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-sm">
               <h3 className="text-sm font-bold text-slate-900 mb-3">Students per Class</h3>
+              {hasDivisions && (divisionEnrollment.Primary + divisionEnrollment.Secondary) > 0 && (() => {
+                const total = divisionEnrollment.Primary + divisionEnrollment.Secondary;
+                const pPct = Math.round((divisionEnrollment.Primary / total) * 100);
+                return (
+                  <div className="mb-4">
+                    <div className="flex justify-between text-xs font-semibold text-slate-500 mb-1.5">
+                      <span className="text-amber-700">Primary {divisionEnrollment.Primary}</span>
+                      <span className="text-indigo-600">Secondary {divisionEnrollment.Secondary}</span>
+                    </div>
+                    <div className="flex h-2 rounded-full overflow-hidden bg-slate-100">
+                      <div className="bg-amber-400" style={{ width: `${pPct}%` }} />
+                      <div className="bg-indigo-500" style={{ width: `${100 - pPct}%` }} />
+                    </div>
+                  </div>
+                );
+              })()}
               {classEnrollment.length > 0 ? (
                 <ResponsiveContainer width="100%" height={200}>
                   <BarChart data={classEnrollment} layout="vertical" margin={{ left: 8 }}>

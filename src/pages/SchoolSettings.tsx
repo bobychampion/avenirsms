@@ -11,7 +11,7 @@ import {
   Upload, Eye, EyeOff, Users, Bell, ShieldCheck, FileText, ClipboardCheck,
   MapPin, Navigation, CheckCircle2, XCircle, RefreshCw, Brain,
   Palette, Link as LinkIcon, Monitor, ExternalLink, Brush, Clock,
-  CreditCard, Landmark, Banknote, Tag,
+  CreditCard, Landmark, Banknote, Tag, GraduationCap,
 } from 'lucide-react';
 import TimetablePeriodEditor from '../components/TimetablePeriodEditor';
 import {
@@ -107,6 +107,13 @@ export interface SchoolSettings {
    * Defaults to 'daily_only' for all existing schools — nothing changes until an admin opts in.
    */
   attendanceMode: 'daily_only' | 'daily_and_subject' | 'subject_only';
+  /**
+   * Name of the first entry in `schoolLevels` (promotion order) that belongs to the
+   * Secondary division. Every level before it — Kindergarten, Nursery and Primary —
+   * is the Primary division. Empty / unset = the school is not split into
+   * Primary and Secondary, and division grouping is hidden across the app.
+   */
+  secondaryStartLevel?: string;
   // Internationalisation
   country: string;           // ISO 3166-1 alpha-2, e.g. 'NG', 'SI', 'US'
   timezone: string;          // IANA tz string, e.g. 'Africa/Lagos', 'Europe/Ljubljana'
@@ -293,6 +300,7 @@ export const defaultSettings: SchoolSettings = {
   levelPeriodOverrides: {},
   weekendDays: [],
   attendanceMode: 'daily_only',
+  secondaryStartLevel: '',
   // Internationalisation
   country: '',
   timezone: '',
@@ -442,15 +450,22 @@ function TagListEditor({
 
 // ─── Orderable Level Editor ────────────────────────────────────────────────────
 function OrderableLevelEditor({
-  items, onReorder, onAdd, onRemove
+  items, onReorder, onAdd, onRemove,
+  secondaryStartLevel, onSetSecondaryStart,
 }: {
   items: string[];
   onReorder: (items: string[]) => void;
   onAdd: (v: string) => void;
   onRemove: (i: number) => void;
+  secondaryStartLevel: string;
+  onSetSecondaryStart: (level: string) => void;
 }) {
   const [input, setInput] = useState('');
   const [err, setErr] = useState('');
+  // Index in `items` where the Secondary division begins. -1 / 0 → no meaningful
+  // split (0 would leave Primary empty), so the whole school shows as one division.
+  const boundaryIdx = items.indexOf(secondaryStartLevel);
+  const hasSplit = boundaryIdx > 0;
   const moveUp = (i: number) => {
     if (i === 0) return;
     const next = [...items]; [next[i - 1], next[i]] = [next[i], next[i - 1]]; onReorder(next);
@@ -470,15 +485,51 @@ function OrderableLevelEditor({
       <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">
         Grade / Year Levels <span className="text-slate-400 font-normal normal-case">(order = promotion sequence)</span>
       </label>
-      <div className="space-y-1.5 mb-3 max-h-64 overflow-y-auto pr-1">
-        {items.map((item, i) => (
-          <div key={i} className="flex items-center gap-2 bg-indigo-50 border border-indigo-100 rounded-xl px-3 py-1.5">
-            <span className="flex-1 text-xs font-semibold text-indigo-700">{item}</span>
-            <button onClick={() => moveUp(i)} disabled={i === 0} className="p-1 text-indigo-400 hover:text-indigo-700 disabled:opacity-25"><ChevronUp className="w-3.5 h-3.5" /></button>
-            <button onClick={() => moveDown(i)} disabled={i === items.length - 1} className="p-1 text-indigo-400 hover:text-indigo-700 disabled:opacity-25"><ChevronDown className="w-3.5 h-3.5" /></button>
-            <button onClick={() => onRemove(i)} className="p-1 text-slate-400 hover:text-red-500 ml-1"><X className="w-3.5 h-3.5" /></button>
-          </div>
-        ))}
+      <p className="text-xs text-slate-500 mb-3">
+        Mark where the <span className="font-semibold text-indigo-700">Secondary</span> division begins to group classes into
+        Primary and Secondary across attendance, student lists and dashboards. Levels above the marker — Kindergarten and
+        Nursery included — are Primary. Leave it unset to keep the school as one undivided list.
+      </p>
+      <div className="space-y-1.5 mb-3 max-h-72 overflow-y-auto pr-1">
+        {items.map((item, i) => {
+          const isSecondary = hasSplit && i >= boundaryIdx;
+          const isBoundary = hasSplit && i === boundaryIdx;
+          return (
+          <React.Fragment key={i}>
+            {isBoundary && (
+              <div className="flex items-center gap-2 pt-1">
+                <div className="flex-1 h-px bg-indigo-200" />
+                <span className="flex items-center gap-1 text-[10px] font-bold uppercase tracking-wide text-indigo-600">
+                  <GraduationCap className="w-3.5 h-3.5" /> Secondary starts here
+                </span>
+                <button onClick={() => onSetSecondaryStart('')} title="Remove division split"
+                  className="p-0.5 text-slate-400 hover:text-red-500"><X className="w-3 h-3" /></button>
+                <div className="flex-1 h-px bg-indigo-200" />
+              </div>
+            )}
+            <div className={`flex items-center gap-2 border rounded-xl px-3 py-1.5 ${
+              !hasSplit ? 'bg-indigo-50 border-indigo-100'
+                : isSecondary ? 'bg-indigo-50 border-indigo-100' : 'bg-amber-50 border-amber-100'
+            }`}>
+              <span className={`flex-1 text-xs font-semibold ${
+                !hasSplit ? 'text-indigo-700' : isSecondary ? 'text-indigo-700' : 'text-amber-800'
+              }`}>{item}</span>
+              {hasSplit && (
+                <span className="text-[9px] font-bold uppercase tracking-wide text-slate-400">
+                  {isSecondary ? 'Sec' : 'Pri'}
+                </span>
+              )}
+              {i > 0 && !isBoundary && (
+                <button onClick={() => onSetSecondaryStart(item)} title="Secondary division starts at this level"
+                  className="p-1 text-slate-300 hover:text-indigo-600"><GraduationCap className="w-3.5 h-3.5" /></button>
+              )}
+              <button onClick={() => moveUp(i)} disabled={i === 0} className="p-1 text-slate-400 hover:text-indigo-700 disabled:opacity-25"><ChevronUp className="w-3.5 h-3.5" /></button>
+              <button onClick={() => moveDown(i)} disabled={i === items.length - 1} className="p-1 text-slate-400 hover:text-indigo-700 disabled:opacity-25"><ChevronDown className="w-3.5 h-3.5" /></button>
+              <button onClick={() => onRemove(i)} className="p-1 text-slate-400 hover:text-red-500 ml-1"><X className="w-3.5 h-3.5" /></button>
+            </div>
+          </React.Fragment>
+          );
+        })}
         {items.length === 0 && <span className="text-xs text-slate-400 italic">No levels yet</span>}
       </div>
       <div className="flex gap-2">
@@ -1856,7 +1907,13 @@ export default function SchoolSettingsPage() {
                 items={form.schoolLevels}
                 onReorder={levels => field('schoolLevels', levels)}
                 onAdd={v => field('schoolLevels', [...form.schoolLevels, v])}
-                onRemove={i => field('schoolLevels', form.schoolLevels.filter((_, idx) => idx !== i))}
+                onRemove={i => {
+                  const removed = form.schoolLevels[i];
+                  field('schoolLevels', form.schoolLevels.filter((_, idx) => idx !== i));
+                  if (removed === form.secondaryStartLevel) field('secondaryStartLevel', '');
+                }}
+                secondaryStartLevel={form.secondaryStartLevel ?? ''}
+                onSetSecondaryStart={level => field('secondaryStartLevel', level)}
               />
             </div>
 

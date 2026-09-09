@@ -9,7 +9,7 @@ import {
 import { Notification, Student, UserProfile, CURRENT_SESSION } from '../types';
 import { motion, AnimatePresence } from 'motion/react';
 import toast from 'react-hot-toast';
-import { useClassSelectOptions } from '../components/SchoolContext';
+import { ClassOptions } from '../components/ClassSelect';
 import { useSchoolId } from '../hooks/useSchoolId';
 import {
   Bell, Plus, Send, Trash2, Users, User, BookOpen,
@@ -39,7 +39,6 @@ const TYPE_ICONS: Record<NotifType, React.ElementType> = {
 
 export default function NotificationsManagement() {
   const { profile } = useAuth();
-  const classSelectOptions = useClassSelectOptions();
   const schoolId = useSchoolId();
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [students, setStudents] = useState<Student[]>([]);
@@ -245,7 +244,7 @@ export default function NotificationsManagement() {
               {targetMode === 'class' && (
                 <select value={targetClass} onChange={e => setTargetClass(e.target.value)}
                   className="w-full mt-2 px-3 py-2 rounded-xl border border-slate-200 text-sm font-medium outline-none focus:ring-2 focus:ring-indigo-500">
-                  {classSelectOptions.map(o => <option key={o.key} value={o.value}>{o.label}</option>)}
+                  <ClassOptions />
                 </select>
               )}
 

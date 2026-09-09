@@ -124,33 +124,109 @@ export async function generateStudentId(schoolId: string = 'main'): Promise<stri
   }
 }
 
-/** Bulk upsert attendance records for a whole class */
+type DailyAttStatus = 'present' | 'absent' | 'late';
+
+/** A row the caller is about to change that someone else already changed since the page loaded. */
+export interface AttendanceConflict {
+  studentId: string;
+  /** Status currently in Firestore (written by someone else after the caller loaded). */
+  theirStatus: DailyAttStatus;
+  /** Status the caller is trying to write. */
+  yourStatus: DailyAttStatus;
+  /** uid of whoever last wrote the Firestore value. */
+  theirRecordedBy?: string;
+}
+
+export interface AttendanceSaveResult {
+  created: number;
+  updated: number;
+  /** Rows whose status already matched — no write issued. */
+  unchanged: number;
+  /**
+   * Rows NOT written because Firestore's value diverged from the caller's baseline
+   * (a concurrent edit). Empty when `opts.overrideConflicts` is set.
+   */
+  conflicts: AttendanceConflict[];
+}
+
+/**
+ * Bulk upsert daily attendance for a class.
+ *
+ * The `attendance` collection holds exactly one record per student per day (keyed on
+ * studentId + date), so any save for a class the student is in touches the same row.
+ * To stop one teacher's save silently discarding another's:
+ *  - only rows whose status actually changes are written (a plain "Save" no longer
+ *    rewrites the whole roster);
+ *  - updates now also stamp `class`, `recordedBy` and `updatedAt` so the record
+ *    reflects who last touched it and from which class;
+ *  - when `opts.baseline` is supplied (studentId -> status the caller last read from
+ *    Firestore), a row whose stored status has since diverged from that baseline is
+ *    reported as a conflict and left untouched — unless `opts.overrideConflicts` is
+ *    set, letting the caller confirm and retry.
+ */
 export async function batchUpsertAttendance(
-  records: { studentId: string; date: string; status: 'present' | 'absent' | 'late'; class: string; recordedBy: string }[],
-  schoolId?: string | null
-): Promise<void> {
+  records: { studentId: string; date: string; status: DailyAttStatus; class: string; recordedBy: string }[],
+  schoolId?: string | null,
+  opts?: { baseline?: Record<string, DailyAttStatus>; overrideConflicts?: boolean }
+): Promise<AttendanceSaveResult> {
   assertNotImpersonating();
+  const baseline = opts?.baseline;
+  const override = opts?.overrideConflicts ?? false;
   const batch = writeBatch(db);
+  const result: AttendanceSaveResult = { created: 0, updated: 0, unchanged: 0, conflicts: [] };
+
   for (const record of records) {
     const constraints: QueryConstraint[] = [
       where('studentId', '==', record.studentId),
       where('date', '==', record.date),
     ];
     if (schoolId) constraints.push(where('schoolId', '==', schoolId));
-    const q = query(collection(db, 'attendance'), ...constraints);
-    const existing = await getDocs(q);
-    if (!existing.empty) {
-      existing.docs.forEach(d => batch.update(d.ref, { status: record.status, updatedAt: serverTimestamp() }));
-    } else {
+    const existing = await getDocs(query(collection(db, 'attendance'), ...constraints));
+
+    if (existing.empty) {
       const newRef = doc(collection(db, 'attendance'));
       batch.set(newRef, {
         ...record,
         ...(schoolId ? { schoolId } : {}),
         createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
       });
+      result.created++;
+      continue;
+    }
+
+    // A student should have one daily record; update every match if somehow duplicated.
+    for (const d of existing.docs) {
+      const current = d.data().status as DailyAttStatus;
+      if (current === record.status) { result.unchanged++; continue; }
+
+      if (baseline && !override) {
+        const loadedAs = baseline[record.studentId];
+        // `loadedAs` undefined = the caller loaded before any record existed, yet one does
+        // now — also a concurrent write, so treat it as a conflict.
+        if (loadedAs !== current) {
+          result.conflicts.push({
+            studentId: record.studentId,
+            theirStatus: current,
+            yourStatus: record.status,
+            theirRecordedBy: d.data().recordedBy,
+          });
+          continue;
+        }
+      }
+
+      batch.update(d.ref, {
+        status: record.status,
+        class: record.class,
+        recordedBy: record.recordedBy,
+        updatedAt: serverTimestamp(),
+      });
+      result.updated++;
     }
   }
+
   await batch.commit();
+  return result;
 }
 
 /**

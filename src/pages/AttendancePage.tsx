@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { exportAttendanceCsv, exportSubjectAttendanceCsv, exportSpecialLessonAttendanceCsv } from '../services/dataExport/csvModules';
 import { ClassSelect } from '../components/ClassSelect';
+import { describeAttendanceConflicts } from '../utils/attendanceConflict';
 
 type AttendanceStatus = 'present' | 'absent' | 'late';
 
@@ -172,14 +173,27 @@ export default function AttendancePage() {
     }));
     const tid = toast.loading('Saving attendance…');
     try {
-      await batchUpsertAttendance(records, schoolId);
+      let res = await batchUpsertAttendance(records, schoolId, { baseline: savedAttendance });
+      toast.dismiss(tid);
+      if (res.conflicts.length > 0) {
+        const proceed = window.confirm(
+          describeAttendanceConflicts(res.conflicts, id => students.find(s => s.id === id)?.studentName ?? id)
+        );
+        if (!proceed) {
+          toast('Not saved. Reopen the class to load the latest marks.', { icon: 'ℹ️' });
+          setSaving(false);
+          return;
+        }
+        res = await batchUpsertAttendance(records, schoolId, { overrideConflicts: true });
+      }
       setSavedAttendance(prev => {
         const next = { ...prev };
         records.forEach(r => { next[r.studentId] = r.status; });
         return next;
       });
       setLocalAttendanceEdits({});
-      toast.success('Attendance saved!', { id: tid });
+      const changed = res.created + res.updated;
+      toast.success(changed > 0 ? `Attendance saved (${changed} change${changed === 1 ? '' : 's'}).` : 'Attendance already up to date.');
       setSaved(true);
       setTimeout(() => setSaved(false), 3000);
     } catch (e: any) {

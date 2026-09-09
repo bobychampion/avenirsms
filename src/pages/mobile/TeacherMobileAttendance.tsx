@@ -13,6 +13,7 @@ import toast from 'react-hot-toast';
 import { useSchoolId } from '../../hooks/useSchoolId';
 import { useTeacherAssignments } from '../../hooks/useTeacherAssignments';
 import { ClassSelect } from '../../components/ClassSelect';
+import { describeAttendanceConflicts } from '../../utils/attendanceConflict';
 
 type AttStatus = 'present' | 'absent' | 'late';
 
@@ -108,21 +109,34 @@ export default function TeacherMobileAttendance() {
     const toSave = rows.filter(r => r.status !== null);
     if (toSave.length === 0) { toast.error('Mark at least one student'); return; }
     setSaving(true);
+    const payload = toSave.map(r => ({
+      studentId: r.studentId,
+      date,
+      status: r.status!,
+      class: selectedClass,
+      recordedBy: user?.uid ?? profile?.displayName ?? 'teacher',
+    }));
     try {
-      await batchUpsertAttendance(toSave.map(r => ({
-        studentId: r.studentId,
-        date,
-        status: r.status!,
-        class: selectedClass,
-        recordedBy: user?.uid ?? profile?.displayName ?? 'teacher',
-      })));
+      let res = await batchUpsertAttendance(payload, schoolId, { baseline: savedRecords });
+      if (res.conflicts.length > 0) {
+        const proceed = window.confirm(
+          describeAttendanceConflicts(res.conflicts, id => rows.find(r => r.studentId === id)?.studentName ?? id)
+        );
+        if (!proceed) {
+          toast('Not saved — reopen the class to see the latest marks');
+          setSaving(false);
+          return;
+        }
+        res = await batchUpsertAttendance(payload, schoolId, { overrideConflicts: true });
+      }
       setSavedRecords(prev => {
         const next = { ...prev };
         toSave.forEach(r => { next[r.studentId] = r.status!; });
         return next;
       });
       setLocalEdits({});
-      toast.success(`Saved ${toSave.length} records`);
+      const changed = res.created + res.updated;
+      toast.success(changed > 0 ? `Saved ${changed} record${changed === 1 ? '' : 's'}` : 'Already up to date');
     } catch (e) {
       console.error(e);
       toast.error('Failed to save attendance');

@@ -18,6 +18,7 @@ import { useSchoolId } from '../hooks/useSchoolId';
 import { useTeacherAssignments } from '../hooks/useTeacherAssignments';
 import Avatar from '../components/Avatar';
 import { ClassSelect } from '../components/ClassSelect';
+import { describeAttendanceConflicts } from '../utils/attendanceConflict';
 import {
   BookOpen, Users, MessageSquare, Plus, Send, Loader2,
   Calendar, CheckCircle2, Clock, Filter, Search,
@@ -129,6 +130,9 @@ export default function TeacherPortal() {
   const [localAttendanceEdits, setLocalAttendanceEdits] = useState<Record<string, 'present' | 'absent' | 'late'>>({});
   const [savingAttendance, setSavingAttendance] = useState(false);
   const [attendanceSaved, setAttendanceSaved] = useState(false);
+  // Summary of any register already on file for the selected class+date — powers the
+  // "already recorded" banner so a second teacher knows before they save over it.
+  const [savedAttendanceInfo, setSavedAttendanceInfo] = useState<{ count: number; lastBy?: string; lastAt?: Date } | null>(null);
 
   // Subject Attendance state (only relevant when school's attendanceMode !== 'daily_only')
   const [subjectAttendanceSubject, setSubjectAttendanceSubject] = useState('');
@@ -635,12 +639,17 @@ export default function TeacherPortal() {
       );
       const snap = await getDocs(q);
       const existingMap: Record<string, 'present' | 'absent' | 'late'> = {};
+      let lastBy: string | undefined;
+      let lastAt: Date | undefined;
       snap.docs.forEach(d => {
         const data = d.data();
         existingMap[data.studentId] = data.status;
+        const ts = (data.updatedAt || data.createdAt)?.toDate?.() as Date | undefined;
+        if (ts && (!lastAt || ts > lastAt)) { lastAt = ts; lastBy = data.recordedBy; }
       });
       if (cancelled) return;
       setSavedAttendance(existingMap);
+      setSavedAttendanceInfo(snap.empty ? null : { count: snap.size, lastBy, lastAt });
       setLocalAttendanceEdits({}); // fresh class/date selection — discard any stale local edits
     };
 
@@ -684,7 +693,19 @@ export default function TeacherPortal() {
     }));
     const tid = toast.loading('Saving attendance…');
     try {
-      await batchUpsertAttendance(records, schoolId);
+      let res = await batchUpsertAttendance(records, schoolId, { baseline: savedAttendance });
+      toast.dismiss(tid);
+      if (res.conflicts.length > 0) {
+        const proceed = window.confirm(
+          describeAttendanceConflicts(res.conflicts, id => students.find(s => s.id === id)?.studentName ?? id)
+        );
+        if (!proceed) {
+          toast('Not saved. Reopen the class to load the latest marks.', { icon: 'ℹ️' });
+          setSavingAttendance(false);
+          return;
+        }
+        res = await batchUpsertAttendance(records, schoolId, { overrideConflicts: true });
+      }
       // Fold the just-saved values into "saved" state and clear local edits so
       // subsequent renders read from a single consistent source again.
       setSavedAttendance(prev => {
@@ -693,7 +714,8 @@ export default function TeacherPortal() {
         return next;
       });
       setLocalAttendanceEdits({});
-      toast.success('Attendance saved!', { id: tid });
+      const changed = res.created + res.updated;
+      toast.success(changed > 0 ? `Attendance saved (${changed} change${changed === 1 ? '' : 's'}).` : 'Attendance already up to date.');
       setAttendanceSaved(true);
       setTimeout(() => setAttendanceSaved(false), 3000);
     } catch (e: any) {
@@ -1624,6 +1646,18 @@ export default function TeacherPortal() {
                 </span>
               )}
             </div>
+
+            {savedAttendanceInfo && selectedClass && attendanceRows.length > 0 && (
+              <div className="mb-5 flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                <AlertTriangle className="w-4 h-4 mt-0.5 flex-shrink-0" />
+                <span>
+                  This register was already saved for {attendanceDate}
+                  {savedAttendanceInfo.lastBy && contactNameMap[savedAttendanceInfo.lastBy] ? ` by ${contactNameMap[savedAttendanceInfo.lastBy]}` : ''}
+                  {savedAttendanceInfo.lastAt ? ` at ${savedAttendanceInfo.lastAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : ''}
+                  {` (${savedAttendanceInfo.count} marked). Saving updates it — you'll be asked before overwriting anyone another teacher changed.`}
+                </span>
+              </div>
+            )}
 
             {attendanceRows.length === 0 ? (
               <div className="text-center py-12 bg-slate-50 rounded-2xl border-2 border-dashed border-slate-200">

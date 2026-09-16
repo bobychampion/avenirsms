@@ -476,23 +476,31 @@ export function SchoolProvider({ children }: { children: React.ReactNode }) {
       divisionOfLevel(levelName, schoolLevels, hasDivisions ? secondaryStartLevel : ''),
     [schoolLevels, secondaryStartLevel, hasDivisions],
   );
+  // A class's own `division` (set explicitly in Class Management) always wins over
+  // the level-derived value — it's the admin's deliberate override for a class that
+  // doesn't cleanly fit the boundary.
+  const divisionOfClassRecord = useCallback(
+    (cls: Pick<SchoolClass, 'level' | 'name' | 'division'>): SchoolDivision =>
+      cls.division ?? divisionOfLevelFn(cls.level || cls.name),
+    [divisionOfLevelFn],
+  );
   const divisionOfClassFn = useCallback(
     (className: string): SchoolDivision => {
       const cls = classes.find(c => c.name === className);
       // class.level normally holds the level name; fall back to the class name itself
       // for older class docs that never set a distinct level.
-      return divisionOfLevelFn(cls?.level || className);
+      return cls ? divisionOfClassRecord(cls) : divisionOfLevelFn(className);
     },
-    [classes, divisionOfLevelFn],
+    [classes, divisionOfClassRecord, divisionOfLevelFn],
   );
   const { classesByDivision, classNamesByDivision } = useMemo(() => {
     const byDiv: Record<SchoolDivision, SchoolClass[]> = { Primary: [], Secondary: [] };
-    for (const c of classes) byDiv[divisionOfLevelFn(c.level || c.name)].push(c);
+    for (const c of classes) byDiv[divisionOfClassRecord(c)].push(c);
     const names = Object.fromEntries(
       SCHOOL_DIVISIONS.map(d => [d, [...new Set(byDiv[d].map(c => c.name))]]),
     ) as Record<SchoolDivision, string[]>;
     return { classesByDivision: byDiv, classNamesByDivision: names };
-  }, [classes, divisionOfLevelFn]);
+  }, [classes, divisionOfClassRecord]);
 
   // Subscribe to /subjects collection filtered by schoolId
   useEffect(() => {

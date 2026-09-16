@@ -133,6 +133,13 @@ export interface SchoolClass {
   id?: string;
   name: string;
   level: string;
+  /**
+   * Explicit Primary/Secondary override for this class, set from the Class
+   * Management form. When absent, the division is derived from `level`'s
+   * position against the school's `secondaryStartLevel` boundary (see
+   * `divisionOfLevel` in this file and `divisionOfClass` on useSchool()).
+   */
+  division?: SchoolDivision;
   formTutorId?: string;
   formTutorName?: string;
   academicSession: string;

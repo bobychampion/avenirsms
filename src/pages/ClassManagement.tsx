@@ -5,6 +5,7 @@ import { collection, query, onSnapshot, addDoc, updateDoc, doc, deleteDoc, where
 import { callApi } from '../services/api';
 import { SchoolClass, ClassSubject, SUBJECTS, UserProfile, Student } from '../types';
 import { useSchool } from '../components/SchoolContext';
+import { LevelSelect } from '../components/ClassSelect';
 import { useSchoolId } from '../hooks/useSchoolId';
 import { motion, AnimatePresence } from 'motion/react';
 import toast from 'react-hot-toast';
@@ -19,7 +20,7 @@ type ClassroomStatus = 'connected' | 'disconnected' | 'disabled' | 'loading';
 export default function ClassManagement() {
   const navigate = useNavigate();
   const schoolId = useSchoolId();
-  const { schoolLevels, currentSession, subjects: schoolSubjects } = useSchool();
+  const { schoolLevels, currentSession, subjects: schoolSubjects, hasDivisions, divisionOfLevel } = useSchool();
   // The merged list leads with the 28 built-ins, so a school's own subjects
   // landed below the fold of a short scroll box and read as "missing". Show
   // them first, under their own heading.
@@ -188,8 +189,15 @@ export default function ClassManagement() {
     setSaving(true);
     try {
       const tutor = teachers.find(t => t.uid === formData.formTutorId);
+      // `db` isn't configured with ignoreUndefinedProperties, so an undefined `division`
+      // would make Firestore reject the whole write — drop the key instead of nulling it.
+      const { division, ...formDataWithoutDivision } = formData;
       const data = {
-        ...formData,
+        ...formDataWithoutDivision,
+        // Only persist an explicit division for schools that have actually turned on
+        // the Primary/Secondary split — otherwise every class would silently gain a
+        // 'Primary' field it never asked for.
+        ...(hasDivisions ? { division } : {}),
         formTutorName: tutor?.displayName || 'Not Assigned',
         schoolId: schoolId ?? 'main',
       };
@@ -205,7 +213,7 @@ export default function ClassManagement() {
 
       setIsModalOpen(false);
       setEditingClass(null);
-      setFormData({ name: '', level: schoolLevels[0] ?? '', academicSession: currentSession, formTutorId: '' });
+      setFormData({ name: '', level: schoolLevels[0] ?? '', division: divisionOfLevel(schoolLevels[0] ?? ''), academicSession: currentSession, formTutorId: '' });
 
       // Sync to Google Classroom after Firestore save
       if (classroomStatus === 'connected') {
@@ -339,6 +347,128 @@ export default function ClassManagement() {
     loading: null,
   }[classroomStatus];
 
+  // One class card — pulled out so it can be rendered either as a flat grid or
+  // split into Primary/Secondary sections below, without duplicating the JSX.
+  const renderClassCard = (cls: SchoolClass) => (
+    <motion.div
+      key={cls.id}
+      initial={{ opacity: 0, y: 20 }}
+      animate={{ opacity: 1, y: 0 }}
+      className="bg-white rounded-3xl shadow-sm border border-slate-200 overflow-hidden hover:shadow-md transition-all group"
+    >
+      <div className="p-6">
+        <div className="flex justify-between items-start mb-4">
+          <div className="relative">
+            <div className="w-12 h-12 rounded-2xl bg-indigo-50 flex items-center justify-center text-indigo-600">
+              <LayoutGrid className="w-6 h-6" />
+            </div>
+            {/* Google Classroom sync badge */}
+            {cls.googleCourseId && (
+              <div className="absolute -top-1 -right-1 w-5 h-5 rounded-full bg-white border border-slate-200 flex items-center justify-center shadow-sm" title="Synced to Google Classroom">
+                <Chrome className="w-3 h-3 text-blue-500" />
+              </div>
+            )}
+          </div>
+
+          <div className="flex items-center space-x-1">
+            {/* Manual sync button for unsynced classes */}
+            {classroomStatus === 'connected' && !cls.googleCourseId && (
+              <button
+                onClick={() => handleManualSync(cls)}
+                disabled={syncingId === cls.id}
+                className="p-2 text-slate-400 hover:text-blue-500 transition-colors opacity-0 group-hover:opacity-100"
+                title="Sync to Google Classroom"
+              >
+                {syncingId === cls.id
+                  ? <Loader2 className="w-4 h-4 animate-spin" />
+                  : <RefreshCw className="w-4 h-4" />
+                }
+              </button>
+            )}
+            <button
+              onClick={() => {
+                setEditingClass(cls);
+                setFormData({ ...cls, division: cls.division ?? divisionOfLevel(cls.level) });
+                setIsModalOpen(true);
+              }}
+              className="p-2 text-slate-400 hover:text-indigo-600 transition-colors"
+            >
+              <Edit2 className="w-4 h-4" />
+            </button>
+            <button
+              onClick={() => handleDeleteClass(cls)}
+              disabled={deletingId === cls.id}
+              className="p-2 text-slate-400 hover:text-rose-600 transition-colors"
+            >
+              {deletingId === cls.id
+                ? <Loader2 className="w-4 h-4 animate-spin" />
+                : <Trash2 className="w-4 h-4" />
+              }
+            </button>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2 mb-1">
+          <h3 className="text-xl font-bold text-slate-900">{cls.name}</h3>
+          {hasDivisions && (() => {
+            const div = cls.division ?? divisionOfLevel(cls.level);
+            return (
+              <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wide border ${
+                div === 'Secondary' ? 'bg-indigo-50 text-indigo-600 border-indigo-100' : 'bg-amber-50 text-amber-700 border-amber-100'
+              }`}>
+                {div}
+              </span>
+            );
+          })()}
+        </div>
+        <p className="text-sm font-medium text-slate-500 mb-4">{cls.level} • {cls.academicSession}</p>
+
+        <div className="space-y-3">
+          <div className="flex items-center text-sm text-slate-600">
+            <UserCheck className="w-4 h-4 mr-2 text-indigo-500" />
+            <span className="font-medium">Tutor:</span>
+            <span className="ml-2 text-slate-900">{cls.formTutorName}</span>
+          </div>
+          <div className="flex items-center text-sm text-slate-600">
+            <BookOpen className="w-4 h-4 mr-2 text-indigo-500" />
+            <span className="font-medium">Subjects:</span>
+            <span className="ml-2 text-slate-900">
+              {classSubjects.filter(s => s.classId === cls.id).length} Assigned
+            </span>
+          </div>
+          {cls.googleCourseId && (
+            <div className="flex items-center text-sm text-blue-600">
+              <Chrome className="w-4 h-4 mr-2" />
+              <span className="font-medium">Classroom:</span>
+              <span className="ml-2 text-blue-700 font-semibold">Synced</span>
+            </div>
+          )}
+        </div>
+
+        <div className="mt-6 pt-6 border-t border-slate-100 flex gap-3">
+          <button
+            onClick={() => {
+              setSelectedClass(cls);
+              setSelectedSubjects([]);
+              setIsSubjectModalOpen(true);
+            }}
+            className="flex-1 px-4 py-2 bg-slate-50 text-slate-700 font-bold rounded-xl hover:bg-indigo-50 hover:text-indigo-700 transition-all text-sm flex items-center justify-center"
+          >
+            <BookOpen className="w-4 h-4 mr-2" />
+            Subjects
+          </button>
+          <button
+            onClick={() => navigate(`/admin/students?class=${cls.name}`)}
+            className="flex-1 px-4 py-2 bg-indigo-600 text-white font-bold rounded-xl hover:bg-indigo-700 transition-all text-sm flex items-center justify-center"
+          >
+            <Users className="w-4 h-4 mr-2" />
+            Students
+          </button>
+        </div>
+      </div>
+    </motion.div>
+  );
+
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10">
 
@@ -366,7 +496,7 @@ export default function ClassManagement() {
         <button
           onClick={() => {
             setEditingClass(null);
-            setFormData({ name: '', level: schoolLevels[0] ?? '', academicSession: currentSession, formTutorId: '' });
+            setFormData({ name: '', level: schoolLevels[0] ?? '', division: divisionOfLevel(schoolLevels[0] ?? ''), academicSession: currentSession, formTutorId: '' });
             setIsModalOpen(true);
           }}
           className="inline-flex items-center px-6 py-3 bg-indigo-600 text-white font-bold rounded-xl hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-100"
@@ -381,115 +511,27 @@ export default function ClassManagement() {
           <Loader2 className="w-10 h-10 animate-spin text-indigo-600 mb-4" />
           <p className="text-slate-400 font-medium">Loading classes...</p>
         </div>
-      ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {classes.map((cls) => (
-            <motion.div
-              key={cls.id}
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              className="bg-white rounded-3xl shadow-sm border border-slate-200 overflow-hidden hover:shadow-md transition-all group"
-            >
-              <div className="p-6">
-                <div className="flex justify-between items-start mb-4">
-                  <div className="relative">
-                    <div className="w-12 h-12 rounded-2xl bg-indigo-50 flex items-center justify-center text-indigo-600">
-                      <LayoutGrid className="w-6 h-6" />
-                    </div>
-                    {/* Google Classroom sync badge */}
-                    {cls.googleCourseId && (
-                      <div className="absolute -top-1 -right-1 w-5 h-5 rounded-full bg-white border border-slate-200 flex items-center justify-center shadow-sm" title="Synced to Google Classroom">
-                        <Chrome className="w-3 h-3 text-blue-500" />
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="flex items-center space-x-1">
-                    {/* Manual sync button for unsynced classes */}
-                    {classroomStatus === 'connected' && !cls.googleCourseId && (
-                      <button
-                        onClick={() => handleManualSync(cls)}
-                        disabled={syncingId === cls.id}
-                        className="p-2 text-slate-400 hover:text-blue-500 transition-colors opacity-0 group-hover:opacity-100"
-                        title="Sync to Google Classroom"
-                      >
-                        {syncingId === cls.id
-                          ? <Loader2 className="w-4 h-4 animate-spin" />
-                          : <RefreshCw className="w-4 h-4" />
-                        }
-                      </button>
-                    )}
-                    <button
-                      onClick={() => {
-                        setEditingClass(cls);
-                        setFormData(cls);
-                        setIsModalOpen(true);
-                      }}
-                      className="p-2 text-slate-400 hover:text-indigo-600 transition-colors"
-                    >
-                      <Edit2 className="w-4 h-4" />
-                    </button>
-                    <button
-                      onClick={() => handleDeleteClass(cls)}
-                      disabled={deletingId === cls.id}
-                      className="p-2 text-slate-400 hover:text-rose-600 transition-colors"
-                    >
-                      {deletingId === cls.id
-                        ? <Loader2 className="w-4 h-4 animate-spin" />
-                        : <Trash2 className="w-4 h-4" />
-                      }
-                    </button>
-                  </div>
-                </div>
-
-                <h3 className="text-xl font-bold text-slate-900 mb-1">{cls.name}</h3>
-                <p className="text-sm font-medium text-slate-500 mb-4">{cls.level} • {cls.academicSession}</p>
-
-                <div className="space-y-3">
-                  <div className="flex items-center text-sm text-slate-600">
-                    <UserCheck className="w-4 h-4 mr-2 text-indigo-500" />
-                    <span className="font-medium">Tutor:</span>
-                    <span className="ml-2 text-slate-900">{cls.formTutorName}</span>
-                  </div>
-                  <div className="flex items-center text-sm text-slate-600">
-                    <BookOpen className="w-4 h-4 mr-2 text-indigo-500" />
-                    <span className="font-medium">Subjects:</span>
-                    <span className="ml-2 text-slate-900">
-                      {classSubjects.filter(s => s.classId === cls.id).length} Assigned
-                    </span>
-                  </div>
-                  {cls.googleCourseId && (
-                    <div className="flex items-center text-sm text-blue-600">
-                      <Chrome className="w-4 h-4 mr-2" />
-                      <span className="font-medium">Classroom:</span>
-                      <span className="ml-2 text-blue-700 font-semibold">Synced</span>
-                    </div>
-                  )}
-                </div>
-
-                <div className="mt-6 pt-6 border-t border-slate-100 flex gap-3">
-                  <button
-                    onClick={() => {
-                      setSelectedClass(cls);
-                      setSelectedSubjects([]);
-                      setIsSubjectModalOpen(true);
-                    }}
-                    className="flex-1 px-4 py-2 bg-slate-50 text-slate-700 font-bold rounded-xl hover:bg-indigo-50 hover:text-indigo-700 transition-all text-sm flex items-center justify-center"
-                  >
-                    <BookOpen className="w-4 h-4 mr-2" />
-                    Subjects
-                  </button>
-                  <button
-                    onClick={() => navigate(`/admin/students?class=${cls.name}`)}
-                    className="flex-1 px-4 py-2 bg-indigo-600 text-white font-bold rounded-xl hover:bg-indigo-700 transition-all text-sm flex items-center justify-center"
-                  >
-                    <Users className="w-4 h-4 mr-2" />
-                    Students
-                  </button>
+      ) : hasDivisions ? (
+        <div className="space-y-10">
+          {(['Primary', 'Secondary'] as const).map(div => {
+            const divClasses = classes.filter(cls => (cls.division ?? divisionOfLevel(cls.level)) === div);
+            if (divClasses.length === 0) return null;
+            return (
+              <div key={div}>
+                <h2 className="flex items-center gap-2 text-sm font-bold uppercase tracking-wide text-slate-400 mb-4">
+                  <span className={`w-2 h-2 rounded-full ${div === 'Secondary' ? 'bg-indigo-500' : 'bg-amber-500'}`} />
+                  {div} <span className="text-slate-300 font-normal normal-case">({divClasses.length})</span>
+                </h2>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                  {divClasses.map(renderClassCard)}
                 </div>
               </div>
-            </motion.div>
-          ))}
+            );
+          })}
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          {classes.map(renderClassCard)}
         </div>
       )}
 
@@ -544,15 +586,17 @@ export default function ClassManagement() {
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
                       <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">Level</label>
-                      <select
+                      <LevelSelect
                         value={formData.level}
-                        onChange={e => setFormData({ ...formData, level: e.target.value })}
+                        onChange={e => {
+                          const level = e.target.value;
+                          // Re-sync the division default to match the newly picked level —
+                          // the admin can still override it with the toggle below afterwards.
+                          setFormData({ ...formData, level, division: divisionOfLevel(level) });
+                        }}
+                        options={schoolLevels}
                         className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none transition-all bg-white"
-                      >
-                        {schoolLevels.map(lvl => (
-                          <option key={lvl} value={lvl}>{lvl}</option>
-                        ))}
-                      </select>
+                      />
                     </div>
                     <div className="space-y-2">
                       <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">Academic Session</label>
@@ -566,6 +610,31 @@ export default function ClassManagement() {
                       />
                     </div>
                   </div>
+
+                  {/* Primary/Secondary — only shown once the school has drawn the division
+                      boundary in Settings. Defaults to what the level implies, but an admin
+                      can override it for a class that doesn't cleanly fit the boundary. */}
+                  {hasDivisions && (
+                    <div className="space-y-2">
+                      <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">Division</label>
+                      <div className="flex gap-2">
+                        {(['Primary', 'Secondary'] as const).map(div => (
+                          <button
+                            key={div}
+                            type="button"
+                            onClick={() => setFormData({ ...formData, division: div })}
+                            className={`flex-1 px-4 py-2.5 rounded-xl text-sm font-bold border transition-colors ${
+                              (formData.division ?? divisionOfLevel(formData.level)) === div
+                                ? div === 'Primary' ? 'bg-amber-500 text-white border-amber-500' : 'bg-indigo-600 text-white border-indigo-600'
+                                : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300'
+                            }`}
+                          >
+                            {div}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
 
                   <div className="space-y-2">
                     <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">Form Tutor (Teacher)</label>

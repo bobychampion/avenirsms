@@ -15,7 +15,7 @@ import {
 } from 'lucide-react';
 import { exportAttendanceCsv, exportSubjectAttendanceCsv, exportSpecialLessonAttendanceCsv } from '../services/dataExport/csvModules';
 import { ClassSelect } from '../components/ClassSelect';
-import { describeAttendanceConflicts } from '../utils/attendanceConflict';
+import { describeAttendanceConflicts, buildEffectiveAttendanceByStudent } from '../utils/attendanceConflict';
 
 type AttendanceStatus = 'present' | 'absent' | 'late';
 
@@ -208,16 +208,40 @@ export default function AttendancePage() {
     setLoadingReport(true);
     const q = query(collection(db, 'attendance'), where('schoolId', '==', schoolId!), where('class', '==', selectedClass));
     const snap = await getDocs(q);
-    const byStudent: Record<string, { id: string; name: string; present: number; absent: number; late: number }> = {};
-    snap.docs.forEach(d => {
-      const { studentId, status } = d.data();
-      const student = students.find(s => s.id === studentId);
-      if (!byStudent[studentId]) {
-        byStudent[studentId] = { id: studentId, name: student?.studentName || studentId, present: 0, absent: 0, late: 0 };
+    const dailyRecords = snap.docs.map(d => {
+      const data = d.data();
+      return { studentId: data.studentId as string, date: data.date as string, status: data.status as AttendanceStatus };
+    });
+
+    // Reconcile against subject attendance (see attendanceConflict.ts) so this report never
+    // disagrees with what parents see for the same student/day in their own portal.
+    let subjectRecords: { studentId: string; attendanceDate: string; status: AttendanceStatus; inheritedFromDaily: boolean }[] = [];
+    if (attendanceMode !== 'daily_only' && schoolId) {
+      const classId = classRows.find(c => c.name === selectedClass)?.id;
+      if (classId) {
+        const subjSnap = await getDocs(query(
+          collection(db, 'subjectAttendance'),
+          where('schoolId', '==', schoolId),
+          where('classId', '==', classId),
+        ));
+        subjectRecords = subjSnap.docs.map(d => {
+          const data = d.data() as SubjectAttendance;
+          return { studentId: data.studentId, attendanceDate: data.attendanceDate, status: data.status, inheritedFromDaily: data.inheritedFromDaily };
+        });
       }
-      if (status === 'present') byStudent[studentId].present++;
-      else if (status === 'absent') byStudent[studentId].absent++;
-      else if (status === 'late') byStudent[studentId].late++;
+    }
+
+    const effectiveByStudent = buildEffectiveAttendanceByStudent(dailyRecords, subjectRecords);
+    const byStudent: Record<string, { id: string; name: string; present: number; absent: number; late: number }> = {};
+    Object.entries(effectiveByStudent).forEach(([studentId, byDate]) => {
+      const student = students.find(s => s.id === studentId);
+      const counts = { id: studentId, name: student?.studentName || studentId, present: 0, absent: 0, late: 0 };
+      Object.values(byDate).forEach(status => {
+        if (status === 'present') counts.present++;
+        else if (status === 'absent') counts.absent++;
+        else if (status === 'late') counts.late++;
+      });
+      byStudent[studentId] = counts;
     });
     const report = Object.values(byStudent).map(s => {
       const total = s.present + s.absent + s.late;
@@ -319,13 +343,33 @@ export default function AttendancePage() {
       where('date', '<=', lastDay)
     );
     const snap = await getDocs(q);
-    // Build lookup: studentId -> day -> status
-    const lookup: Record<string, Record<string, 'present' | 'absent' | 'late'>> = {};
-    snap.docs.forEach(d => {
-      const { studentId, date, status } = d.data();
-      if (!lookup[studentId]) lookup[studentId] = {};
-      lookup[studentId][date] = status;
+    const dailyRecords = snap.docs.map(d => {
+      const data = d.data();
+      return { studentId: data.studentId as string, date: data.date as string, status: data.status as 'present' | 'absent' | 'late' };
     });
+
+    // Reconcile against subject attendance (see attendanceConflict.ts) so this grid never
+    // disagrees with what parents see for the same student/day. Filtered to schoolId+classId
+    // only (no date range) to reuse the same equality-only query the Subject Report tab
+    // already makes — an added date range here would need a new composite index.
+    let subjectRecords: { studentId: string; attendanceDate: string; status: 'present' | 'absent' | 'late'; inheritedFromDaily: boolean }[] = [];
+    if (attendanceMode !== 'daily_only' && schoolId) {
+      const classId = classRows.find(c => c.name === selectedClass)?.id;
+      if (classId) {
+        const subjSnap = await getDocs(query(
+          collection(db, 'subjectAttendance'),
+          where('schoolId', '==', schoolId),
+          where('classId', '==', classId),
+        ));
+        subjectRecords = subjSnap.docs
+          .map(d => d.data() as SubjectAttendance)
+          .filter(data => data.attendanceDate >= firstDay && data.attendanceDate <= lastDay)
+          .map(data => ({ studentId: data.studentId, attendanceDate: data.attendanceDate, status: data.status, inheritedFromDaily: data.inheritedFromDaily }));
+      }
+    }
+
+    // Build lookup: studentId -> day -> effective status
+    const lookup = buildEffectiveAttendanceByStudent(dailyRecords, subjectRecords);
     const rows = students.map(s => {
       const cells: Record<string, 'present' | 'absent' | 'late' | null> = {};
       let present = 0, absent = 0, late = 0;

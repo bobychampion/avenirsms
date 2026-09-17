@@ -9,12 +9,13 @@ import { BarChart3, RefreshCw, Download } from 'lucide-react';
 import { useSchool } from '../components/SchoolContext';
 import { useSchoolId } from '../hooks/useSchoolId';
 import { formatCurrency } from '../utils/formatCurrency';
+import { buildEffectiveAttendanceByStudent } from '../utils/attendanceConflict';
 
 const COLORS = ['#6366f1','#10b981','#f59e0b','#ef4444','#8b5cf6','#06b6d4','#f97316','#84cc16','#ec4899'];
 const GRADE_ORDER = ['A1','B2','B3','C4','C5','C6','D7','E8','F9'];
 
 export default function AnalyticsDashboard() {
-  const { locale, currency } = useSchool();
+  const { locale, currency, attendanceMode } = useSchool();
   const schoolId = useSchoolId();
   const fmt = (amount: number) => formatCurrency(amount, locale, currency);
   const [enrollment, setEnrollment] = useState<{month:string;count:number}[]>([]);
@@ -26,14 +27,17 @@ export default function AnalyticsDashboard() {
   const loadData = async () => {
     if (!schoolId) return;
     setLoading(true);
-    const [stSnap, grSnap, attSnap, paySnap, expSnap, staffSnap] = await Promise.all([
+    const [stSnap, grSnap, attSnap, paySnap, expSnap, staffSnap, subjAttSnap] = await Promise.all([
       getDocs(query(collection(db,'students'), where('schoolId','==',schoolId!))),
       getDocs(query(collection(db,'grades'), where('schoolId','==',schoolId!))),
       getDocs(query(collection(db,'attendance'), where('schoolId','==',schoolId!))),
       getDocs(query(collection(db,'fee_payments'), where('schoolId','==',schoolId!))),
       getDocs(query(collection(db,'expenses'), where('schoolId','==',schoolId!))),
       getDocs(query(collection(db,'staff'), where('schoolId','==',schoolId!))),
-    ]).catch(() => Array(6).fill({ docs:[] })) as any[];
+      attendanceMode !== 'daily_only'
+        ? getDocs(query(collection(db,'subjectAttendance'), where('schoolId','==',schoolId!)))
+        : Promise.resolve({ docs: [] as any[] }),
+    ]).catch(() => Array(7).fill({ docs:[] })) as any[];
 
     // enrollment trend
     const months: Record<string,number> = {};
@@ -53,9 +57,19 @@ export default function AnalyticsDashboard() {
     const exp = expSnap.docs?.reduce((s:number,d:any)=>s+(d.data().amount||0),0)||0;
     setFinance([{name:'Revenue',value:rev},{name:'Expenses',value:exp},{name:'Balance',value:rev-exp}]);
 
-    // attendance rate
-    const total = attSnap.docs?.length||0;
-    const present = attSnap.docs?.filter((d:any)=>d.data().status==='present').length||0;
+    // attendance rate — reconciled against subject attendance (see attendanceConflict.ts)
+    // so this school-wide KPI never disagrees with what parents see per child.
+    const dailyRecords = (attSnap.docs||[]).map((d:any) => {
+      const data = d.data();
+      return { studentId: data.studentId as string, date: data.date as string, status: data.status as 'present'|'absent'|'late' };
+    });
+    const subjectRecords = (subjAttSnap.docs||[]).map((d:any) => {
+      const data = d.data();
+      return { studentId: data.studentId as string, attendanceDate: data.attendanceDate as string, status: data.status as 'present'|'absent'|'late', inheritedFromDaily: !!data.inheritedFromDaily };
+    });
+    const effectiveValues = Object.values(buildEffectiveAttendanceByStudent(dailyRecords, subjectRecords)).flatMap(byDate => Object.values(byDate));
+    const total = effectiveValues.length;
+    const present = effectiveValues.filter(s => s === 'present').length;
     const activeStudents = stSnap.docs?.filter((d:any)=>d.data().admissionStatus!=='withdrawn').length||0;
     setKpi({ students: activeStudents, staff: staffSnap.docs?.length||0, revenue: rev, attendance: total>0?Math.round((present/total)*100):0 });
     setLoading(false);

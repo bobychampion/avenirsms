@@ -6,7 +6,8 @@ import { db, handleFirestoreError, OperationType } from '../../firebase';
 import { MobileShell } from '../../components/MobileShell';
 import Avatar from '../../components/Avatar';
 import { useAuth } from '../../components/FirebaseProvider';
-import { Student, Attendance, Invoice, Notification } from '../../types';
+import { Student, Attendance, SubjectAttendance, Invoice, Notification } from '../../types';
+import { buildEffectiveAttendanceByStudent } from '../../utils/attendanceConflict';
 import { CheckCircle2, XCircle, Clock, DollarSign, Bell, ChevronRight, BookOpen } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { cn } from '../../lib/utils';
@@ -31,7 +32,7 @@ const ATT_ICON: Record<string, React.ElementType> = {
 export default function ParentMobileHome() {
   const { profile } = useAuth();
   const schoolId = useSchoolId();
-  const { locale, currency } = useSchool();
+  const { locale, currency, attendanceMode } = useSchool();
   const { children } = useLinkedChildren();
   const [selectedChild, setSelectedChild] = useState<(Student & { id: string }) | null>(null);
   const [weekAttendance, setWeekAttendance] = useState<Record<string, Attendance>>({});
@@ -54,11 +55,26 @@ export default function ParentMobileHome() {
     setSelectedChild(prev => (prev && children.find(c => c.id === prev.id)) ? prev : children[0]);
   }, [children]);
 
-  // Load attendance for selected child (last 7 days)
+  // Load attendance for selected child (last 7 days), reconciled against subject
+  // attendance (see attendanceConflict.ts) so this strip never disagrees with the
+  // desktop Parent Portal for the same student/day.
   useEffect(() => {
     if (!selectedChild) return;
     if (!schoolId) return;
     const studentId = selectedChild.studentId || selectedChild.id;
+    let dailyDocs: Attendance[] = [];
+    let subjectDocs: SubjectAttendance[] = [];
+    const recompute = () => {
+      const daily = dailyDocs.map(a => ({ studentId, date: a.date, status: a.status }));
+      const subject = subjectDocs.map(sa => ({ studentId, attendanceDate: sa.attendanceDate, status: sa.status, inheritedFromDaily: sa.inheritedFromDaily }));
+      const effectiveDates = buildEffectiveAttendanceByStudent(daily, subject)[studentId] ?? {};
+      const map: Record<string, Attendance> = {};
+      dailyDocs.forEach(a => { map[a.date] = a; });
+      Object.entries(effectiveDates).forEach(([date, status]) => {
+        map[date] = { ...(map[date] ?? { studentId, date, class: '' } as Attendance), status };
+      });
+      setWeekAttendance(map);
+    };
     const unsub = onSnapshot(
       query(
         collection(db, 'attendance'),
@@ -67,18 +83,24 @@ export default function ParentMobileHome() {
         where('date', '>=', weekDays[0]),
         where('date', '<=', weekDays[6])
       ),
-      snap => {
-        const map: Record<string, Attendance> = {};
-        snap.docs.forEach(d => {
-          const data = d.data() as Attendance;
-          map[data.date] = data;
-        });
-        setWeekAttendance(map);
-      },
+      snap => { dailyDocs = snap.docs.map(d => d.data() as Attendance); recompute(); },
       (error) => handleFirestoreError(error, OperationType.LIST, 'attendance')
     );
-    return () => unsub();
-  }, [selectedChild?.id]);
+    const unsubSubject = attendanceMode !== 'daily_only'
+      ? onSnapshot(
+          query(
+            collection(db, 'subjectAttendance'),
+            where('schoolId', '==', schoolId!),
+            where('studentId', '==', studentId),
+            where('attendanceDate', '>=', weekDays[0]),
+            where('attendanceDate', '<=', weekDays[6])
+          ),
+          snap => { subjectDocs = snap.docs.map(d => d.data() as SubjectAttendance); recompute(); },
+          (error) => handleFirestoreError(error, OperationType.LIST, 'subjectAttendance')
+        )
+      : () => {};
+    return () => { unsub(); unsubSubject(); };
+  }, [selectedChild?.id, schoolId, attendanceMode]);
 
   // Load pending invoices for selected child
   useEffect(() => {

@@ -8,7 +8,7 @@ import {
 } from 'firebase/firestore';
 import { Student, Assignment, AssignmentSubmission, Message, Grade, Attendance, SchoolEvent, Invoice, Notification, Timetable, ClassSubject, TERMS, calculateGrade, scoreBadgeClasses, scoreRemark, scoreTextColorClass, visibleSkillLabels, SKILL_RATING_LABELS, SkillRating, SubjectAttendance, SpecialLesson, SpecialLessonAttendance } from '../types';
 import { slotColumnHeaders, findPeriodsForSlot, resolvePeriodForStudent } from '../utils/timetableSchedule';
-import { effectiveDailyStatus } from '../utils/attendanceConflict';
+import { buildEffectiveAttendanceByStudent } from '../utils/attendanceConflict';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   BookOpen, Calendar, MessageSquare, Loader2, CheckCircle2, Clock,
@@ -398,28 +398,17 @@ export default function ParentPortal() {
     [expandedDay, subjectAttendanceHistory],
   );
 
-  // studentDate -> subject records, for reconciling the daily status below.
-  const subjectRecordsByDate = React.useMemo(() => {
-    const map: Record<string, { status: 'present' | 'absent' | 'late'; inheritedFromDaily: boolean }[]> = {};
-    subjectAttendanceHistory.forEach(sa => {
-      (map[sa.attendanceDate] ??= []).push({ status: sa.status, inheritedFromDaily: sa.inheritedFromDaily });
-    });
-    return map;
-  }, [subjectAttendanceHistory]);
-
   // Daily attendance corrected against explicitly-confirmed subject records (see
-  // effectiveDailyStatus) — the single source of truth for every attendance stat/dot below,
-  // so a stale "absent" day a subject teacher has since confirmed present everywhere shows
-  // correctly instead of only in the per-day breakdown panel.
+  // buildEffectiveAttendanceByStudent) — the single source of truth for every attendance
+  // stat/dot below, so a stale "absent" day a subject teacher has since confirmed present
+  // everywhere shows correctly instead of only in the per-day breakdown panel. Same helper
+  // admin-side screens use, so parents and admins never see two different numbers.
   const effectiveAttendanceByDate = React.useMemo(() => {
-    const map: Record<string, 'present' | 'absent' | 'late'> = {};
-    attendance.forEach(a => { map[a.date] = a.status as 'present' | 'absent' | 'late'; });
-    Object.keys(subjectRecordsByDate).forEach(date => {
-      const effective = effectiveDailyStatus(map[date], subjectRecordsByDate[date]);
-      if (effective) map[date] = effective;
-    });
-    return map;
-  }, [attendance, subjectRecordsByDate]);
+    if (!selectedChild?.id) return {};
+    const daily = attendance.map(a => ({ studentId: selectedChild.id!, date: a.date, status: a.status as 'present' | 'absent' | 'late' }));
+    const byStudent = buildEffectiveAttendanceByStudent(daily, subjectAttendanceHistory);
+    return byStudent[selectedChild.id] ?? {};
+  }, [attendance, subjectAttendanceHistory, selectedChild?.id]);
 
   const handleSubmitAbsence = async (e: React.FormEvent) => {
     e.preventDefault();

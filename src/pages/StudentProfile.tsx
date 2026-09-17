@@ -2,7 +2,8 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { db, handleFirestoreError, OperationType } from '../firebase';
 import { doc, onSnapshot, updateDoc, serverTimestamp, collection, query, where, getDocs, arrayUnion, arrayRemove } from 'firebase/firestore';
-import { Student, Grade, CURRENT_SESSION, TERMS } from '../types';
+import { Student, Grade, SubjectAttendance, CURRENT_SESSION, TERMS } from '../types';
+import { buildEffectiveAttendanceByStudent } from '../utils/attendanceConflict';
 import { ClassSelect } from '../components/ClassSelect';
 import { motion, AnimatePresence } from 'motion/react';
 import toast from 'react-hot-toast';
@@ -36,7 +37,7 @@ interface AIInsight {
 export default function StudentProfile() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { currentSession, identityDocumentLabel } = useSchool();
+  const { currentSession, identityDocumentLabel, attendanceMode } = useSchool();
   const { isConnected } = useStorageSettings();
   const schoolId = useSchoolId();
   const [student, setStudent] = useState<Student | null>(null);
@@ -319,10 +320,24 @@ export default function StudentProfile() {
         return { subject: g.subject, total: g.totalScore ?? ((g.caScore ?? 0) + (g.examScore ?? 0)), grade: g.grade };
       });
 
-      // Fetch attendance
+      // Fetch attendance, reconciled against subject attendance (see attendanceConflict.ts)
+      // so this matches what the student's parent sees in their own portal.
       const attSnap = await getDocs(query(collection(db, 'attendance'), where('schoolId', '==', schoolId!), where('studentId', '==', student.id)));
-      const total = attSnap.size;
-      const present = attSnap.docs.filter(d => d.data().status === 'present').length;
+      const dailyRecords = attSnap.docs.map(d => {
+        const data = d.data();
+        return { studentId: student.id!, date: data.date as string, status: data.status as 'present' | 'absent' | 'late' };
+      });
+      let subjectRecords: { studentId: string; attendanceDate: string; status: 'present' | 'absent' | 'late'; inheritedFromDaily: boolean }[] = [];
+      if (attendanceMode !== 'daily_only') {
+        const subjSnap = await getDocs(query(collection(db, 'subjectAttendance'), where('schoolId', '==', schoolId!), where('studentId', '==', student.id)));
+        subjectRecords = subjSnap.docs.map(d => {
+          const data = d.data() as SubjectAttendance;
+          return { studentId: data.studentId, attendanceDate: data.attendanceDate, status: data.status, inheritedFromDaily: data.inheritedFromDaily };
+        });
+      }
+      const effectiveDates = Object.values(buildEffectiveAttendanceByStudent(dailyRecords, subjectRecords)[student.id!] ?? {});
+      const total = effectiveDates.length;
+      const present = effectiveDates.filter(s => s === 'present').length;
       const attendanceRate = total > 0 ? Math.round((present / total) * 100) : 100;
 
       // Fetch skills

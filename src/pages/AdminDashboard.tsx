@@ -13,6 +13,7 @@ import { useSchool } from '../components/SchoolContext';
 import { useSchoolId } from '../hooks/useSchoolId';
 import { formatCurrency } from '../utils/formatCurrency';
 import { useAuth } from '../components/FirebaseProvider';
+import { buildEffectiveAttendanceByStudent } from '../utils/attendanceConflict';
 import { motion } from 'motion/react';
 import {
   Users, FileText, DollarSign, TrendingUp, CheckCircle2, XCircle,
@@ -201,7 +202,7 @@ function computeLiveClasses(
 
 export default function AdminDashboard() {
   const { user } = useAuth();
-  const { locale, currency, schoolDays, hasDivisions, divisionOfClass } = useSchool();
+  const { locale, currency, schoolDays, hasDivisions, divisionOfClass, attendanceMode } = useSchool();
   const schoolId = useSchoolId();
   const fmt = (amount: number) => formatCurrency(amount, locale, currency);
 
@@ -315,24 +316,48 @@ export default function AdminDashboard() {
       ),
     );
 
+    // Today's per-class attendance, reconciled against today's subject attendance (see
+    // attendanceConflict.ts) so this widget never disagrees with what parents see per child.
+    let todayDailyDocs: any[] = [];
+    let todaySubjectDocs: any[] = [];
+    const recomputeTodayAttendance = () => {
+      const classById: Record<string, string> = {};
+      const dailyRecords = todayDailyDocs.map(d => {
+        const data = d.data();
+        classById[data.studentId] = data.class;
+        return { studentId: data.studentId as string, date: data.date as string, status: data.status as 'present' | 'absent' | 'late' };
+      });
+      const subjectRecords = todaySubjectDocs.map(d => {
+        const data = d.data();
+        if (!classById[data.studentId]) classById[data.studentId] = data.className;
+        return { studentId: data.studentId as string, attendanceDate: data.attendanceDate as string, status: data.status as 'present' | 'absent' | 'late', inheritedFromDaily: !!data.inheritedFromDaily };
+      });
+      const effectiveByStudent = buildEffectiveAttendanceByStudent(dailyRecords, subjectRecords);
+      const byClass: Record<string, { present: number; absent: number; late: number }> = {};
+      Object.entries(effectiveByStudent).forEach(([studentId, byDate]) => {
+        const cls = classById[studentId];
+        const status = byDate[today];
+        if (!cls || !status) return;
+        if (!byClass[cls]) byClass[cls] = { present: 0, absent: 0, late: 0 };
+        byClass[cls][status]++;
+      });
+      setTodayAttendance(
+        Object.entries(byClass)
+          .map(([cls, counts]) => ({ class: cls, ...counts }))
+          .sort((a, b) => a.class.localeCompare(b.class))
+      );
+    };
+
     const unsubStudentAtt = onSnapshot(
       query(collection(db, 'attendance'), where('schoolId', '==', schoolId!), where('date', '==', today)),
-      snap => {
-        const byClass: Record<string, { present: number; absent: number; late: number }> = {};
-        snap.docs.forEach(d => {
-          const { class: cls, status } = d.data();
-          if (!byClass[cls]) byClass[cls] = { present: 0, absent: 0, late: 0 };
-          if (status === 'present') byClass[cls].present++;
-          else if (status === 'absent') byClass[cls].absent++;
-          else if (status === 'late') byClass[cls].late++;
-        });
-        setTodayAttendance(
-          Object.entries(byClass)
-            .map(([cls, counts]) => ({ class: cls, ...counts }))
-            .sort((a, b) => a.class.localeCompare(b.class))
-        );
-      },
+      snap => { todayDailyDocs = snap.docs; recomputeTodayAttendance(); },
     );
+    const unsubSubjectAttToday = attendanceMode !== 'daily_only'
+      ? onSnapshot(
+          query(collection(db, 'subjectAttendance'), where('schoolId', '==', schoolId!), where('attendanceDate', '==', today)),
+          snap => { todaySubjectDocs = snap.docs; recomputeTodayAttendance(); },
+        )
+      : () => {};
 
     // ── Idle-class alert: every 5 min check for started-but-unteachered periods ──
     const idleCheck = setInterval(() => {
@@ -356,7 +381,7 @@ export default function AdminDashboard() {
     // Tick every minute to keep the live status fresh
     const tick = setInterval(() => setLiveNow(new Date()), 60_000);
 
-    return () => { unsubFence(); unsubCheckins(); unsubTimetables(); unsubTeachers(); unsubStudentAtt(); clearInterval(idleCheck); clearInterval(tick); };
+    return () => { unsubFence(); unsubCheckins(); unsubTimetables(); unsubTeachers(); unsubStudentAtt(); unsubSubjectAttToday(); clearInterval(idleCheck); clearInterval(tick); };
   }, [schoolId]);
 
   // ─── Stats Fetch ────────────────────────────────────────────────────────────
@@ -364,7 +389,7 @@ export default function AdminDashboard() {
     if (!schoolId) return;
     setStatsLoading(true);
     try {
-      const [studentsSnap, staffSnap, paymentsSnap, expensesSnap, attendanceSnap, gradesSnap, leavesSnap, pendingAbsencesSnap] =
+      const [studentsSnap, staffSnap, paymentsSnap, expensesSnap, attendanceSnap, gradesSnap, leavesSnap, pendingAbsencesSnap, subjectAttendanceSnap] =
         await Promise.all([
           getDocs(query(collection(db, 'students'), where('schoolId', '==', schoolId!))),
           getDocs(query(collection(db, 'staff'), where('schoolId', '==', schoolId!))),
@@ -374,6 +399,9 @@ export default function AdminDashboard() {
           getDocs(query(collection(db, 'grades'), where('schoolId', '==', schoolId!), limit(2000))),
           getDocs(query(collection(db, 'leave_requests'), where('schoolId', '==', schoolId!))),
           getDocs(query(collection(db, 'absence_requests'), where('schoolId', '==', schoolId!), where('status', '==', 'pending'))),
+          attendanceMode !== 'daily_only'
+            ? getDocs(query(collection(db, 'subjectAttendance'), where('schoolId', '==', schoolId!), limit(4000)))
+            : Promise.resolve({ docs: [] as any[] } as any),
         ]);
 
       // Exclude withdrawn students from the headline enrollment count
@@ -386,9 +414,19 @@ export default function AdminDashboard() {
       setTotalRevenue(rev);
       setTotalExpenses(exp);
 
-      // Attendance rate
-      const attTotal = attendanceSnap.size;
-      const attPresent = attendanceSnap.docs.filter(d => d.data().status === 'present').length;
+      // Attendance rate — reconciled against subject attendance (see attendanceConflict.ts)
+      // so this KPI never disagrees with what parents see per child.
+      const dailyRecords = attendanceSnap.docs.map(d => {
+        const data = d.data();
+        return { studentId: data.studentId as string, date: data.date as string, status: data.status as 'present' | 'absent' | 'late' };
+      });
+      const subjectRecords = subjectAttendanceSnap.docs.map((d: any) => {
+        const data = d.data();
+        return { studentId: data.studentId as string, attendanceDate: data.attendanceDate as string, status: data.status as 'present' | 'absent' | 'late', inheritedFromDaily: !!data.inheritedFromDaily };
+      });
+      const effectiveValues = Object.values(buildEffectiveAttendanceByStudent(dailyRecords, subjectRecords)).flatMap(byDate => Object.values(byDate));
+      const attTotal = effectiveValues.length;
+      const attPresent = effectiveValues.filter(s => s === 'present').length;
       setAttendanceRate(attTotal > 0 ? Math.round((attPresent / attTotal) * 100) : 0);
 
       // Pending leaves

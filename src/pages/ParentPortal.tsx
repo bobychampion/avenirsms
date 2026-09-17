@@ -8,6 +8,7 @@ import {
 } from 'firebase/firestore';
 import { Student, Assignment, AssignmentSubmission, Message, Grade, Attendance, SchoolEvent, Invoice, Notification, Timetable, ClassSubject, TERMS, calculateGrade, scoreBadgeClasses, scoreRemark, scoreTextColorClass, visibleSkillLabels, SKILL_RATING_LABELS, SkillRating, SubjectAttendance, SpecialLesson, SpecialLessonAttendance } from '../types';
 import { slotColumnHeaders, findPeriodsForSlot, resolvePeriodForStudent } from '../utils/timetableSchedule';
+import { effectiveDailyStatus } from '../utils/attendanceConflict';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   BookOpen, Calendar, MessageSquare, Loader2, CheckCircle2, Clock,
@@ -47,10 +48,11 @@ export default function ParentPortal() {
   const [activeTab, setActiveTab] = useState<TabType>('progress');
   const [filterTerm, setFilterTerm] = useState<string>(TERMS[0]);
   const [attendanceMonth, setAttendanceMonth] = useState<string>(''); // '' = all months
-  // Subject-attendance breakdown for a single expanded day (only used when attendanceMode !== 'daily_only')
+  // Expanded day in the attendance calendar (only used when attendanceMode !== 'daily_only')
   const [expandedDay, setExpandedDay] = useState<string | null>(null);
-  const [dayBreakdown, setDayBreakdown] = useState<SubjectAttendance[]>([]);
-  const [loadingBreakdown, setLoadingBreakdown] = useState(false);
+  // Full subject-attendance history for the selected child — feeds both the expanded-day
+  // breakdown panel and the daily-status reconciliation (effectiveDailyStatus) below.
+  const [subjectAttendanceHistory, setSubjectAttendanceHistory] = useState<SubjectAttendance[]>([]);
   // Special Lessons tab — independent of daily/subject attendance and official attendance rate
   const [mySpecialLessons, setMySpecialLessons] = useState<SpecialLesson[]>([]);
   const [specialLessonAttendanceHistory, setSpecialLessonAttendanceHistory] = useState<SpecialLessonAttendance[]>([]);
@@ -284,6 +286,7 @@ export default function ParentPortal() {
     setMySubmissions([]);
     setMyAbsenceRequests([]);
     setExpandedDay(null);
+    setSubjectAttendanceHistory([]);
     setMySpecialLessons([]);
     setSpecialLessonAttendanceHistory([]);
 
@@ -371,22 +374,52 @@ export default function ParentPortal() {
     };
   }, [selectedChild, schoolId]);
 
-  // Fetch subject-attendance breakdown only when a specific day is expanded — one-shot, not a listener.
+  // Subject-attendance history for this child — only queried for schools that have the
+  // per-subject layer enabled. Feeds the expanded-day breakdown panel and the daily-status
+  // reconciliation below, so both use the same live data instead of a separate one-shot fetch.
   useEffect(() => {
-    if (!expandedDay || !selectedChild?.id || !schoolId) { setDayBreakdown([]); return; }
-    let cancelled = false;
-    setLoadingBreakdown(true);
-    getDocs(query(
+    if (!selectedChild?.id || !schoolId || attendanceMode === 'daily_only') { setSubjectAttendanceHistory([]); return; }
+    const q = query(
       collection(db, 'subjectAttendance'),
       where('schoolId', '==', schoolId),
       where('studentId', '==', selectedChild.id),
-      where('attendanceDate', '==', expandedDay),
-    )).then(snap => {
-      if (cancelled) return;
-      setDayBreakdown(snap.docs.map(d => ({ id: d.id, ...d.data() } as SubjectAttendance)));
-    }).finally(() => { if (!cancelled) setLoadingBreakdown(false); });
-    return () => { cancelled = true; };
-  }, [expandedDay, selectedChild?.id, schoolId]);
+    );
+    const unsub = onSnapshot(
+      q,
+      snap => setSubjectAttendanceHistory(snap.docs.map(d => ({ id: d.id, ...d.data() } as SubjectAttendance))),
+      err => console.error('[ParentPortal] subjectAttendance query failed:', err.code, err.message),
+    );
+    return unsub;
+  }, [selectedChild?.id, schoolId, attendanceMode]);
+
+  // Per-day breakdown for the expanded calendar cell.
+  const dayBreakdown = React.useMemo(
+    () => expandedDay ? subjectAttendanceHistory.filter(sa => sa.attendanceDate === expandedDay) : [],
+    [expandedDay, subjectAttendanceHistory],
+  );
+
+  // studentDate -> subject records, for reconciling the daily status below.
+  const subjectRecordsByDate = React.useMemo(() => {
+    const map: Record<string, { status: 'present' | 'absent' | 'late'; inheritedFromDaily: boolean }[]> = {};
+    subjectAttendanceHistory.forEach(sa => {
+      (map[sa.attendanceDate] ??= []).push({ status: sa.status, inheritedFromDaily: sa.inheritedFromDaily });
+    });
+    return map;
+  }, [subjectAttendanceHistory]);
+
+  // Daily attendance corrected against explicitly-confirmed subject records (see
+  // effectiveDailyStatus) — the single source of truth for every attendance stat/dot below,
+  // so a stale "absent" day a subject teacher has since confirmed present everywhere shows
+  // correctly instead of only in the per-day breakdown panel.
+  const effectiveAttendanceByDate = React.useMemo(() => {
+    const map: Record<string, 'present' | 'absent' | 'late'> = {};
+    attendance.forEach(a => { map[a.date] = a.status as 'present' | 'absent' | 'late'; });
+    Object.keys(subjectRecordsByDate).forEach(date => {
+      const effective = effectiveDailyStatus(map[date], subjectRecordsByDate[date]);
+      if (effective) map[date] = effective;
+    });
+    return map;
+  }, [attendance, subjectRecordsByDate]);
 
   const handleSubmitAbsence = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -503,8 +536,10 @@ export default function ParentPortal() {
   const avgScore = numericFilteredGrades.length > 0
     ? Math.round(numericFilteredGrades.reduce((s, g) => s + (g.totalScore ?? ((g.caScore ?? 0) + (g.examScore ?? 0))), 0) / numericFilteredGrades.length)
     : 0;
-  const presentCount = attendance.filter(a => a.status === 'present').length;
-  const attendanceRate = attendance.length > 0 ? Math.round((presentCount / attendance.length) * 100) : 0;
+  const effectiveAttendanceValues = Object.values(effectiveAttendanceByDate);
+  const presentCount = effectiveAttendanceValues.filter(s => s === 'present').length;
+  const absentCount = effectiveAttendanceValues.filter(s => s === 'absent').length;
+  const attendanceRate = effectiveAttendanceValues.length > 0 ? Math.round((presentCount / effectiveAttendanceValues.length) * 100) : 0;
   const unpaidInvoices = invoices.filter(i => i.status !== 'paid');
   const unreadNotifs = notifications.filter(n => !n.read).length;
   const unreadMsgs = messages.filter(m => m.senderId !== user?.uid && !m.read).length;
@@ -881,10 +916,10 @@ export default function ParentPortal() {
         const daysInMonth = new Date(gridYear, gridMonth, 0).getDate();
         const days = Array.from({ length: daysInMonth }, (_, i) => i + 1);
 
-        // date string → status lookup for this month
+        // date string → status lookup for this month, reconciled against subject attendance
         const dateMap: Record<string, 'present' | 'absent' | 'late'> = {};
-        attendance.forEach(a => {
-          if (a.date.startsWith(displayMonth)) dateMap[a.date] = a.status as 'present' | 'absent' | 'late';
+        (Object.entries(effectiveAttendanceByDate) as [string, 'present' | 'absent' | 'late'][]).forEach(([date, status]) => {
+          if (date.startsWith(displayMonth)) dateMap[date] = status;
         });
 
         const fmtMonth = (ym: string) => {
@@ -1042,9 +1077,7 @@ export default function ParentPortal() {
                     <ChevronDown className="w-4 h-4 rotate-180" />
                   </button>
                 </div>
-                {loadingBreakdown ? (
-                  <p className="text-xs text-slate-400 py-4 text-center">Loading…</p>
-                ) : dayBreakdown.length === 0 ? (
+                {dayBreakdown.length === 0 ? (
                   <p className="text-xs text-slate-400 py-4 text-center">No per-subject records for this day — daily attendance only.</p>
                 ) : (
                   <div className="space-y-1.5">
@@ -1769,11 +1802,11 @@ export default function ParentPortal() {
                 <div className="flex items-center gap-6 p-4 bg-slate-50 rounded-xl border border-slate-200">
                   <div>
                     <p className="text-[10px] font-bold text-slate-400 uppercase">Times Present</p>
-                    <p className="text-lg font-black text-emerald-600">{attendance.filter(a => a.status === 'present').length}</p>
+                    <p className="text-lg font-black text-emerald-600">{presentCount}</p>
                   </div>
                   <div>
                     <p className="text-[10px] font-bold text-slate-400 uppercase">Times Absent</p>
-                    <p className="text-lg font-black text-rose-600">{attendance.filter(a => a.status === 'absent').length}</p>
+                    <p className="text-lg font-black text-rose-600">{absentCount}</p>
                   </div>
                   <div>
                     <p className="text-[10px] font-bold text-slate-400 uppercase">Attendance Rate</p>

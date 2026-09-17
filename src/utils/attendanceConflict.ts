@@ -1,5 +1,32 @@
 import type { AttendanceConflict } from '../services/firestoreService';
 
+type DailyStatus = 'present' | 'absent' | 'late';
+
+/**
+ * Reconciles a day's official daily-attendance status against that day's per-subject
+ * records, for schools running `daily_and_subject` / `subject_only` mode.
+ *
+ * Only subject records a teacher *explicitly* confirmed (`inheritedFromDaily: false`)
+ * count as evidence — a record still carrying the inherited default is just a stale copy
+ * of whatever the daily record said at the moment the subject register was opened, so it
+ * would be circular to use it to override that same daily record. When every explicitly
+ * confirmed subject record for the day says "present", that's real, independent proof the
+ * student attended, so it wins over a conflicting (or missing) daily mark — this is the
+ * "marked absent for the day but present in every lesson" case reported against the
+ * Parent Portal, where subject teachers had corrected the record but the daily view hadn't.
+ * Any other disagreement (mixed, or all-absent) is left as the daily record — genuinely
+ * ambiguous cases (e.g. left after period 1) stay with the official daily mark rather than
+ * guessing.
+ */
+export function effectiveDailyStatus(
+  dailyStatus: DailyStatus | undefined,
+  subjectRecords: { status: DailyStatus; inheritedFromDaily: boolean }[] | undefined,
+): DailyStatus | undefined {
+  const confirmed = subjectRecords?.filter(r => !r.inheritedFromDaily) ?? [];
+  if (confirmed.length > 0 && confirmed.every(r => r.status === 'present')) return 'present';
+  return dailyStatus;
+}
+
 /**
  * Human-readable prompt for the `window.confirm` shown when `batchUpsertAttendance`
  * reports that another teacher changed some of these students since the register was

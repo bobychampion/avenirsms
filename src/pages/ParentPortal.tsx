@@ -500,6 +500,7 @@ export default function ParentPortal() {
         recipientId: newMessage.receiverId,
         title: `New message from ${profile.displayName}`,
         body: newMessage.content.slice(0, 120),
+        ...(newMessage.content.length > 120 ? { fullBody: newMessage.content } : {}),
         type: 'message',
         read: false,
         schoolId: schoolId ?? 'main',

@@ -681,7 +681,10 @@ export interface Notification {
   /** Firebase UID of the recipient, or 'all' for a school-wide broadcast. */
   recipientId: string;
   title: string;
+  /** Short preview. For `message` notifications this is capped at 120 characters. */
   body: string;
+  /** Full text of a `message` notification whose `body` preview was truncated. */
+  fullBody?: string;
   type: 'fee_due' | 'exam' | 'attendance' | 'general' | 'message' | 'grade' | 'assignment';
   read: boolean;
   createdAt: any;

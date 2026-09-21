@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { db, handleFirestoreError, OperationType } from '../firebase';
 import { useAuth } from '../components/FirebaseProvider';
@@ -76,6 +76,39 @@ export default function NotificationsManagement() {
     );
     return () => { unsubNotif(); unsubStudents(); unsubStaff(); };
   }, [schoolId]);
+
+  // Notification cards the admin has expanded to read in full.
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
+  const toggleExpanded = (id: string) => setExpandedIds(prev => {
+    const next = new Set(prev);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
+
+  // recipientId is a UID (or an email, for messages addressed by email) — resolve it to a
+  // person so the log reads "Parent of Jane Doe" instead of "UID: QwTmLJEElw…".
+  const recipientNames = useMemo(() => {
+    const map: Record<string, string> = {};
+    staffUsers.forEach(u => {
+      const name = u.displayName || u.email || u.uid;
+      map[u.uid] = name;
+      if (u.email) map[u.email] = name;
+    });
+    const childrenByGuardian: Record<string, string[]> = {};
+    students.forEach(s => {
+      [s.guardianUserId, s.guardian2UserId].forEach(uid => {
+        if (uid) (childrenByGuardian[uid] ??= []).push(s.studentName);
+      });
+    });
+    Object.entries(childrenByGuardian).forEach(([uid, kids]) => {
+      if (!map[uid]) map[uid] = `Parent of ${kids.join(', ')}`;
+    });
+    return map;
+  }, [staffUsers, students]);
+
+  const recipientLabel = (recipientId: string) =>
+    recipientId === 'all' ? 'All parents'
+      : recipientNames[recipientId] ?? (recipientId.includes('@') ? recipientId : `UID: ${recipientId.slice(0, 10)}…`);
 
   const filteredStudents = students.filter(s =>
     studentSearch.length > 1 &&
@@ -367,6 +400,11 @@ export default function NotificationsManagement() {
             <AnimatePresence mode="popLayout">
               {notifications.map(n => {
                 const Icon = TYPE_ICONS[n.type as NotifType] || Bell;
+                const text = n.fullBody ?? n.body;
+                // Message notifications sent before fullBody existed were saved cut to 120 characters.
+                const cutOffLegacy = n.type === 'message' && !n.fullBody && n.body.length === 120;
+                const isLong = text.length > 110 || text.includes('\n') || cutOffLegacy;
+                const isOpen = expandedIds.has(n.id!);
                 return (
                   <motion.div key={n.id} layout initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, scale: 0.95 }}
                     className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex items-start gap-4">
@@ -383,11 +421,31 @@ export default function NotificationsManagement() {
                           <span className="w-2 h-2 bg-indigo-500 rounded-full" title="Unread" />
                         )}
                       </div>
-                      <p className="text-xs text-slate-500 leading-relaxed line-clamp-2">{n.body}</p>
+                      <p
+                        onClick={isLong ? () => toggleExpanded(n.id!) : undefined}
+                        className={`text-xs text-slate-500 leading-relaxed whitespace-pre-wrap break-words ${isOpen ? '' : 'line-clamp-2'} ${isLong ? 'cursor-pointer' : ''}`}
+                      >
+                        {text}
+                      </p>
+                      {isOpen && cutOffLegacy && (
+                        <p className="mt-1 text-[11px] italic text-slate-400">
+                          Older message — only the first 120 characters were saved with this notification, so it may be cut off.
+                        </p>
+                      )}
+                      {isLong && (
+                        <button
+                          onClick={() => toggleExpanded(n.id!)}
+                          aria-expanded={isOpen}
+                          className="mt-1 inline-flex items-center gap-0.5 text-[11px] font-bold text-indigo-600 hover:text-indigo-700"
+                        >
+                          {isOpen ? 'Show less' : 'Read full message'}
+                          <ChevronDown className={`w-3 h-3 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
+                        </button>
+                      )}
                       <div className="flex items-center gap-3 mt-2">
                         <span className="text-[10px] text-slate-400 font-medium flex items-center gap-1">
                           <User className="w-3 h-3" />
-                          {n.recipientId === 'all' ? 'All parents' : `UID: ${n.recipientId.slice(0, 10)}…`}
+                          {n.type === 'message' ? `To: ${recipientLabel(n.recipientId)}` : recipientLabel(n.recipientId)}
                         </span>
                         <span className="text-[10px] text-slate-400">
                           {n.createdAt?.toDate ? n.createdAt.toDate().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : 'Just now'}

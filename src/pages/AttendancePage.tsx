@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { db, handleFirestoreError, OperationType } from '../firebase';
 import { collection, query, onSnapshot, orderBy, where, getDocs, addDoc, serverTimestamp } from 'firebase/firestore';
 import { Student, Attendance, SubjectAttendance, SpecialLesson, SpecialLessonAttendance } from '../types';
-import { batchUpsertAttendance } from '../services/firestoreService';
+import { batchUpsertAttendance, batchUpsertSubjectAttendance, fetchDailyAttendanceMap } from '../services/firestoreService';
 import { useAuth } from '../components/FirebaseProvider';
 import { useSchoolId } from '../hooks/useSchoolId';
 import { useSchool } from '../components/SchoolContext';
@@ -11,7 +11,7 @@ import { motion } from 'motion/react';
 import toast from 'react-hot-toast';
 import {
   ClipboardList, Search, CheckCircle, XCircle, Clock, Save,
-  BarChart3, Filter, Calendar, Users, Sparkles, Bell, Download
+  BarChart3, Filter, Calendar, Users, Sparkles, Bell, Download, BookOpen
 } from 'lucide-react';
 import { exportAttendanceCsv, exportSubjectAttendanceCsv, exportSpecialLessonAttendanceCsv } from '../services/dataExport/csvModules';
 import { ClassSelect } from '../components/ClassSelect';
@@ -29,7 +29,7 @@ interface AttendanceRow {
 export default function AttendancePage() {
   const { user } = useAuth();
   const schoolId = useSchoolId();
-  const { attendanceMode } = useSchool();
+  const { attendanceMode, currentSession, currentTerm } = useSchool();
   const [selectedClass, setSelectedClass] = useState('');
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
   const [classRows, setClassRows] = useState<{ id: string; name: string }[]>([]);
@@ -41,7 +41,7 @@ export default function AttendancePage() {
   const [localAttendanceEdits, setLocalAttendanceEdits] = useState<Record<string, AttendanceStatus>>({});
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
-  const [activeTab, setActiveTab] = useState<'mark' | 'report' | 'monthly' | 'subject_report' | 'special_lessons_report'>('mark');
+  const [activeTab, setActiveTab] = useState<'mark' | 'subject_mark' | 'report' | 'monthly' | 'subject_report' | 'special_lessons_report'>('mark');
   const [reportData, setReportData] = useState<{ studentId: string; studentName: string; present: number; absent: number; late: number; rate: number }[]>([]);
   const [loadingReport, setLoadingReport] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
@@ -50,8 +50,6 @@ export default function AttendancePage() {
   // ── Subject Attendance report (class + subject summary) ──
   const [subjectReportRecords, setSubjectReportRecords] = useState<(SubjectAttendance & { studentName?: string })[]>([]);
   const [loadingSubjectReport, setLoadingSubjectReport] = useState(false);
-  // subjectName -> student ids enrolled (only subjects with a restricted roster, i.e. electives)
-  const [subjectEnrolment, setSubjectEnrolment] = useState<Record<string, string[]>>({});
   // 'day' follows the page's date picker; 'all' aggregates every recorded date as present/total.
   const [subjectScope, setSubjectScope] = useState<'day' | 'all'>('day');
 
@@ -211,6 +209,136 @@ export default function AttendancePage() {
     }
   };
 
+  // ── Subject attendance (mark) — the admin counterpart of the Teacher Portal's Subject Attendance tab ──
+  const selectedClassId = useMemo(() => classRows.find(c => c.name === selectedClass)?.id, [classRows, selectedClass]);
+  type ClassSubjectRow = { subjectName: string; teacherId?: string; enrolledStudentIds?: string[] };
+  const [classSubjectRows, setClassSubjectRows] = useState<ClassSubjectRow[]>([]);
+  const [markSubject, setMarkSubject] = useState('');
+  // Daily register for the class/date, which subject attendance is pre-filled from.
+  const [dailyInheritMap, setDailyInheritMap] = useState<Record<string, AttendanceStatus>>({});
+  const [savedSubjectMarks, setSavedSubjectMarks] = useState<Record<string, { status: AttendanceStatus; inheritedFromDaily: boolean }>>({});
+  const [localSubjectEdits, setLocalSubjectEdits] = useState<Record<string, AttendanceStatus>>({});
+  const [savingSubjectMarks, setSavingSubjectMarks] = useState(false);
+  const [subjectMarksSaved, setSubjectMarksSaved] = useState(false);
+
+  // Subjects assigned to the class (and any elective roster) — live, and only for schools that record subject attendance.
+  useEffect(() => {
+    if (!schoolId || !selectedClassId || attendanceMode === 'daily_only') { setClassSubjectRows([]); return; }
+    const unsub = onSnapshot(
+      query(collection(db, 'class_subjects'), where('schoolId', '==', schoolId), where('classId', '==', selectedClassId)),
+      snap => setClassSubjectRows(snap.docs.map(d => d.data() as ClassSubjectRow)),
+      () => setClassSubjectRows([]),
+    );
+    return unsub;
+  }, [schoolId, selectedClassId, attendanceMode]);
+
+  const markSubjectOptions = useMemo(
+    () => Array.from(new Set<string>(classSubjectRows.map(r => r.subjectName))).sort((a, b) => a.localeCompare(b)),
+    [classSubjectRows],
+  );
+  useEffect(() => {
+    setMarkSubject(prev => markSubjectOptions.includes(prev) ? prev : (markSubjectOptions[0] ?? ''));
+  }, [markSubjectOptions]);
+
+  // subjectName -> student ids enrolled (only subjects with a restricted roster, i.e. electives)
+  const subjectEnrolment = useMemo(() => {
+    const enrolment: Record<string, string[]> = {};
+    classSubjectRows.forEach(r => {
+      if (r.enrolledStudentIds && r.enrolledStudentIds.length > 0) enrolment[r.subjectName] = r.enrolledStudentIds;
+    });
+    return enrolment;
+  }, [classSubjectRows]);
+  const markRoster = subjectEnrolment[markSubject] ?? null;
+
+  // Load the daily register + any saved subject marks ONLY when class/subject/date change, so
+  // in-progress clicks are never reset by unrelated re-renders (same discipline as the daily tab).
+  useEffect(() => {
+    if (activeTab !== 'subject_mark' || !schoolId || !selectedClass || !selectedClassId || !markSubject || !selectedDate) return;
+    let cancelled = false;
+    (async () => {
+      const [dailyMap, subjSnap] = await Promise.all([
+        fetchDailyAttendanceMap(selectedClass, selectedDate, schoolId),
+        getDocs(query(
+          collection(db, 'subjectAttendance'),
+          where('schoolId', '==', schoolId),
+          where('classId', '==', selectedClassId),
+          where('subjectName', '==', markSubject),
+          where('attendanceDate', '==', selectedDate),
+        )),
+      ]);
+      if (cancelled) return;
+      const existing: Record<string, { status: AttendanceStatus; inheritedFromDaily: boolean }> = {};
+      subjSnap.docs.forEach(d => {
+        const data = d.data() as SubjectAttendance;
+        existing[data.studentId] = { status: data.status, inheritedFromDaily: data.inheritedFromDaily };
+      });
+      setDailyInheritMap(dailyMap);
+      setSavedSubjectMarks(existing);
+      setLocalSubjectEdits({});
+    })().catch(console.error);
+    return () => { cancelled = true; };
+  }, [activeTab, schoolId, selectedClass, selectedClassId, markSubject, selectedDate]);
+
+  // Local click wins, else a saved mark, else the day's daily register (approved leave counts as
+  // absent when the daily register hasn't been taken), else present.
+  const subjectMarkRows = useMemo(() => students
+    .filter(s => !markRoster || markRoster.includes(s.id!))
+    .map(s => {
+      const local = localSubjectEdits[s.id!];
+      const saved = savedSubjectMarks[s.id!];
+      const fallback: AttendanceStatus = isOnApprovedLeave(s.id!, selectedDate) ? 'absent' : 'present';
+      return {
+        studentId: s.id!,
+        studentName: s.studentName,
+        status: local ?? saved?.status ?? dailyInheritMap[s.id!] ?? fallback,
+        inherited: local === undefined && (saved ? saved.inheritedFromDaily : true),
+      };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }), [students, markRoster, localSubjectEdits, savedSubjectMarks, dailyInheritMap, selectedDate, approvedAbsences]);
+
+  const cycleSubjectMark = (studentId: string) => {
+    const current = subjectMarkRows.find(r => r.studentId === studentId)?.status ?? 'present';
+    const next: Record<AttendanceStatus, AttendanceStatus> = { present: 'absent', absent: 'late', late: 'present' };
+    setLocalSubjectEdits(prev => ({ ...prev, [studentId]: next[current] }));
+  };
+
+  const handleSaveSubjectMarks = async () => {
+    if (!user || !selectedClassId || !markSubject || subjectMarkRows.length === 0) return;
+    setSavingSubjectMarks(true);
+    // Credit the lesson to the subject's assigned teacher; recordedBy still says who actually saved it.
+    const teacherId = classSubjectRows.find(r => r.subjectName === markSubject)?.teacherId || user.uid;
+    const records = subjectMarkRows.map(r => ({
+      studentId: r.studentId,
+      classId: selectedClassId,
+      className: selectedClass,
+      subjectName: markSubject,
+      teacherId,
+      academicSession: currentSession,
+      term: currentTerm,
+      attendanceDate: selectedDate,
+      status: r.status,
+      inheritedFromDaily: r.inherited,
+      recordedBy: user.uid,
+    }));
+    const tid = toast.loading('Saving subject attendance…');
+    try {
+      await batchUpsertSubjectAttendance(records, schoolId);
+      toast.success(`${markSubject} attendance saved.`, { id: tid });
+      setSavedSubjectMarks(prev => {
+        const next = { ...prev };
+        records.forEach(r => { next[r.studentId] = { status: r.status, inheritedFromDaily: r.inheritedFromDaily }; });
+        return next;
+      });
+      setLocalSubjectEdits({});
+      setSubjectMarksSaved(true);
+      setTimeout(() => setSubjectMarksSaved(false), 3000);
+    } catch (e: any) {
+      toast.error('Failed to save: ' + (e.message || 'Unknown error'), { id: tid });
+    } finally {
+      setSavingSubjectMarks(false);
+    }
+  };
+
   const loadReport = async () => {
     if (!selectedClass) return;
     setLoadingReport(true);
@@ -266,29 +394,16 @@ export default function AttendancePage() {
     if (!classId) { toast.error('Class not found'); return; }
     setLoadingSubjectReport(true);
     try {
-      const [snap, subjSnap] = await Promise.all([
-        getDocs(query(
-          collection(db, 'subjectAttendance'),
-          where('schoolId', '==', schoolId),
-          where('classId', '==', classId),
-        )),
-        getDocs(query(
-          collection(db, 'class_subjects'),
-          where('schoolId', '==', schoolId),
-          where('classId', '==', classId),
-        )),
-      ]);
+      const snap = await getDocs(query(
+        collection(db, 'subjectAttendance'),
+        where('schoolId', '==', schoolId),
+        where('classId', '==', classId),
+      ));
       const nameById = Object.fromEntries(students.map(s => [s.id, s.studentName]));
       setSubjectReportRecords(snap.docs.map(d => {
         const data = d.data() as SubjectAttendance;
         return { id: d.id, ...data, studentName: nameById[data.studentId] ?? data.studentId };
       }));
-      const enrolment: Record<string, string[]> = {};
-      subjSnap.docs.forEach(d => {
-        const { subjectName, enrolledStudentIds } = d.data() as { subjectName: string; enrolledStudentIds?: string[] };
-        if (enrolledStudentIds && enrolledStudentIds.length > 0) enrolment[subjectName] = enrolledStudentIds;
-      });
-      setSubjectEnrolment(enrolment);
     } finally {
       setLoadingSubjectReport(false);
     }
@@ -527,6 +642,15 @@ export default function AttendancePage() {
             >
               Mark Attendance
             </button>
+            {attendanceMode !== 'daily_only' && (
+              <button
+                onClick={() => setActiveTab('subject_mark')}
+                className={`px-4 py-2.5 rounded-xl text-sm font-semibold transition-colors ${activeTab === 'subject_mark' ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
+              >
+                <BookOpen className="w-4 h-4 inline mr-1.5" />
+                Subject Attendance
+              </button>
+            )}
             <button
               onClick={() => { setActiveTab('report'); loadReport(); }}
               className={`px-4 py-2.5 rounded-xl text-sm font-semibold transition-colors ${activeTab === 'report' ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
@@ -709,6 +833,131 @@ export default function AttendancePage() {
                 </tbody>
               </table>
             </div>
+          )}
+        </div>
+      )}
+
+      {/* ── Subject Attendance (mark) Tab ── */}
+      {activeTab === 'subject_mark' && attendanceMode !== 'daily_only' && (
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5 space-y-4">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h2 className="font-bold text-slate-900 flex items-center gap-2">
+                <BookOpen className="w-4 h-4 text-indigo-600" />
+                Subject Attendance
+              </h2>
+              <p className="text-xs text-slate-500 mt-1 max-w-md">
+                Pre-filled from that day's Daily Attendance — only click to change a student who differs for this lesson.
+              </p>
+            </div>
+            {selectedClass && markSubjectOptions.length > 0 && (
+              <div className="flex items-center gap-2">
+                <label htmlFor="subject-mark-subject" className="text-xs font-bold text-slate-500 uppercase tracking-wide">Subject</label>
+                <select
+                  id="subject-mark-subject"
+                  value={markSubject}
+                  onChange={e => setMarkSubject(e.target.value)}
+                  className="px-3 py-2 rounded-xl border border-slate-200 text-sm font-medium outline-none focus:ring-2 focus:ring-indigo-500 bg-white"
+                >
+                  {markSubjectOptions.map(s => <option key={s} value={s}>{s}</option>)}
+                </select>
+              </div>
+            )}
+          </div>
+
+          {!selectedClass ? (
+            <div className="text-center py-12 bg-slate-50 rounded-2xl border-2 border-dashed border-slate-200">
+              <ClipboardList className="w-10 h-10 text-slate-200 mx-auto mb-3" />
+              <p className="text-slate-500 text-sm">Select a class and date above to take subject attendance.</p>
+            </div>
+          ) : markSubjectOptions.length === 0 ? (
+            <div className="text-center py-12 bg-slate-50 rounded-2xl border-2 border-dashed border-slate-200">
+              <BookOpen className="w-10 h-10 text-slate-200 mx-auto mb-3" />
+              <p className="text-slate-500 text-sm">No subjects are assigned to {selectedClass} yet.</p>
+              <p className="text-xs text-slate-400 mt-1">Assign them under Class Management → Subjects.</p>
+            </div>
+          ) : subjectMarkRows.length === 0 ? (
+            <div className="text-center py-12 bg-slate-50 rounded-2xl border-2 border-dashed border-slate-200">
+              <Users className="w-10 h-10 text-slate-200 mx-auto mb-3" />
+              <p className="text-slate-500 text-sm">
+                {markRoster ? `No students in ${selectedClass} are enrolled in ${markSubject}.` : `No students found in ${selectedClass}.`}
+              </p>
+            </div>
+          ) : (
+            <>
+              {markRoster && (
+                <p className="text-xs text-slate-500">
+                  Showing the <span className="font-semibold">{subjectMarkRows.length}</span> student{subjectMarkRows.length !== 1 ? 's' : ''} enrolled in {markSubject}.
+                </p>
+              )}
+              <div className="flex gap-4 text-xs font-bold">
+                <span className="text-emerald-600">{subjectMarkRows.filter(r => r.status === 'present').length} Present</span>
+                <span className="text-rose-600">{subjectMarkRows.filter(r => r.status === 'absent').length} Absent</span>
+                <span className="text-amber-600">{subjectMarkRows.filter(r => r.status === 'late').length} Late</span>
+                <span className="text-slate-400">/ {subjectMarkRows.length} Total</span>
+              </div>
+
+              <div className="overflow-x-auto rounded-xl border border-slate-100">
+                <table className="w-full text-left">
+                  <thead className="bg-slate-50">
+                    <tr>
+                      <th className="px-5 py-3 text-xs font-bold text-slate-400 uppercase w-12">#</th>
+                      <th className="px-5 py-3 text-xs font-bold text-slate-400 uppercase">Student</th>
+                      <th className="px-5 py-3 text-xs font-bold text-slate-400 uppercase">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-50">
+                    {subjectMarkRows.map((row, i) => (
+                      <tr key={row.studentId} className="hover:bg-slate-50/50 transition-colors">
+                        <td className="px-5 py-3 text-sm text-slate-400 font-medium">{i + 1}</td>
+                        <td className="px-5 py-3">
+                          <div className="flex items-center gap-3 flex-wrap">
+                            <span className="text-sm font-medium text-slate-900">{row.studentName}</span>
+                            {row.inherited && (
+                              <span title="Inherited from Daily Attendance — click the status to override" className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase border bg-slate-50 text-slate-500 border-slate-200">
+                                Inherited
+                              </span>
+                            )}
+                            {isOnApprovedLeave(row.studentId, selectedDate) && (
+                              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase border bg-emerald-50 text-emerald-700 border-emerald-200">
+                                On approved leave
+                              </span>
+                            )}
+                          </div>
+                        </td>
+                        <td className="px-5 py-3">
+                          <button
+                            onClick={() => cycleSubjectMark(row.studentId)}
+                            aria-label={`${row.studentName}: ${row.status}. Click to change`}
+                            className={`flex items-center gap-2 px-3 py-1.5 rounded-xl border text-xs font-bold uppercase cursor-pointer transition-all hover:scale-105 ${statusBg(row.status)}`}
+                          >
+                            {statusIcon(row.status)}
+                            <span className={row.status === 'present' ? 'text-emerald-700' : row.status === 'absent' ? 'text-rose-700' : 'text-amber-700'}>
+                              {row.status}
+                            </span>
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={handleSaveSubjectMarks}
+                  disabled={savingSubjectMarks}
+                  className="flex items-center gap-2 px-6 py-3 bg-indigo-600 text-white font-bold rounded-xl hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-100 disabled:opacity-60"
+                >
+                  {savingSubjectMarks
+                    ? <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                    : <Save className="w-4 h-4" />}
+                  {subjectMarksSaved
+                    ? 'Saved!'
+                    : `Save ${markSubject} attendance for ${new Date(selectedDate + 'T12:00:00').toLocaleDateString('en-GB')}`}
+                </button>
+              </div>
+            </>
           )}
         </div>
       )}

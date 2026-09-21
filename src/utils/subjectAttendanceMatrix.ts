@@ -23,7 +23,7 @@ export interface SubjectMatrix {
 }
 
 /**
- * Builds the student × subject attendance grid from raw `subjectAttendance` rows.
+ * Collapses raw `subjectAttendance` rows to one row per actual lesson.
  *
  * One student can carry several rows for the same subject and day: a genuine double period, or
  * the same lesson saved once before and once after its timetable period was known (the upsert
@@ -31,24 +31,21 @@ export interface SubjectMatrix {
  * therefore collapsed to one per (student, subject, date, period), keeping the most recently
  * recorded, and a period-less row is dropped when a period-tagged row exists for that day.
  * Without this, a lesson is counted twice and the totals overstate how many lessons took place.
- *
- * `date` limits the grid to a single day; omit it to include every recorded date.
  */
-export function buildSubjectMatrix(rows: SubjectAttendanceRow[], date?: string): SubjectMatrix {
-  const scoped = date ? rows.filter(r => r.attendanceDate === date) : rows;
+export function dedupeSubjectLessons<T extends SubjectAttendanceRow>(rows: T[]): T[] {
   const recordedMs = (r: SubjectAttendanceRow) => r.recordedAt?.toMillis?.() ?? 0;
 
-  const groups = new Map<string, SubjectAttendanceRow[]>();
-  scoped.forEach(r => {
+  const groups = new Map<string, T[]>();
+  rows.forEach(r => {
     const key = `${r.studentId}|${r.subjectName}|${r.attendanceDate}`;
     const list = groups.get(key);
     if (list) list.push(r); else groups.set(key, [r]);
   });
 
-  const lessons: SubjectAttendanceRow[] = [];
+  const lessons: T[] = [];
   groups.forEach(group => {
     const tagged = group.filter(r => r.timetablePeriodId);
-    const latestByPeriod = new Map<string, SubjectAttendanceRow>();
+    const latestByPeriod = new Map<string, T>();
     (tagged.length > 0 ? tagged : group).forEach(r => {
       const periodKey = r.timetablePeriodId ?? '';
       const current = latestByPeriod.get(periodKey);
@@ -56,6 +53,16 @@ export function buildSubjectMatrix(rows: SubjectAttendanceRow[], date?: string):
     });
     latestByPeriod.forEach(r => lessons.push(r));
   });
+  return lessons;
+}
+
+/**
+ * Builds the student × subject attendance grid from raw `subjectAttendance` rows, counting
+ * lessons after `dedupeSubjectLessons`. `date` limits the grid to a single day; omit it to
+ * include every recorded date.
+ */
+export function buildSubjectMatrix(rows: SubjectAttendanceRow[], date?: string): SubjectMatrix {
+  const lessons = dedupeSubjectLessons(date ? rows.filter(r => r.attendanceDate === date) : rows);
 
   const cells: SubjectMatrix['cells'] = {};
   const totalsBySubject: SubjectMatrix['totalsBySubject'] = {};

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildSubjectMatrix, SubjectAttendanceRow } from './subjectAttendanceMatrix';
+import { buildSubjectMatrix, dedupeSubjectLessons, SubjectAttendanceRow } from './subjectAttendanceMatrix';
 
 const at = (ms: number) => ({ toMillis: () => ms });
 const row = (over: Partial<SubjectAttendanceRow>): SubjectAttendanceRow => ({
@@ -60,6 +60,16 @@ describe('buildSubjectMatrix', () => {
     expect(m.lessonCount).toBe(3);
     expect(m.subjects).toEqual(['English', 'Maths']);
     expect(m.totalsBySubject.Maths.present).toBe(2);
+  });
+
+  it('dedupeSubjectLessons returns the surviving rows themselves, one per lesson', () => {
+    const older = row({ status: 'present', recordedAt: at(1) });
+    const newer = row({ status: 'absent', recordedAt: at(2) });
+    const other = row({ subjectName: 'English' });
+    const lessons = dedupeSubjectLessons([older, newer, other]);
+    expect(lessons).toHaveLength(2);
+    expect(lessons).toContain(newer);
+    expect(lessons).not.toContain(older);
   });
 
   it('returns an empty grid when nothing is in scope', () => {

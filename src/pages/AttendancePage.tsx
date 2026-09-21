@@ -16,7 +16,7 @@ import {
 import { exportAttendanceCsv, exportSubjectAttendanceCsv, exportSpecialLessonAttendanceCsv } from '../services/dataExport/csvModules';
 import { ClassSelect } from '../components/ClassSelect';
 import { describeAttendanceConflicts, buildEffectiveAttendanceByStudent } from '../utils/attendanceConflict';
-import { buildSubjectMatrix } from '../utils/subjectAttendanceMatrix';
+import { buildSubjectMatrix, dedupeSubjectLessons } from '../utils/subjectAttendanceMatrix';
 
 type AttendanceStatus = 'present' | 'absent' | 'late';
 
@@ -69,6 +69,9 @@ export default function AttendancePage() {
     present: number; absent: number; late: number; rate: number;
   }[]>([]);
   const [loadingMonthly, setLoadingMonthly] = useState(false);
+  // Subject records for the loaded month, and the student/day cell whose subject breakdown is open.
+  const [monthlySubjectRecords, setMonthlySubjectRecords] = useState<SubjectAttendance[]>([]);
+  const [expandedCell, setExpandedCell] = useState<{ studentId: string; date: string } | null>(null);
 
   // Approved absence requests for this class — used to default attendance to "absent"
   // and flag students who are on authorised leave for the selected date.
@@ -297,6 +300,17 @@ export default function AttendancePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab, selectedClass, classRows]);
 
+  // Real lessons per student per day for the loaded month (duplicates collapsed), keyed
+  // "studentId|YYYY-MM-DD" — drives the clickable day cells in the Monthly grid.
+  const monthlyLessons = useMemo(() => {
+    const byCell: Record<string, SubjectAttendance[]> = {};
+    dedupeSubjectLessons<SubjectAttendance>(monthlySubjectRecords).forEach(r => {
+      (byCell[`${r.studentId}|${r.attendanceDate}`] ??= []).push(r);
+    });
+    Object.values(byCell).forEach(list => list.sort((a, b) => a.subjectName.localeCompare(b.subjectName)));
+    return byCell;
+  }, [monthlySubjectRecords]);
+
   // Student × subject grid for the selected day (or all recorded dates); see buildSubjectMatrix
   // for how duplicate records of the same lesson are collapsed.
   const subjectMatrix = useMemo(
@@ -358,7 +372,7 @@ export default function AttendancePage() {
     // disagrees with what parents see for the same student/day. Filtered to schoolId+classId
     // only (no date range) to reuse the same equality-only query the Subject Report tab
     // already makes — an added date range here would need a new composite index.
-    let subjectRecords: { studentId: string; attendanceDate: string; status: 'present' | 'absent' | 'late'; inheritedFromDaily: boolean }[] = [];
+    let monthSubjectDocs: SubjectAttendance[] = [];
     if (attendanceMode !== 'daily_only' && schoolId) {
       const classId = classRows.find(c => c.name === selectedClass)?.id;
       if (classId) {
@@ -367,12 +381,16 @@ export default function AttendancePage() {
           where('schoolId', '==', schoolId),
           where('classId', '==', classId),
         ));
-        subjectRecords = subjSnap.docs
-          .map(d => d.data() as SubjectAttendance)
-          .filter(data => data.attendanceDate >= firstDay && data.attendanceDate <= lastDay)
-          .map(data => ({ studentId: data.studentId, attendanceDate: data.attendanceDate, status: data.status, inheritedFromDaily: data.inheritedFromDaily }));
+        monthSubjectDocs = subjSnap.docs
+          .map(d => ({ id: d.id, ...(d.data() as SubjectAttendance) }))
+          .filter(data => data.attendanceDate >= firstDay && data.attendanceDate <= lastDay);
       }
     }
+    setMonthlySubjectRecords(monthSubjectDocs);
+    setExpandedCell(null);
+    const subjectRecords = monthSubjectDocs.map(data => ({
+      studentId: data.studentId, attendanceDate: data.attendanceDate, status: data.status, inheritedFromDaily: data.inheritedFromDaily,
+    }));
 
     // Build lookup: studentId -> day -> effective status
     const lookup = buildEffectiveAttendanceByStudent(dailyRecords, subjectRecords);
@@ -970,6 +988,9 @@ export default function AttendancePage() {
                     <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-rose-200 inline-block" />Absent</span>
                     <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-amber-200 inline-block" />Late</span>
                     <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-slate-100 inline-block" />No record</span>
+                    {attendanceMode !== 'daily_only' && (
+                      <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-rose-500 inline-block" />Missed a subject lesson</span>
+                    )}
                   </div>
                 </div>
                 <div className="overflow-x-auto">
@@ -996,7 +1017,30 @@ export default function AttendancePage() {
                             const st = row.cells[d];
                             const bg = st === 'present' ? 'bg-emerald-200' : st === 'absent' ? 'bg-rose-200' : st === 'late' ? 'bg-amber-200' : 'bg-slate-100';
                             const title = st ? st.charAt(0).toUpperCase() + st.slice(1) : '—';
-                            return <td key={d} className="px-1 py-1.5 text-center"><span title={title} className={`inline-block w-5 h-5 rounded ${bg}`} /></td>;
+                            const lessons = monthlyLessons[`${row.studentId}|${d}`] ?? [];
+                            const expandable = attendanceMode !== 'daily_only' && (!!st || lessons.length > 0);
+                            if (!expandable) {
+                              return <td key={d} className="px-1 py-1.5 text-center"><span title={title} className={`inline-block w-5 h-5 rounded ${bg}`} /></td>;
+                            }
+                            const missed = lessons.filter(l => l.status === 'absent').length;
+                            // The daily register can say present/late while individual lessons were missed —
+                            // flag those days so they stand out without opening every cell.
+                            const partial = missed > 0 && st !== 'absent';
+                            const isOpen = expandedCell?.studentId === row.studentId && expandedCell.date === d;
+                            return (
+                              <td key={d} className={`px-1 py-1.5 text-center ${isOpen ? 'bg-indigo-50' : ''}`}>
+                                <button
+                                  type="button"
+                                  title={`${title}${partial ? ` — missed ${missed} subject lesson${missed === 1 ? '' : 's'}` : ''} — click for subjects`}
+                                  aria-label={`${row.studentName}, ${d}: ${title}. Show subjects`}
+                                  aria-expanded={isOpen}
+                                  onClick={() => setExpandedCell(isOpen ? null : { studentId: row.studentId, date: d })}
+                                  className={`relative inline-block w-5 h-5 rounded cursor-pointer hover:ring-2 hover:ring-indigo-300 ${bg} ${isOpen ? 'ring-2 ring-indigo-400' : ''}`}
+                                >
+                                  {partial && <span className="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-rose-500 border border-white" />}
+                                </button>
+                              </td>
+                            );
                           })}
                           <td className="px-3 py-1.5 text-center font-bold text-emerald-700">{row.present}</td>
                           <td className="px-3 py-1.5 text-center font-bold text-rose-600">{row.absent}</td>
@@ -1027,6 +1071,59 @@ export default function AttendancePage() {
                     </tfoot>
                   </table>
                 </div>
+
+                {/* Subject breakdown for the clicked student/day (only when the school records subject attendance) */}
+                {expandedCell && attendanceMode !== 'daily_only' && (() => {
+                  const openRow = monthlyData.find(r => r.studentId === expandedCell.studentId);
+                  if (!openRow) return null;
+                  const lessons = monthlyLessons[`${expandedCell.studentId}|${expandedCell.date}`] ?? [];
+                  const dailyStatus = openRow.cells[expandedCell.date];
+                  const missedNames = lessons.filter(l => l.status === 'absent').map(l => l.subjectName);
+                  const lateNames = lessons.filter(l => l.status === 'late').map(l => l.subjectName);
+                  return (
+                    <div className="border-t border-indigo-100 bg-indigo-50/40 p-5 print:hidden">
+                      <div className="flex items-start justify-between gap-3 mb-3">
+                        <div>
+                          <p className="text-sm font-bold text-slate-800">
+                            {openRow.studentName} — {new Date(expandedCell.date + 'T12:00:00').toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' })}
+                          </p>
+                          <p className="text-xs text-slate-500 mt-0.5">
+                            Daily register: <span className="font-semibold capitalize">{dailyStatus ?? 'not recorded'}</span>
+                            {lessons.length > 0 && <> · {lessons.filter(l => l.status === 'present').length} of {lessons.length} lessons present</>}
+                          </p>
+                        </div>
+                        <button onClick={() => setExpandedCell(null)} className="p-1 text-slate-400 hover:text-slate-600" aria-label="Close subject breakdown">
+                          <XCircle className="w-4 h-4" />
+                        </button>
+                      </div>
+                      {lessons.length === 0 ? (
+                        <p className="text-xs text-slate-400 py-3 text-center">No per-subject records for this day — daily attendance only.</p>
+                      ) : (
+                        <>
+                          {(missedNames.length > 0 || lateNames.length > 0) && (
+                            <p className="text-xs mb-3 text-slate-600">
+                              {missedNames.length > 0 && <><span className="font-bold text-rose-600">Missed:</span> {missedNames.join(', ')}</>}
+                              {missedNames.length > 0 && lateNames.length > 0 && <span className="text-slate-300"> · </span>}
+                              {lateNames.length > 0 && <><span className="font-bold text-amber-600">Late:</span> {lateNames.join(', ')}</>}
+                            </p>
+                          )}
+                          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-1.5">
+                            {lessons.map(l => (
+                              <div key={l.id ?? `${l.subjectName}-${l.timetablePeriodId ?? ''}`} className="flex items-center justify-between px-3 py-2 rounded-xl bg-white border border-slate-100">
+                                <span className="text-sm font-medium text-slate-700">{l.subjectName}</span>
+                                <span className={`text-xs font-bold uppercase px-2 py-0.5 rounded-full ${
+                                  l.status === 'present' ? 'bg-emerald-100 text-emerald-700'
+                                  : l.status === 'absent' ? 'bg-rose-100 text-rose-700'
+                                  : 'bg-amber-100 text-amber-700'
+                                }`}>{l.status}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  );
+                })()}
               </div>
             );
           })()}

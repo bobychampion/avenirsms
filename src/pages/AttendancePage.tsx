@@ -16,6 +16,7 @@ import {
 import { exportAttendanceCsv, exportSubjectAttendanceCsv, exportSpecialLessonAttendanceCsv } from '../services/dataExport/csvModules';
 import { ClassSelect } from '../components/ClassSelect';
 import { describeAttendanceConflicts, buildEffectiveAttendanceByStudent } from '../utils/attendanceConflict';
+import { buildSubjectMatrix } from '../utils/subjectAttendanceMatrix';
 
 type AttendanceStatus = 'present' | 'absent' | 'late';
 
@@ -49,6 +50,10 @@ export default function AttendancePage() {
   // ── Subject Attendance report (class + subject summary) ──
   const [subjectReportRecords, setSubjectReportRecords] = useState<(SubjectAttendance & { studentName?: string })[]>([]);
   const [loadingSubjectReport, setLoadingSubjectReport] = useState(false);
+  // subjectName -> student ids enrolled (only subjects with a restricted roster, i.e. electives)
+  const [subjectEnrolment, setSubjectEnrolment] = useState<Record<string, string[]>>({});
+  // 'day' follows the page's date picker; 'all' aggregates every recorded date as present/total.
+  const [subjectScope, setSubjectScope] = useState<'day' | 'all'>('day');
 
   // ── Special Lesson report (per-lesson summary) ──
   const [specialLessons, setSpecialLessons] = useState<SpecialLesson[]>([]);
@@ -258,45 +263,46 @@ export default function AttendancePage() {
     if (!classId) { toast.error('Class not found'); return; }
     setLoadingSubjectReport(true);
     try {
-      const snap = await getDocs(query(
-        collection(db, 'subjectAttendance'),
-        where('schoolId', '==', schoolId),
-        where('classId', '==', classId),
-      ));
+      const [snap, subjSnap] = await Promise.all([
+        getDocs(query(
+          collection(db, 'subjectAttendance'),
+          where('schoolId', '==', schoolId),
+          where('classId', '==', classId),
+        )),
+        getDocs(query(
+          collection(db, 'class_subjects'),
+          where('schoolId', '==', schoolId),
+          where('classId', '==', classId),
+        )),
+      ]);
       const nameById = Object.fromEntries(students.map(s => [s.id, s.studentName]));
       setSubjectReportRecords(snap.docs.map(d => {
         const data = d.data() as SubjectAttendance;
         return { id: d.id, ...data, studentName: nameById[data.studentId] ?? data.studentId };
       }));
+      const enrolment: Record<string, string[]> = {};
+      subjSnap.docs.forEach(d => {
+        const { subjectName, enrolledStudentIds } = d.data() as { subjectName: string; enrolledStudentIds?: string[] };
+        if (enrolledStudentIds && enrolledStudentIds.length > 0) enrolment[subjectName] = enrolledStudentIds;
+      });
+      setSubjectEnrolment(enrolment);
     } finally {
       setLoadingSubjectReport(false);
     }
   };
 
-  // Aggregate the loaded subject-attendance records by subject, and separately by student.
-  const subjectSummary = useMemo(() => {
-    const bySubject: Record<string, { present: number; absent: number; late: number }> = {};
-    subjectReportRecords.forEach(r => {
-      if (!bySubject[r.subjectName]) bySubject[r.subjectName] = { present: 0, absent: 0, late: 0 };
-      bySubject[r.subjectName][r.status]++;
-    });
-    return Object.entries(bySubject).map(([subjectName, c]) => {
-      const total = c.present + c.absent + c.late;
-      return { subjectName, ...c, total, rate: total > 0 ? Math.round((c.present / total) * 100) : 0 };
-    }).sort((a, b) => a.subjectName.localeCompare(b.subjectName));
-  }, [subjectReportRecords]);
+  // Reload when the class changes while the tab is open (previously required reopening the tab).
+  useEffect(() => {
+    if (activeTab === 'subject_report' && selectedClass && classRows.length > 0) loadSubjectReport();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, selectedClass, classRows]);
 
-  const studentSubjectSummary = useMemo(() => {
-    const byStudent: Record<string, { studentName: string; present: number; absent: number; late: number }> = {};
-    subjectReportRecords.forEach(r => {
-      if (!byStudent[r.studentId]) byStudent[r.studentId] = { studentName: r.studentName || r.studentId, present: 0, absent: 0, late: 0 };
-      byStudent[r.studentId][r.status]++;
-    });
-    return Object.values(byStudent).map(s => {
-      const total = s.present + s.absent + s.late;
-      return { ...s, total, rate: total > 0 ? Math.round((s.present / total) * 100) : 0 };
-    }).sort((a, b) => b.rate - a.rate);
-  }, [subjectReportRecords]);
+  // Student × subject grid for the selected day (or all recorded dates); see buildSubjectMatrix
+  // for how duplicate records of the same lesson are collapsed.
+  const subjectMatrix = useMemo(
+    () => buildSubjectMatrix(subjectReportRecords, subjectScope === 'day' ? selectedDate : undefined),
+    [subjectReportRecords, subjectScope, selectedDate],
+  );
 
   // ── Special Lessons report: per-lesson enrollment + attendance rate ──
   const loadSpecialLessonsReport = async () => {
@@ -519,7 +525,7 @@ export default function AttendancePage() {
             </button>
             {attendanceMode !== 'daily_only' && (
               <button
-                onClick={() => { setActiveTab('subject_report'); loadSubjectReport(); }}
+                onClick={() => setActiveTab('subject_report')}
                 className={`px-4 py-2.5 rounded-xl text-sm font-semibold transition-colors ${activeTab === 'subject_report' ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
               >
                 <BarChart3 className="w-4 h-4 inline mr-1.5" />
@@ -715,63 +721,139 @@ export default function AttendancePage() {
             <div className="bg-white rounded-2xl border border-slate-200 py-16 text-center text-slate-400">No subject attendance recorded for this class yet.</div>
           ) : (
             <>
-              {/* Subject summary */}
-              <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-                <div className="p-5 border-b border-slate-100"><h3 className="font-bold text-slate-800 text-sm">By Subject</h3></div>
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
-                    <thead className="bg-slate-50 text-xs font-bold text-slate-500 uppercase tracking-wide">
-                      <tr>
-                        <th className="text-left px-5 py-3">Subject</th>
-                        <th className="text-center px-4 py-3">Present</th>
-                        <th className="text-center px-4 py-3">Absent</th>
-                        <th className="text-center px-4 py-3">Late</th>
-                        <th className="text-center px-4 py-3">Rate</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100">
-                      {subjectSummary.map(s => (
-                        <tr key={s.subjectName} className="hover:bg-slate-50">
-                          <td className="px-5 py-3 font-medium text-slate-800">{s.subjectName}</td>
-                          <td className="px-4 py-3 text-center text-emerald-700 font-semibold">{s.present}</td>
-                          <td className="px-4 py-3 text-center text-rose-600 font-semibold">{s.absent}</td>
-                          <td className="px-4 py-3 text-center text-amber-600 font-semibold">{s.late}</td>
-                          <td className="px-4 py-3 text-center font-bold text-slate-700">{s.rate}%</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+              {/* Scope: follow the date picker above, or roll every recorded date together */}
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="inline-flex rounded-xl border border-slate-200 bg-white p-1">
+                  {([
+                    { id: 'day', label: 'Selected day' },
+                    { id: 'all', label: 'All recorded dates' },
+                  ] as const).map(opt => (
+                    <button
+                      key={opt.id}
+                      onClick={() => setSubjectScope(opt.id)}
+                      className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-colors ${subjectScope === opt.id ? 'bg-indigo-600 text-white' : 'text-slate-600 hover:bg-slate-100'}`}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
                 </div>
+                <p className="text-xs text-slate-500">
+                  {subjectScope === 'day'
+                    ? new Date(selectedDate + 'T12:00:00').toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })
+                    : 'Each cell shows lessons present / lessons recorded'}
+                </p>
               </div>
 
-              {/* Per-student summary */}
-              <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-                <div className="p-5 border-b border-slate-100"><h3 className="font-bold text-slate-800 text-sm">By Student</h3></div>
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
-                    <thead className="bg-slate-50 text-xs font-bold text-slate-500 uppercase tracking-wide">
-                      <tr>
-                        <th className="text-left px-5 py-3">Student</th>
-                        <th className="text-center px-4 py-3">Present</th>
-                        <th className="text-center px-4 py-3">Absent</th>
-                        <th className="text-center px-4 py-3">Late</th>
-                        <th className="text-center px-4 py-3">Rate</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100">
-                      {studentSubjectSummary.map(s => (
-                        <tr key={s.studentName} className="hover:bg-slate-50">
-                          <td className="px-5 py-3 font-medium text-slate-800">{s.studentName}</td>
-                          <td className="px-4 py-3 text-center text-emerald-700 font-semibold">{s.present}</td>
-                          <td className="px-4 py-3 text-center text-rose-600 font-semibold">{s.absent}</td>
-                          <td className="px-4 py-3 text-center text-amber-600 font-semibold">{s.late}</td>
-                          <td className="px-4 py-3 text-center font-bold text-slate-700">{s.rate}%</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+              {subjectMatrix.lessonCount === 0 ? (
+                <div className="bg-white rounded-2xl border border-slate-200 py-16 text-center text-slate-400">
+                  No subject attendance was recorded for {selectedClass} on this date.
+                  <button onClick={() => setSubjectScope('all')} className="block mx-auto mt-2 text-xs font-bold text-indigo-600 hover:text-indigo-700">
+                    Show all recorded dates
+                  </button>
                 </div>
-              </div>
+              ) : (
+                <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm border-collapse">
+                      <thead className="bg-slate-50 text-[11px] font-bold text-slate-500 uppercase tracking-wide">
+                        <tr>
+                          <th className="sticky left-0 z-10 bg-slate-50 text-left px-5 py-3 min-w-[11rem] border-r border-slate-100">Student</th>
+                          {subjectMatrix.subjects.map(subject => (
+                            <th key={subject} className="text-center px-3 py-3 min-w-[6rem] normal-case tracking-normal font-bold">{subject}</th>
+                          ))}
+                          <th className="text-center px-4 py-3 border-l border-slate-100">Total</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {[...students].sort((a, b) => a.studentName.localeCompare(b.studentName)).map(student => {
+                          const row = subjectMatrix.cells[student.id!] ?? {};
+                          const total = subjectMatrix.totalsByStudent[student.id!];
+                          const totalLessons = total ? total.present + total.absent + total.late : 0;
+                          return (
+                            <tr key={student.id} className="hover:bg-slate-50/60">
+                              <td className="sticky left-0 z-10 bg-white px-5 py-3 font-medium text-slate-800 border-r border-slate-100 whitespace-nowrap">{student.studentName}</td>
+                              {subjectMatrix.subjects.map(subject => {
+                                const c = row[subject];
+                                if (!c) {
+                                  const enrolled = subjectEnrolment[subject];
+                                  const notTaking = enrolled && !enrolled.includes(student.id!);
+                                  return (
+                                    <td key={subject} className="px-3 py-3 text-center text-xs" title={notTaking ? 'Not enrolled in this subject' : 'No attendance recorded'}>
+                                      <span className={notTaking ? 'text-slate-300' : 'text-slate-400'}>{notTaking ? 'n/a' : '–'}</span>
+                                    </td>
+                                  );
+                                }
+                                const cellTotal = c.present + c.absent + c.late;
+                                if (subjectScope === 'all') {
+                                  const tone = c.absent > 0 ? 'bg-rose-50 text-rose-700' : c.late > 0 ? 'bg-amber-50 text-amber-700' : 'bg-emerald-50 text-emerald-700';
+                                  return (
+                                    <td key={subject} className="px-3 py-3 text-center" title={`${c.present} present, ${c.absent} absent, ${c.late} late`}>
+                                      <span className={`inline-block min-w-[2.75rem] px-2 py-0.5 rounded-lg text-xs font-bold ${tone}`}>{c.present}/{cellTotal}</span>
+                                    </td>
+                                  );
+                                }
+                                return (
+                                  <td key={subject} className="px-3 py-3 text-center">
+                                    <div className="inline-flex gap-1">
+                                      {(['present', 'absent', 'late'] as const).flatMap(status =>
+                                        Array.from({ length: c[status] }, (_, i) => (
+                                          <span
+                                            key={`${status}-${i}`}
+                                            title={status}
+                                            className={`inline-flex items-center justify-center w-7 h-6 rounded-lg text-[11px] font-bold ${
+                                              status === 'present' ? 'bg-emerald-100 text-emerald-700'
+                                              : status === 'absent' ? 'bg-rose-100 text-rose-700'
+                                              : 'bg-amber-100 text-amber-700'
+                                            }`}
+                                          >
+                                            {status === 'present' ? 'P' : status === 'absent' ? 'A' : 'L'}
+                                          </span>
+                                        ))
+                                      )}
+                                    </div>
+                                  </td>
+                                );
+                              })}
+                              <td className="px-4 py-3 text-center border-l border-slate-100 whitespace-nowrap">
+                                {total ? (
+                                  <span className={`text-xs font-bold ${total.absent > 0 ? 'text-rose-600' : 'text-emerald-700'}`}>
+                                    {total.present}/{totalLessons}
+                                  </span>
+                                ) : <span className="text-slate-300 text-xs">–</span>}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                      <tfoot className="bg-slate-50 text-xs font-semibold text-slate-600">
+                        <tr className="border-t border-slate-200">
+                          <td className="sticky left-0 z-10 bg-slate-50 px-5 py-3 border-r border-slate-100">Class total</td>
+                          {subjectMatrix.subjects.map(subject => {
+                            const t = subjectMatrix.totalsBySubject[subject];
+                            return (
+                              <td key={subject} className="px-3 py-3 text-center whitespace-nowrap">
+                                <span className="text-emerald-700">{t.present}</span>
+                                <span className="text-slate-300"> · </span>
+                                <span className={t.absent > 0 ? 'text-rose-600' : 'text-slate-400'}>{t.absent}</span>
+                                {t.late > 0 && <><span className="text-slate-300"> · </span><span className="text-amber-600">{t.late}</span></>}
+                              </td>
+                            );
+                          })}
+                          <td className="border-l border-slate-100" />
+                        </tr>
+                      </tfoot>
+                    </table>
+                  </div>
+                  <div className="px-5 py-3 border-t border-slate-100 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-slate-500">
+                    <span><span className="font-bold text-emerald-700">P</span> present</span>
+                    <span><span className="font-bold text-rose-700">A</span> absent</span>
+                    <span><span className="font-bold text-amber-700">L</span> late</span>
+                    <span><span className="text-slate-400">–</span> not recorded</span>
+                    <span><span className="text-slate-300">n/a</span> not enrolled in this subject</span>
+                    <span className="ml-auto">Class total = present · absent (· late, if any). Subjects with no attendance recorded {subjectScope === 'day' ? 'on this date ' : ''}are not shown.</span>
+                  </div>
+                </div>
+              )}
             </>
           )}
         </div>

@@ -19,6 +19,7 @@ import { useTeacherAssignments } from '../hooks/useTeacherAssignments';
 import Avatar from '../components/Avatar';
 import { ClassSelect } from '../components/ClassSelect';
 import { describeAttendanceConflicts } from '../utils/attendanceConflict';
+import AttendanceReports from './TeacherPortal/AttendanceReports';
 import {
   BookOpen, Users, MessageSquare, Plus, Send, Loader2,
   Calendar, CheckCircle2, Clock, Filter, Search,
@@ -26,7 +27,7 @@ import {
   Sparkles, FileText, Copy, ChevronDown, Star, Award,
   MapPin, Navigation, LogIn, LogOut, ShieldAlert, Lock,
   ChevronRight, Inbox, GraduationCap, Home, BookMarked, CalendarOff,
-  AlertTriangle,
+  AlertTriangle, BarChart3,
 } from 'lucide-react';
 import { initFCMForUser, onForegroundMessage, showFcmPushNotification } from '../services/notificationService';
 import ProfileHeader from './TeacherPortal/ProfileHeader';
@@ -133,6 +134,10 @@ export default function TeacherPortal() {
   // Summary of any register already on file for the selected class+date — powers the
   // "already recorded" banner so a second teacher knows before they save over it.
   const [savedAttendanceInfo, setSavedAttendanceInfo] = useState<{ count: number; lastBy?: string; lastAt?: Date } | null>(null);
+  // Which view the Attendance tab shows — Mark Attendance (the roll call below), or the
+  // same Report / Monthly views the admin Attendance page offers, scoped to this teacher's
+  // own selected class.
+  const [attendanceView, setAttendanceView] = useState<'mark' | 'report' | 'monthly'>('mark');
 
   // Subject Attendance state (only relevant when school's attendanceMode !== 'daily_only')
   const [subjectAttendanceSubject, setSubjectAttendanceSubject] = useState('');
@@ -1602,14 +1607,17 @@ export default function TeacherPortal() {
               <p className="text-slate-500 text-sm text-center max-w-sm">You can only take attendance for classes you are assigned to. Contact your admin.</p>
             </div>
           ) : (
+          <>
           <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
             <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-6">
               <div>
                 <h3 className="font-bold text-slate-900 text-lg flex items-center gap-2">
                   <ClipboardList className="w-5 h-5 text-indigo-600" />
-                  Daily Roll Call
+                  {attendanceView === 'mark' ? 'Daily Roll Call' : attendanceView === 'report' ? 'Attendance Report' : 'Monthly Attendance'}
                 </h3>
-                <p className="text-sm text-slate-500 mt-0.5">Click a status badge to cycle: Present → Absent → Late</p>
+                <p className="text-sm text-slate-500 mt-0.5">
+                  {attendanceView === 'mark' ? 'Click a status badge to cycle: Present → Absent → Late' : `For ${selectedClass || 'your class'}`}
+                </p>
               </div>
               <div className="flex flex-wrap items-center gap-3">
                 <div className="flex items-center gap-2">
@@ -1625,15 +1633,35 @@ export default function TeacherPortal() {
                     <span className="text-[10px] font-bold uppercase tracking-wide px-2 py-1 rounded-lg bg-violet-100 text-violet-700">Cover · today</span>
                   )}
                 </div>
-                <input
-                  type="date"
-                  value={attendanceDate}
-                  onChange={e => setAttendanceDate(e.target.value)}
-                  className="px-3 py-2 rounded-xl border border-slate-200 text-sm font-medium outline-none focus:ring-2 focus:ring-indigo-500"
-                />
+                {attendanceView === 'mark' && (
+                  <input
+                    type="date"
+                    value={attendanceDate}
+                    onChange={e => setAttendanceDate(e.target.value)}
+                    className="px-3 py-2 rounded-xl border border-slate-200 text-sm font-medium outline-none focus:ring-2 focus:ring-indigo-500"
+                  />
+                )}
               </div>
             </div>
 
+            <div className="inline-flex rounded-xl border border-slate-200 bg-white p-1 mb-5">
+              {([
+                { id: 'mark', label: 'Mark Attendance', Icon: ClipboardList },
+                { id: 'report', label: 'Report', Icon: BarChart3 },
+                { id: 'monthly', label: 'Monthly', Icon: Calendar },
+              ] as const).map(t => (
+                <button
+                  key={t.id}
+                  onClick={() => setAttendanceView(t.id)}
+                  className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-bold transition-colors ${attendanceView === t.id ? 'bg-indigo-600 text-white' : 'text-slate-600 hover:bg-slate-100'}`}
+                >
+                  <t.Icon className="w-3.5 h-3.5" /> {t.label}
+                </button>
+              ))}
+            </div>
+
+            {attendanceView === 'mark' && (
+            <>
             <div className="flex flex-wrap gap-2 mb-5">
               <button onClick={() => setAllStatus('present')} className="px-4 py-1.5 bg-emerald-600 text-white text-xs font-bold rounded-xl hover:bg-emerald-700 transition-colors flex items-center gap-1.5">
                 <CheckCircle2 className="w-3.5 h-3.5" /> All Present
@@ -1744,7 +1772,20 @@ export default function TeacherPortal() {
                 </div>
               </div>
             )}
+            </>
+            )}
           </div>
+          {attendanceView !== 'mark' && (
+            <AttendanceReports
+              view={attendanceView}
+              schoolId={schoolId}
+              selectedClass={selectedClass}
+              classId={myClassNameToId[selectedClass]}
+              students={students}
+              attendanceMode={attendanceMode}
+            />
+          )}
+          </>
           )}
         </div>
       )}

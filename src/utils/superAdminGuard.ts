@@ -11,6 +11,7 @@
 export const SUPER_ADMIN_EMAILS: readonly string[] = [
   'jabpa87@gmail.com',
   'bobychampion87@gmail.com',
+  'tobakin1@hotmail.com',
 ];
 
 /**

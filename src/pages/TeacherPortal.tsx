@@ -19,6 +19,7 @@ import { useTeacherAssignments } from '../hooks/useTeacherAssignments';
 import Avatar from '../components/Avatar';
 import { ClassSelect } from '../components/ClassSelect';
 import { describeAttendanceConflicts } from '../utils/attendanceConflict';
+import { gradePayload, gradeUpdatePayload, gradesToSave, subjectGradeStudents } from '../utils/gradebookSave';
 import AttendanceReports from './TeacherPortal/AttendanceReports';
 import {
   BookOpen, Users, MessageSquare, Plus, Send, Loader2,
@@ -277,6 +278,39 @@ export default function TeacherPortal() {
   const [grades, setGrades] = useState<Record<string, Grade>>({});
   const [savingGrades, setSavingGrades] = useState(false);
   const [gradeSavedIds, setGradeSavedIds] = useState<Set<string>>(new Set());
+  const gradeContext = JSON.stringify([schoolId, selectedClass, gradeSubject, gradeTerm, gradeSession]);
+  const gradeContextRef = useRef(gradeContext);
+  gradeContextRef.current = gradeContext;
+  const [loadedGradeContext, setLoadedGradeContext] = useState('');
+  const [gradeRoster, setGradeRoster] = useState<{ context: string; ids: string[] | null } | null>(null);
+  const [gradeRosterError, setGradeRosterError] = useState(false);
+  const gradeRosterContext = JSON.stringify([schoolId, selectedClass, gradeSubject]);
+  const gradeStudents = useMemo(() => gradeRoster?.context === gradeRosterContext
+    ? subjectGradeStudents(students, selectedClass, gradeRoster.ids)
+    : [], [students, gradeRoster, gradeRosterContext, selectedClass]);
+
+  useEffect(() => {
+    setGradeRosterError(false);
+    if (!schoolId || !selectedClass || !gradeSubject) return;
+    const classId = myClassNameToId[selectedClass];
+    if (!classId) return;
+    return onSnapshot(query(collection(db, 'class_subjects'),
+      where('schoolId', '==', schoolId), where('classId', '==', classId),
+      where('subjectName', '==', gradeSubject)), snap => {
+      const ids = snap.docs[0]?.data()?.enrolledStudentIds as string[] | undefined;
+      setGradeRoster({ context: gradeRosterContext, ids: ids?.length ? ids : null });
+      setGradeRosterError(false);
+    }, () => {
+      setGradeRoster(null);
+      setGradeRosterError(true);
+    });
+  }, [schoolId, selectedClass, gradeSubject, myClassNameToId, gradeRosterContext]);
+
+  // School settings arrive asynchronously. Follow their session until the teacher edits it.
+  const gradeSessionEdited = useRef(false);
+  useEffect(() => {
+    if (!gradeSessionEdited.current) setGradeSession(currentSession);
+  }, [currentSession]);
 
   // Skills state
   const [skillsTerm, setSkillsTerm] = useState<string>(terms[0] ?? TERMS[0]);
@@ -957,8 +991,11 @@ export default function TeacherPortal() {
 
   // ── Load existing grades when subject/class/term changes ──
   useEffect(() => {
-    if (activeTab !== 'grades' || students.length === 0) return;
+    setLoadedGradeContext('');
+    setGrades({});
+    if (activeTab !== 'grades' || gradeStudents.length === 0) return;
     if (!schoolId) return;
+    let cancelled = false;
     const fetchGrades = async () => {
       const q = query(
         collection(db, 'grades'),
@@ -974,7 +1011,7 @@ export default function TeacherPortal() {
         const g = { id: d.id, ...d.data() } as Grade;
         map[g.studentId] = g;
       });
-      students.forEach(s => {
+      gradeStudents.forEach(s => {
         if (!map[s.id!]) {
           map[s.id!] = {
             studentId: s.id!,
@@ -990,10 +1027,14 @@ export default function TeacherPortal() {
           };
         }
       });
-      setGrades(map);
+      if (!cancelled) {
+        setGrades(map);
+        setLoadedGradeContext(gradeContext);
+      }
     };
-    fetchGrades();
-  }, [activeTab, students, selectedClass, gradeSubject, gradeTerm, gradeSession]);
+    fetchGrades().catch(() => { if (!cancelled) toast.error('Unable to load grades. Please try again.'); });
+    return () => { cancelled = true; };
+  }, [activeTab, gradeStudents, selectedClass, gradeSubject, gradeTerm, gradeSession, schoolId, gradeContext]);
 
   const gradebookGrading = getGradingForClass(selectedClass, gradeSession);
   const gradebookMode = gradebookGrading.gradingMode;
@@ -1052,35 +1093,49 @@ export default function TeacherPortal() {
   };
 
   const handleSaveGrades = async () => {
+    if (!schoolId || gradeRosterError || loadedGradeContext !== gradeContext) return;
+    const classId = myClassNameToId[selectedClass];
+    if (!classId) { toast.error('Unable to resolve the selected class.'); return; }
+    const pending = gradesToSave(gradeStudents, grades);
+    if (!pending.length) { toast.error('Enter at least one grade before saving.'); return; }
+    if (gradebookMode === 'single_grade' && pending.some(g => !(gradebookGrading.allowedGrades ?? []).includes(g.grade))) {
+      toast.error('Choose a valid grade for this class and session.'); return;
+    }
     setSavingGrades(true);
     const tid = toast.loading('Saving grades…');
     try {
-      const classId = classes.find(c => c.name === selectedClass)?.id;
 
       const posMap: Record<string, number> = {};
       if (gradebookMode !== 'single_grade') {
-        const sorted = [...students].sort((a, b) => (grades[b.id!]?.totalScore ?? 0) - (grades[a.id!]?.totalScore ?? 0));
-        sorted.forEach((s, i) => { posMap[s.id!] = i + 1; });
+        const sorted = [...pending].sort((a, b) => (b.totalScore ?? 0) - (a.totalScore ?? 0));
+        sorted.forEach((g, i) => { posMap[g.studentId] = i + 1; });
       }
 
       const batch = writeBatch(db);
-      for (const [studentId, g] of Object.entries(grades)) {
+      const savedRecords: Record<string, Grade> = {};
+      for (const g of pending) {
+        const studentId = g.studentId;
         const withPos = {
-          ...g,
-          classId,
-          gradingMode: gradebookMode,
+          ...gradePayload(g, gradebookMode, classId, schoolId),
           ...(gradebookMode !== 'single_grade' ? { subjectPosition: posMap[studentId] || 0 } : {}),
         };
         if (g.id) {
-          batch.update(doc(db, 'grades', g.id), { ...withPos, updatedAt: serverTimestamp() });
+          batch.update(doc(db, 'grades', g.id), {
+            ...gradeUpdatePayload(g, gradebookMode, classId, schoolId),
+            ...(gradebookMode !== 'single_grade' ? { subjectPosition: posMap[studentId] || 0 } : {}),
+            updatedAt: serverTimestamp(),
+          });
+          savedRecords[studentId] = g;
         } else {
           const ref = doc(collection(db, 'grades'));
-          batch.set(ref, { ...withPos, schoolId: schoolId ?? 'main', updatedAt: serverTimestamp() });
+          batch.set(ref, { ...withPos, updatedAt: serverTimestamp() });
+          savedRecords[studentId] = { ...g, id: ref.id };
         }
       }
       await batch.commit();
-      toast.success(`Saved grades for ${Object.keys(grades).length} students!`, { id: tid });
-      setGradeSavedIds(new Set(Object.keys(grades)));
+      if (gradeContext === gradeContextRef.current) setGrades(prev => ({ ...prev, ...savedRecords }));
+      toast.success(`Saved grades for ${pending.length} students!`, { id: tid });
+      setGradeSavedIds(new Set(pending.map(g => g.studentId)));
       setTimeout(() => setGradeSavedIds(new Set()), 3000);
     } catch (e: any) {
       toast.error('Save failed: ' + (e.message || ''), { id: tid });
@@ -2142,12 +2197,12 @@ export default function TeacherPortal() {
                 className="px-3 py-2 rounded-xl border border-slate-200 text-sm font-medium outline-none focus:ring-2 focus:ring-indigo-500">
                 {terms.map(t => <option key={t}>{t}</option>)}
               </select>
-              <input value={gradeSession} onChange={e => setGradeSession(e.target.value)}
+              <input value={gradeSession} onChange={e => { gradeSessionEdited.current = true; setGradeSession(e.target.value); }}
                 className="px-3 py-2 rounded-xl border border-slate-200 text-sm font-medium outline-none focus:ring-2 focus:ring-indigo-500 w-32" placeholder="Session" />
             </div>
 
-            {students.length === 0 ? (
-              <div className="text-center py-12 text-slate-400">No students in {selectedClass}.</div>
+            {gradeStudents.length === 0 || loadedGradeContext !== gradeContext ? (
+              <div className="text-center py-12 text-slate-400">{gradeRosterError ? 'Unable to load subject enrolment. Please try again.' : gradeRoster?.context !== gradeRosterContext ? 'Loading subject enrolment…' : gradeStudents.length === 0 ? `No students enrolled in ${gradeSubject} in ${selectedClass}.` : 'Loading grades…'}</div>
             ) : (
               <>
                 <div className="overflow-x-auto rounded-xl border border-slate-100">
@@ -2166,7 +2221,7 @@ export default function TeacherPortal() {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-50">
-                      {students.map((s, i) => {
+                      {gradeStudents.map((s, i) => {
                         const g = grades[s.id!];
                         const saved = gradeSavedIds.has(s.id!);
                         const displayGrade = gradebookMode === 'single_grade'

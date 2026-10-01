@@ -11,6 +11,7 @@ import { exportGradesCsv } from '../services/dataExport/csvModules';
 import { useClassSelectOptions, useSchool } from '../components/SchoolContext';
 import { useSchoolId } from '../hooks/useSchoolId';
 import { useAuth } from '../components/FirebaseProvider';
+import { gradePayload, gradeUpdatePayload, gradesToSave } from '../utils/gradebookSave';
 
 // Student, [score column(s)], Grade, [Pos.], Comment, AI — column count varies by grading mode.
 function gradebookColCount(mode: GradingMode): number {
@@ -144,44 +145,58 @@ export default function Gradebook() {
   };
 
   const saveAll = async () => {
+    if (!schoolId || loading) return;
+    const classId = classes.find(c => c.name === selectedClass)?.id;
+    if (!classId) { toast.error('Unable to resolve the selected class.'); return; }
+    const pending = gradesToSave(students, grades);
+    if (!pending.length) { toast.error('Enter at least one grade before saving.'); return; }
+    if (gradingMode === 'single_grade' && pending.some(g => !(grading.allowedGrades ?? []).includes(g.grade))) {
+      toast.error('Choose a valid grade for this class and session.'); return;
+    }
     setSavingAll(true);
     const tid = toast.loading('Saving grades…');
     try {
-      const classId = classes.find(c => c.name === selectedClass)?.id;
 
       // Position ranking doesn't apply to single_grade mode (no score to rank by, and the
       // school configuring it explicitly doesn't want position at all).
       const positionMap: Record<string, number> = {};
       if (gradingMode !== 'single_grade') {
-        const sortedStudents = [...students].sort((a, b) => {
-          const ga = grades[a.id!]?.totalScore ?? 0;
-          const gb = grades[b.id!]?.totalScore ?? 0;
+        const sortedStudents = [...pending].sort((a, b) => {
+          const ga = a.totalScore ?? 0;
+          const gb = b.totalScore ?? 0;
           return gb - ga;
         });
-        sortedStudents.forEach((s, i) => { positionMap[s.id!] = i + 1; });
+        sortedStudents.forEach((g, i) => { positionMap[g.studentId] = i + 1; });
       }
 
       const batch = writeBatch(db);
-      for (const [studentId, gradeData] of Object.entries(grades)) {
+      const savedRecords: Record<string, Grade> = {};
+      for (const gradeData of pending) {
+        const studentId = gradeData.studentId;
         const withPos = {
-          ...gradeData,
-          classId,
-          gradingMode,
+          ...gradePayload(gradeData, gradingMode, classId, schoolId),
           ...(gradingMode !== 'single_grade' ? { subjectPosition: positionMap[studentId] || 0 } : {}),
         };
         if (gradeData.id) {
           const ref = doc(db, 'grades', gradeData.id);
-          batch.update(ref, { ...withPos, updatedAt: serverTimestamp() });
+          batch.update(ref, {
+            ...gradeUpdatePayload(gradeData, gradingMode, classId, schoolId),
+            ...(gradingMode !== 'single_grade' ? { subjectPosition: positionMap[studentId] || 0 } : {}),
+            updatedAt: serverTimestamp(),
+          });
+          savedRecords[studentId] = gradeData;
         } else {
           const ref = doc(collection(db, 'grades'));
           batch.set(ref, { ...withPos, schoolId, updatedAt: serverTimestamp() });
+          savedRecords[studentId] = { ...gradeData, id: ref.id };
         }
       }
       await batch.commit();
+      setGrades(prev => ({ ...prev, ...savedRecords }));
 
       // Notify each affected student's parent — one per student per save,
       // not per field, so re-saving doesn't spam the same parent repeatedly.
-      const notifiedStudentIds = Object.keys(grades);
+      const notifiedStudentIds = pending.map(g => g.studentId);
       await Promise.all(notifiedStudentIds.map(studentId => {
         const student = students.find(s => s.id === studentId);
         if (!student?.guardianUserId) return null;
@@ -196,8 +211,8 @@ export default function Gradebook() {
         }).catch(() => {/* non-fatal — grade itself already saved */});
       }));
 
-      toast.success(`Grades saved for ${Object.keys(grades).length} students!`, { id: tid });
-      setSavedIds(new Set(Object.keys(grades)));
+      toast.success(`Grades saved for ${pending.length} students!`, { id: tid });
+      setSavedIds(new Set(notifiedStudentIds));
       setTimeout(() => setSavedIds(new Set()), 3000);
     } catch (e: any) {
       toast.error('Failed to save: ' + (e.message || 'Unknown error'), { id: tid });

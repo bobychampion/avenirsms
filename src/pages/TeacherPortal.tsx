@@ -1,3 +1,4 @@
+import { attendanceStatusLabel, type AttendanceStatus } from '../utils/attendanceStatus';
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { db, handleFirestoreError, OperationType } from '../firebase';
@@ -45,7 +46,7 @@ interface AttendanceRow {
   studentName: string;
   studentIdCode: string;
   photoUrl?: string;
-  status: 'present' | 'absent' | 'late';
+  status: AttendanceStatus;
 }
 
 export default function TeacherPortal() {
@@ -126,10 +127,10 @@ export default function TeacherPortal() {
   // Attendance state
   const [attendanceDate, setAttendanceDate] = useState(new Date().toISOString().split('T')[0]);
   // Status as last read from Firestore for the current class+date (re-fetched only when class/date changes).
-  const [savedAttendance, setSavedAttendance] = useState<Record<string, 'present' | 'absent' | 'late'>>({});
+  const [savedAttendance, setSavedAttendance] = useState<Record<string, AttendanceStatus>>({});
   // Status the teacher has clicked locally but not yet saved. Never touched by snapshot churn —
   // only cleared when the class or date selection itself changes.
-  const [localAttendanceEdits, setLocalAttendanceEdits] = useState<Record<string, 'present' | 'absent' | 'late'>>({});
+  const [localAttendanceEdits, setLocalAttendanceEdits] = useState<Record<string, AttendanceStatus>>({});
   const [savingAttendance, setSavingAttendance] = useState(false);
   const [attendanceSaved, setAttendanceSaved] = useState(false);
   // Summary of any register already on file for the selected class+date — powers the
@@ -147,11 +148,11 @@ export default function TeacherPortal() {
   // cleared whenever the teacher manually changes the class/subject dropdowns instead.
   const [subjectAttendanceTimetablePeriodId, setSubjectAttendanceTimetablePeriodId] = useState<string | undefined>(undefined);
   // Daily attendance status for the same class+date — used to preload/inherit defaults.
-  const [dailyInheritMap, setDailyInheritMap] = useState<Record<string, 'present' | 'absent' | 'late'>>({});
+  const [dailyInheritMap, setDailyInheritMap] = useState<Record<string, AttendanceStatus>>({});
   // Subject attendance as last read from Firestore for the current class+subject+date.
-  const [savedSubjectAttendance, setSavedSubjectAttendance] = useState<Record<string, { status: 'present' | 'absent' | 'late'; inheritedFromDaily: boolean }>>({});
+  const [savedSubjectAttendance, setSavedSubjectAttendance] = useState<Record<string, { status: AttendanceStatus; inheritedFromDaily: boolean }>>({});
   // Subject attendance edits the teacher has made locally but not yet saved.
-  const [localSubjectAttendanceEdits, setLocalSubjectAttendanceEdits] = useState<Record<string, 'present' | 'absent' | 'late'>>({});
+  const [localSubjectAttendanceEdits, setLocalSubjectAttendanceEdits] = useState<Record<string, AttendanceStatus>>({});
   const [savingSubjectAttendance, setSavingSubjectAttendance] = useState(false);
   const [subjectAttendanceSaved, setSubjectAttendanceSaved] = useState(false);
   // Elective roster: `class_subjects.enrolledStudentIds` for the selected class+subject.
@@ -164,8 +165,8 @@ export default function TeacherPortal() {
   const [selectedSpecialLessonId, setSelectedSpecialLessonId] = useState('');
   const [specialLessonDate, setSpecialLessonDate] = useState(new Date().toISOString().split('T')[0]);
   const [specialLessonRoster, setSpecialLessonRoster] = useState<Student[]>([]);
-  const [savedSpecialLessonAttendance, setSavedSpecialLessonAttendance] = useState<Record<string, 'present' | 'absent' | 'late'>>({});
-  const [localSpecialLessonEdits, setLocalSpecialLessonEdits] = useState<Record<string, 'present' | 'absent' | 'late'>>({});
+  const [savedSpecialLessonAttendance, setSavedSpecialLessonAttendance] = useState<Record<string, AttendanceStatus>>({});
+  const [localSpecialLessonEdits, setLocalSpecialLessonEdits] = useState<Record<string, AttendanceStatus>>({});
   const [savingSpecialLessonAttendance, setSavingSpecialLessonAttendance] = useState(false);
   const [specialLessonAttendanceSaved, setSpecialLessonAttendanceSaved] = useState(false);
 
@@ -677,7 +678,7 @@ export default function TeacherPortal() {
         where('date', '==', attendanceDate)
       );
       const snap = await getDocs(q);
-      const existingMap: Record<string, 'present' | 'absent' | 'late'> = {};
+      const existingMap: Record<string, AttendanceStatus> = {};
       let lastBy: string | undefined;
       let lastAt: Date | undefined;
       snap.docs.forEach(d => {
@@ -710,13 +711,13 @@ export default function TeacherPortal() {
 
   const cycleStatus = (studentId: string) => {
     const current = attendanceRows.find(r => r.studentId === studentId)?.status ?? 'present';
-    const next: Record<string, 'present' | 'absent' | 'late'> = {
-      present: 'absent', absent: 'late', late: 'present'
+    const next: Record<string, AttendanceStatus> = {
+      present: 'absent', absent: 'late', late: 'school_trip', school_trip: 'present'
     };
     setLocalAttendanceEdits(prev => ({ ...prev, [studentId]: next[current] }));
   };
 
-  const setAllStatus = (status: 'present' | 'absent') => {
+  const setAllStatus = (status: AttendanceStatus) => {
     setLocalAttendanceEdits(() => Object.fromEntries(attendanceRows.map(r => [r.studentId, status])));
   };
 
@@ -805,7 +806,7 @@ export default function TeacherPortal() {
         getDocs(query(collection(db, 'subjectAttendance'), ...subjectConstraints)),
       ]);
       if (cancelled) return;
-      const existing: Record<string, { status: 'present' | 'absent' | 'late'; inheritedFromDaily: boolean }> = {};
+      const existing: Record<string, { status: AttendanceStatus; inheritedFromDaily: boolean }> = {};
       subjectSnap.docs.forEach(d => {
         const data = d.data() as SubjectAttendance;
         existing[data.studentId] = { status: data.status, inheritedFromDaily: data.inheritedFromDaily };
@@ -863,7 +864,7 @@ export default function TeacherPortal() {
 
   const cycleSubjectAttendanceStatus = (studentId: string) => {
     const current = subjectAttendanceRows.find(r => r.studentId === studentId)?.status ?? 'present';
-    const next: Record<string, 'present' | 'absent' | 'late'> = { present: 'absent', absent: 'late', late: 'present' };
+    const next: Record<string, AttendanceStatus> = { present: 'absent', absent: 'late', late: 'school_trip', school_trip: 'present' };
     setLocalSubjectAttendanceEdits(prev => ({ ...prev, [studentId]: next[current] }));
   };
 
@@ -930,7 +931,7 @@ export default function TeacherPortal() {
         where('specialLessonId', '==', selectedSpecialLessonId),
         where('attendanceDate', '==', specialLessonDate),
       ));
-      const existing: Record<string, 'present' | 'absent' | 'late'> = {};
+      const existing: Record<string, AttendanceStatus> = {};
       attSnap.docs.forEach(d => {
         const data = d.data();
         existing[data.studentId] = data.status;
@@ -955,7 +956,7 @@ export default function TeacherPortal() {
 
   const cycleSpecialLessonStatus = (studentId: string) => {
     const current = specialLessonRows.find(r => r.studentId === studentId)?.status ?? 'present';
-    const next: Record<string, 'present' | 'absent' | 'late'> = { present: 'absent', absent: 'late', late: 'present' };
+    const next: Record<string, AttendanceStatus> = { present: 'absent', absent: 'late', late: 'school_trip', school_trip: 'present' };
     setLocalSpecialLessonEdits(prev => ({ ...prev, [studentId]: next[current] }));
   };
 
@@ -1440,6 +1441,7 @@ export default function TeacherPortal() {
   const isAssignedToSelectedClass = myAssignedClasses.includes(selectedClass);
 
   const statusColor = (s: string) =>
+    s === 'school_trip' ? 'bg-blue-50 text-blue-700 border-blue-200' :
     s === 'present' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' :
     s === 'absent' ? 'bg-rose-50 text-rose-700 border-rose-200' :
     'bg-amber-50 text-amber-700 border-amber-200';
@@ -1671,7 +1673,7 @@ export default function TeacherPortal() {
                   {attendanceView === 'mark' ? 'Daily Roll Call' : attendanceView === 'report' ? 'Attendance Report' : 'Monthly Attendance'}
                 </h3>
                 <p className="text-sm text-slate-500 mt-0.5">
-                  {attendanceView === 'mark' ? 'Click a status badge to cycle: Present → Absent → Late' : `For ${selectedClass || 'your class'}`}
+                  {attendanceView === 'mark' ? 'Click a status badge to cycle: Present → Absent → Late → School trip' : `For ${selectedClass || 'your class'}`}
                 </p>
               </div>
               <div className="flex flex-wrap items-center gap-3">
@@ -1724,6 +1726,9 @@ export default function TeacherPortal() {
               <button onClick={() => setAllStatus('absent')} className="px-4 py-1.5 bg-rose-600 text-white text-xs font-bold rounded-xl hover:bg-rose-700 transition-colors flex items-center gap-1.5">
                 <X className="w-3.5 h-3.5" /> All Absent
               </button>
+              <button onClick={() => setAllStatus('school_trip')} className="px-4 py-1.5 bg-blue-600 text-white text-xs font-bold rounded-xl hover:bg-blue-700 transition-colors flex items-center gap-1.5">
+                <Users className="w-3.5 h-3.5" /> All School Trip
+              </button>
               {attendanceSaved && (
                 <span className="px-4 py-1.5 bg-emerald-50 text-emerald-700 text-xs font-bold rounded-xl border border-emerald-200 flex items-center gap-1.5">
                   <CheckCircle2 className="w-3.5 h-3.5" /> Saved!
@@ -1755,6 +1760,7 @@ export default function TeacherPortal() {
                   <span className="text-emerald-600">{attendanceRows.filter(r => r.status === 'present').length} Present</span>
                   <span className="text-rose-600">{attendanceRows.filter(r => r.status === 'absent').length} Absent</span>
                   <span className="text-amber-600">{attendanceRows.filter(r => r.status === 'late').length} Late</span>
+                  <span className="text-blue-600">{attendanceRows.filter(r => r.status === 'school_trip').length} School trip</span>
                   <span className="text-slate-400">/ {attendanceRows.length} Total</span>
                 </div>
 
@@ -1806,7 +1812,7 @@ export default function TeacherPortal() {
                               onClick={() => cycleStatus(row.studentId)}
                               className={`px-3 py-1.5 rounded-xl text-xs font-bold uppercase border cursor-pointer transition-all hover:scale-105 ${statusColor(row.status)}`}
                             >
-                              {row.status}
+                              {attendanceStatusLabel(row.status)}
                             </button>
                           </td>
                         </tr>
@@ -1927,6 +1933,7 @@ export default function TeacherPortal() {
                   <span className="text-emerald-600">{subjectAttendanceRows.filter(r => r.status === 'present').length} Present</span>
                   <span className="text-rose-600">{subjectAttendanceRows.filter(r => r.status === 'absent').length} Absent</span>
                   <span className="text-amber-600">{subjectAttendanceRows.filter(r => r.status === 'late').length} Late</span>
+                  <span className="text-blue-600">{subjectAttendanceRows.filter(r => r.status === 'school_trip').length} School trip</span>
                   <span className="text-slate-400">/ {subjectAttendanceRows.length} Total</span>
                 </div>
 
@@ -1965,7 +1972,7 @@ export default function TeacherPortal() {
                               onClick={() => cycleSubjectAttendanceStatus(row.studentId)}
                               className={`px-3 py-1.5 rounded-xl text-xs font-bold uppercase border cursor-pointer transition-all hover:scale-105 ${statusColor(row.status)}`}
                             >
-                              {row.status}
+                              {attendanceStatusLabel(row.status)}
                             </button>
                           </td>
                         </tr>
@@ -2044,6 +2051,7 @@ export default function TeacherPortal() {
                   <span className="text-emerald-600">{specialLessonRows.filter(r => r.status === 'present').length} Present</span>
                   <span className="text-rose-600">{specialLessonRows.filter(r => r.status === 'absent').length} Absent</span>
                   <span className="text-amber-600">{specialLessonRows.filter(r => r.status === 'late').length} Late</span>
+                  <span className="text-blue-600">{specialLessonRows.filter(r => r.status === 'school_trip').length} School trip</span>
                   <span className="text-slate-400">/ {specialLessonRows.length} Total</span>
                 </div>
 
@@ -2066,7 +2074,7 @@ export default function TeacherPortal() {
                               onClick={() => cycleSpecialLessonStatus(row.studentId)}
                               className={`px-3 py-1.5 rounded-xl text-xs font-bold uppercase border cursor-pointer transition-all hover:scale-105 ${statusColor(row.status)}`}
                             >
-                              {row.status}
+                              {attendanceStatusLabel(row.status)}
                             </button>
                           </td>
                         </tr>

@@ -1,3 +1,4 @@
+import { ATTENDANCE_STATUSES, attendanceStatusLabel, type AttendanceStatus } from '../../utils/attendanceStatus';
 import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import {
   collection, query, where, onSnapshot, getDocs
@@ -15,7 +16,7 @@ import { useTeacherAssignments } from '../../hooks/useTeacherAssignments';
 import { ClassSelect } from '../../components/ClassSelect';
 import { describeAttendanceConflicts } from '../../utils/attendanceConflict';
 
-type AttStatus = 'present' | 'absent' | 'late';
+type AttStatus = AttendanceStatus;
 
 interface AttendanceRow {
   studentId: string;
@@ -27,6 +28,7 @@ interface AttendanceRow {
 const STATUS_CONFIG: Record<AttStatus, { label: string; color: string; icon: React.ElementType }> = {
   present: { label: 'P', color: 'bg-emerald-500 text-white', icon: CheckCircle2 },
   late: { label: 'L', color: 'bg-amber-400 text-white', icon: Clock },
+  school_trip: { label: 'ST', color: 'bg-blue-500 text-white', icon: Users },
   absent: { label: 'A', color: 'bg-rose-500 text-white', icon: XCircle },
 };
 
@@ -202,7 +204,7 @@ export default function TeacherMobileAttendance() {
 
         {/* Bulk mark */}
         <div className="flex gap-2">
-          {(['present', 'late', 'absent'] as AttStatus[]).map(s => (
+          {ATTENDANCE_STATUSES.map(s => (
             <button
               key={s}
               onClick={() => markAll(s)}
@@ -211,7 +213,7 @@ export default function TeacherMobileAttendance() {
                 STATUS_CONFIG[s].color
               )}
             >
-              All {s.charAt(0).toUpperCase() + s.slice(1)}
+              All {attendanceStatusLabel(s)}
             </button>
           ))}
         </div>
@@ -238,6 +240,7 @@ export default function TeacherMobileAttendance() {
                 row.status === 'present' ? 'bg-emerald-500' :
                 row.status === 'late' ? 'bg-amber-400' :
                 row.status === 'absent' ? 'bg-rose-500' :
+                row.status === 'school_trip' ? 'bg-blue-500' :
                 'bg-slate-300'
               )}>
                 {row.studentName?.[0]?.toUpperCase() ?? '?'}
@@ -245,10 +248,13 @@ export default function TeacherMobileAttendance() {
               <p className="flex-1 text-sm font-semibold text-slate-800 truncate">{row.studentName}</p>
               {/* Status buttons */}
               <div className="flex gap-1.5">
-                {(['present', 'late', 'absent'] as AttStatus[]).map(s => (
+                {ATTENDANCE_STATUSES.map(s => (
                   <button
                     key={s}
                     onClick={() => mark(row.studentId, s)}
+                    title={attendanceStatusLabel(s)}
+                    aria-label={`${row.studentName}: ${attendanceStatusLabel(s)}`}
+                    aria-pressed={row.status === s}
                     className={cn(
                       'w-8 h-8 rounded-lg text-xs font-bold transition-all active:scale-90',
                       row.status === s

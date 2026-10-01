@@ -100,6 +100,7 @@ export default function TeacherOverview({
               present={data.attendance.present}
               absent={data.attendance.absent}
               late={data.attendance.late}
+              school_trip={data.attendance.school_trip}
               belowThreshold={data.belowThresholdStudents}
             />
           </div>

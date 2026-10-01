@@ -1,3 +1,4 @@
+import { attendanceStatusLabel } from '../../utils/attendanceStatus';
 import React, { useEffect, useState } from 'react';
 import {
   collection, query, where, orderBy, limit, onSnapshot
@@ -21,12 +22,14 @@ const ATT_COLOR: Record<string, string> = {
   present: 'bg-emerald-500',
   absent: 'bg-rose-500',
   late: 'bg-amber-400',
+  school_trip: 'bg-blue-500',
 };
 
 const ATT_ICON: Record<string, React.ElementType> = {
   present: CheckCircle2,
   absent: XCircle,
   late: Clock,
+  school_trip: BookOpen,
 };
 
 export default function ParentMobileHome() {
@@ -132,8 +135,9 @@ export default function ParentMobileHome() {
     return () => unsub();
   }, []);
 
-  const presentDays = Object.values(weekAttendance).filter(a => a.status === 'present').length;
-  const absentDays = Object.values(weekAttendance).filter(a => a.status === 'absent').length;
+  const presentDays = (Object.values(weekAttendance) as Attendance[]).filter(a => a.status === 'present').length;
+  const schoolTripDays = (Object.values(weekAttendance) as Attendance[]).filter(a => a.status === 'school_trip').length;
+  const absentDays = (Object.values(weekAttendance) as Attendance[]).filter(a => a.status === 'absent').length;
 
   return (
     <MobileShell role="parent">
@@ -185,6 +189,7 @@ export default function ParentMobileHome() {
               <div className="ml-auto flex gap-3 text-center">
                 <div>
                   <p className="text-lg font-bold text-emerald-600">{presentDays}</p>
+                  {schoolTripDays > 0 && <p className="text-xs font-semibold text-blue-600">{schoolTripDays} on school trip</p>}
                   <p className="text-[10px] text-slate-500">Present</p>
                 </div>
                 <div>
@@ -206,7 +211,7 @@ export default function ParentMobileHome() {
                     const isToday = dayISO === format(new Date(), 'yyyy-MM-dd');
                     const Icon = record ? ATT_ICON[record.status] : null;
                     return (
-                      <div key={dayISO} className="flex flex-col items-center gap-1">
+                      <div key={dayISO} title={record ? attendanceStatusLabel(record.status) : 'No record'} className="flex flex-col items-center gap-1">
                         <span className={cn('text-[10px] font-semibold', isToday ? 'text-sky-600' : 'text-slate-400')}>
                           {dayLabel}
                         </span>
@@ -224,7 +229,7 @@ export default function ParentMobileHome() {
                           )}
                         </div>
                         <span className="text-[10px] text-slate-400 capitalize">
-                          {record ? record.status.charAt(0).toUpperCase() : '–'}
+                          {record ? record.status === 'school_trip' ? 'ST' : record.status.charAt(0).toUpperCase() : '–'}
                         </span>
                       </div>
                     );

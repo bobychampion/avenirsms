@@ -1,3 +1,4 @@
+import type { AttendanceStatus } from '../utils/attendanceStatus';
 import {
   collection,
   doc,
@@ -124,7 +125,7 @@ export async function generateStudentId(schoolId: string = 'main'): Promise<stri
   }
 }
 
-type DailyAttStatus = 'present' | 'absent' | 'late';
+type DailyAttStatus = AttendanceStatus;
 
 /** A row the caller is about to change that someone else already changed since the page loaded. */
 export interface AttendanceConflict {
@@ -237,14 +238,14 @@ export async function fetchDailyAttendanceMap(
   className: string,
   date: string,
   schoolId?: string | null
-): Promise<Record<string, 'present' | 'absent' | 'late'>> {
+): Promise<Record<string, AttendanceStatus>> {
   const constraints: QueryConstraint[] = [
     where('class', '==', className),
     where('date', '==', date),
   ];
   if (schoolId) constraints.push(where('schoolId', '==', schoolId));
   const snap = await getDocs(query(collection(db, 'attendance'), ...constraints));
-  const map: Record<string, 'present' | 'absent' | 'late'> = {};
+  const map: Record<string, AttendanceStatus> = {};
   snap.docs.forEach(d => {
     const data = d.data();
     map[data.studentId] = data.status;
@@ -268,7 +269,7 @@ export async function batchUpsertSubjectAttendance(
     academicSession: string;
     term: string;
     attendanceDate: string;
-    status: 'present' | 'absent' | 'late';
+    status: AttendanceStatus;
     inheritedFromDaily: boolean;
     recordedBy: string;
   }[],
@@ -325,7 +326,7 @@ export async function batchUpsertSpecialLessonAttendance(
     specialLessonId: string;
     studentId: string;
     attendanceDate: string;
-    status: 'present' | 'absent' | 'late';
+    status: AttendanceStatus;
     recordedBy: string;
   }[],
   schoolId?: string | null
@@ -379,8 +380,9 @@ export async function getAttendanceSummary(studentId: string, schoolId?: string 
   const present = records.filter((r: any) => r.status === 'present').length;
   const absent = records.filter((r: any) => r.status === 'absent').length;
   const late = records.filter((r: any) => r.status === 'late').length;
-  const rate = total > 0 ? Math.round((present / total) * 100) : 0;
-  return { total, present, absent, late, rate };
+  const school_trip = records.filter((r: any) => r.status === 'school_trip').length;
+  const rate = total > 0 ? Math.round(((present + school_trip) / total) * 100) : 0;
+  return { total, present, absent, late, school_trip, rate };
 }
 
 /**

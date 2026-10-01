@@ -1,4 +1,5 @@
-type Status = 'present' | 'absent' | 'late';
+import type { AttendanceStatus } from './attendanceStatus';
+type Status = AttendanceStatus;
 
 export interface SubjectAttendanceRow {
   studentId: string;
@@ -10,7 +11,7 @@ export interface SubjectAttendanceRow {
   recordedAt?: { toMillis?: () => number } | null;
 }
 
-export interface StatusCounts { present: number; absent: number; late: number }
+export interface StatusCounts { present: number; absent: number; late: number; school_trip: number }
 
 export interface SubjectMatrix {
   /** Subjects that have at least one lesson in scope, alphabetical. */
@@ -67,7 +68,7 @@ export function buildSubjectMatrix(rows: SubjectAttendanceRow[], date?: string):
   const cells: SubjectMatrix['cells'] = {};
   const totalsBySubject: SubjectMatrix['totalsBySubject'] = {};
   const totalsByStudent: SubjectMatrix['totalsByStudent'] = {};
-  const empty = (): StatusCounts => ({ present: 0, absent: 0, late: 0 });
+  const empty = (): StatusCounts => ({ present: 0, absent: 0, late: 0, school_trip: 0 });
   lessons.forEach(r => {
     ((cells[r.studentId] ??= {})[r.subjectName] ??= empty())[r.status]++;
     (totalsBySubject[r.subjectName] ??= empty())[r.status]++;

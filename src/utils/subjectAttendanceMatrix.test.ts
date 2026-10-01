@@ -7,6 +7,18 @@ const row = (over: Partial<SubjectAttendanceRow>): SubjectAttendanceRow => ({
 });
 
 describe('buildSubjectMatrix', () => {
+  it('keeps school trips separate when counting actual subject lessons', () => {
+    const m = buildSubjectMatrix([
+      row({ status: 'school_trip', timetablePeriodId: 'p1' }),
+      row({ status: 'present', timetablePeriodId: 'p2' }),
+      row({ status: 'absent', studentId: 's2', timetablePeriodId: 'p1' }),
+    ]);
+    expect(m.cells.s1.Maths).toEqual({ present: 1, absent: 0, late: 0, school_trip: 1 });
+    expect(m.totalsByStudent.s1.school_trip).toBe(1);
+    expect(m.totalsBySubject.Maths.school_trip).toBe(1);
+    expect(m.lessonCount).toBe(3);
+  });
+
   it('scopes to one day when a date is given', () => {
     const m = buildSubjectMatrix([
       row({ attendanceDate: '2026-09-16' }),
@@ -21,8 +33,8 @@ describe('buildSubjectMatrix', () => {
       row({ attendanceDate: '2026-09-16' }),
       row({ attendanceDate: '2026-09-17', status: 'absent' }),
     ]);
-    expect(m.cells.s1.Maths).toEqual({ present: 1, absent: 1, late: 0 });
-    expect(m.totalsByStudent.s1).toEqual({ present: 1, absent: 1, late: 0 });
+    expect(m.cells.s1.Maths).toEqual({ present: 1, absent: 1, late: 0, school_trip: 0 });
+    expect(m.totalsByStudent.s1).toEqual({ present: 1, absent: 1, late: 0, school_trip: 0 });
   });
 
   it('collapses a period-less duplicate of the same lesson, keeping the newest', () => {
@@ -31,7 +43,7 @@ describe('buildSubjectMatrix', () => {
       row({ status: 'absent', recordedAt: at(2) }),
     ], '2026-09-17');
     expect(m.lessonCount).toBe(1);
-    expect(m.cells.s1.Maths).toEqual({ present: 0, absent: 1, late: 0 });
+    expect(m.cells.s1.Maths).toEqual({ present: 0, absent: 1, late: 0, school_trip: 0 });
   });
 
   it('drops a period-less row when a period-tagged row exists for the same day', () => {
@@ -48,7 +60,7 @@ describe('buildSubjectMatrix', () => {
       row({ timetablePeriodId: 'p2', status: 'absent' }),
     ], '2026-09-17');
     expect(m.lessonCount).toBe(2);
-    expect(m.cells.s1.Maths).toEqual({ present: 1, absent: 1, late: 0 });
+    expect(m.cells.s1.Maths).toEqual({ present: 1, absent: 1, late: 0, school_trip: 0 });
   });
 
   it('does not merge different students or subjects', () => {

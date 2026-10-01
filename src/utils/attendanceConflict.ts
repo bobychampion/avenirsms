@@ -1,6 +1,7 @@
+import type { AttendanceStatus } from './attendanceStatus';
 import type { AttendanceConflict } from '../services/firestoreService';
 
-type DailyStatus = 'present' | 'absent' | 'late';
+type DailyStatus = AttendanceStatus;
 
 /**
  * Reconciles a day's official daily-attendance status against that day's per-subject
@@ -22,8 +23,12 @@ export function effectiveDailyStatus(
   dailyStatus: DailyStatus | undefined,
   subjectRecords: { status: DailyStatus; inheritedFromDaily: boolean }[] | undefined,
 ): DailyStatus | undefined {
+  // The official trip mark describes a supervised school activity; lesson marks
+  // must not hide that status in reports, even when they record attendance separately.
+  if (dailyStatus === 'school_trip') return dailyStatus;
   const confirmed = subjectRecords?.filter(r => !r.inheritedFromDaily) ?? [];
   if (confirmed.length > 0 && confirmed.every(r => r.status === 'present')) return 'present';
+  if (!dailyStatus && confirmed.length > 0 && confirmed.every(r => r.status === 'school_trip')) return 'school_trip';
   return dailyStatus;
 }
 

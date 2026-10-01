@@ -1,3 +1,4 @@
+import type { AttendanceStatus } from '../utils/attendanceStatus';
 import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { db, handleFirestoreError, OperationType } from '../firebase';
@@ -325,9 +326,9 @@ export default function StudentProfile() {
       const attSnap = await getDocs(query(collection(db, 'attendance'), where('schoolId', '==', schoolId!), where('studentId', '==', student.id)));
       const dailyRecords = attSnap.docs.map(d => {
         const data = d.data();
-        return { studentId: student.id!, date: data.date as string, status: data.status as 'present' | 'absent' | 'late' };
+        return { studentId: student.id!, date: data.date as string, status: data.status as AttendanceStatus };
       });
-      let subjectRecords: { studentId: string; attendanceDate: string; status: 'present' | 'absent' | 'late'; inheritedFromDaily: boolean }[] = [];
+      let subjectRecords: { studentId: string; attendanceDate: string; status: AttendanceStatus; inheritedFromDaily: boolean }[] = [];
       if (attendanceMode !== 'daily_only') {
         const subjSnap = await getDocs(query(collection(db, 'subjectAttendance'), where('schoolId', '==', schoolId!), where('studentId', '==', student.id)));
         subjectRecords = subjSnap.docs.map(d => {
@@ -337,7 +338,7 @@ export default function StudentProfile() {
       }
       const effectiveDates = Object.values(buildEffectiveAttendanceByStudent(dailyRecords, subjectRecords)[student.id!] ?? {});
       const total = effectiveDates.length;
-      const present = effectiveDates.filter(s => s === 'present').length;
+      const present = effectiveDates.filter(s => s === 'present' || s === 'school_trip').length;
       const attendanceRate = total > 0 ? Math.round((present / total) * 100) : 100;
 
       // Fetch skills

@@ -1,3 +1,4 @@
+import type { AttendanceStatus } from '../../../utils/attendanceStatus';
 import { useEffect, useState } from 'react';
 import { collection, getDocs, query, where } from 'firebase/firestore';
 import { db } from '../../../firebase';
@@ -8,7 +9,7 @@ const SKILL_VALUE: Record<SkillRating, number> = { E: 5, VG: 4, G: 3, F: 2, P: 1
 interface AttendanceSummary {
   present: number;
   absent: number;
-  late: number;
+  school_trip: number; late: number;
   total: number;
   rate: number;
 }
@@ -64,7 +65,7 @@ export function useTeacherOverviewData(params: {
   const { schoolId, selectedClass, subjectsForClass, students, currentTerm, currentSession } = params;
 
   const [loading, setLoading] = useState(true);
-  const [attendance, setAttendance] = useState<AttendanceSummary>({ present: 0, absent: 0, late: 0, total: 0, rate: 0 });
+  const [attendance, setAttendance] = useState<AttendanceSummary>({ present: 0, absent: 0, school_trip: 0, late: 0, total: 0, rate: 0 });
   const [belowThresholdStudents, setBelowThresholdStudents] = useState<StudentAttendance[]>([]);
   const [classAverage, setClassAverage] = useState(0);
   const [schoolAverage, setSchoolAverage] = useState<number | null>(null);
@@ -107,19 +108,20 @@ export function useTeacherOverviewData(params: {
       if (cancelled) return;
 
       // ── Attendance ──────────────────────────────────────────────────────────
-      const byStudent: Record<string, { present: number; absent: number; late: number; total: number }> = {};
-      let present = 0, absent = 0, late = 0;
+      const byStudent: Record<string, { present: number; absent: number; school_trip: number; late: number; total: number }> = {};
+      let present = 0, absent = 0, late = 0, school_trip = 0;
       attendanceSnap.docs.forEach(d => {
-        const data = d.data() as { studentId: string; status: 'present' | 'absent' | 'late' };
-        if (!byStudent[data.studentId]) byStudent[data.studentId] = { present: 0, absent: 0, late: 0, total: 0 };
+        const data = d.data() as { studentId: string; status: AttendanceStatus };
+        if (!byStudent[data.studentId]) byStudent[data.studentId] = { present: 0, absent: 0, school_trip: 0, late: 0, total: 0 };
         byStudent[data.studentId].total++;
         byStudent[data.studentId][data.status]++;
         if (data.status === 'present') present++;
         else if (data.status === 'absent') absent++;
-        else late++;
+        else if (data.status === 'late') late++;
+        else if (data.status === 'school_trip') school_trip++;
       });
-      const total = present + absent + late;
-      setAttendance({ present, absent, late, total, rate: total > 0 ? Math.round((present / total) * 100) : 0 });
+      const total = present + absent + late + school_trip;
+      setAttendance({ present, absent, late, school_trip, total, rate: total > 0 ? Math.round(((present + school_trip) / total) * 100) : 0 });
 
       const studentNameById: Record<string, string> = {};
       students.forEach(s => { studentNameById[s.id!] = s.studentName; });
@@ -127,7 +129,7 @@ export function useTeacherOverviewData(params: {
         .map(([studentId, s]) => ({
           studentId,
           studentName: studentNameById[studentId] || 'Unknown',
-          rate: s.total > 0 ? Math.round((s.present / s.total) * 100) : 0,
+          rate: s.total > 0 ? Math.round(((s.present + s.school_trip) / s.total) * 100) : 0,
         }))
         .filter(s => s.rate < ATTENDANCE_THRESHOLD)
         .sort((a, b) => a.rate - b.rate);

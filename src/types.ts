@@ -1,3 +1,4 @@
+import type { AttendanceStatus } from './utils/attendanceStatus';
 import type { TimetablePeriodSlot } from './utils/timetablePeriods';
 
 export type ApplicationStatus = 'pending' | 'reviewing' | 'approved' | 'rejected';
@@ -398,7 +399,7 @@ export interface Attendance {
   id?: string;
   studentId: string;
   date: string;
-  status: 'present' | 'absent' | 'late';
+  status: AttendanceStatus;
   class: string;
   recordedBy: string;
 }
@@ -423,7 +424,7 @@ export interface SubjectAttendance {
   academicSession: string;
   term: string;
   attendanceDate: string;
-  status: 'present' | 'absent' | 'late';
+  status: AttendanceStatus;
   inheritedFromDaily: boolean;
   recordedBy: string;
   recordedAt?: any;
@@ -468,7 +469,7 @@ export interface SpecialLessonAttendance {
   specialLessonId: string;
   studentId: string;
   attendanceDate: string;
-  status: 'present' | 'absent' | 'late';
+  status: AttendanceStatus;
   recordedBy: string;
   recordedAt?: any;
 }

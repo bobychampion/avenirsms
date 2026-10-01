@@ -442,8 +442,8 @@ export async function importAttendanceFromRows(
       continue;
     }
     const status = (row.status?.trim().toLowerCase() || 'present') as Attendance['status'];
-    if (!['present', 'absent', 'late'].includes(status)) {
-      results.push({ row: i + 2, studentId: row.studentId, status: 'error', message: 'status must be present, absent, or late' });
+    if (!['present', 'absent', 'late', 'school_trip'].includes(status)) {
+      results.push({ row: i + 2, studentId: row.studentId, status: 'error', message: 'status must be present, absent, late, or school_trip' });
       continue;
     }
     try {

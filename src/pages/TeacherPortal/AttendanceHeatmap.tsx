@@ -11,6 +11,7 @@ interface AttendanceHeatmapProps {
   present: number;
   absent: number;
   late: number;
+  school_trip: number;
   belowThreshold: StudentAttendance[];
 }
 
@@ -20,15 +21,16 @@ function rateColor(rate: number) {
   return 'bg-rose-500';
 }
 
-export default function AttendanceHeatmap({ present, absent, late, belowThreshold }: AttendanceHeatmapProps) {
+export default function AttendanceHeatmap({ present, absent, late, school_trip, belowThreshold }: AttendanceHeatmapProps) {
   return (
     <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5">
       <h3 className="text-sm font-bold text-slate-900 mb-3">Attendance Intelligence</h3>
 
-      <div className="flex gap-4 text-xs font-bold mb-4">
+      <div className="flex flex-wrap gap-4 text-xs font-bold mb-4">
         <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-emerald-500" />{present} Present</span>
         <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-amber-400" />{late} Late</span>
         <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-rose-500" />{absent} Absent</span>
+        <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-blue-500" />{school_trip} School trip</span>
       </div>
 
       <p className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-2">Below 75% Threshold</p>

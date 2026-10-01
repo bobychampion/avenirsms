@@ -1,3 +1,4 @@
+import type { AttendanceStatus } from '../utils/attendanceStatus';
 import React, { useState, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { db, handleFirestoreError, OperationType } from '../firebase';
@@ -222,7 +223,7 @@ export default function AdminDashboard() {
   const [classEnrollment, setClassEnrollment] = useState<{ name: string; students: number }[]>([]);
   const [divisionEnrollment, setDivisionEnrollment] = useState<{ Primary: number; Secondary: number }>({ Primary: 0, Secondary: 0 });
   const [revenueByMonth, setRevenueByMonth] = useState<{ month: string; revenue: number; expenses: number }[]>([]);
-  const [attendanceByDay, setAttendanceByDay] = useState<{ date: string; present: number; absent: number; late: number }[]>([]);
+  const [attendanceByDay, setAttendanceByDay] = useState<{ date: string; present: number; absent: number; school_trip: number; late: number }[]>([]);
   const [loading, setLoading] = useState(true);
   const [statsLoading, setStatsLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<'overview' | 'today' | 'academic' | 'finance' | 'admissions'>('overview');
@@ -234,7 +235,7 @@ export default function AdminDashboard() {
   const [geofenceEnabled, setGeofenceEnabled] = useState(false);
   const [liveNow, setLiveNow] = useState(new Date());
   const [teacherList, setTeacherList] = useState<{ uid: string; displayName: string }[]>([]);
-  const [todayAttendance, setTodayAttendance] = useState<{ class: string; present: number; absent: number; late: number }[]>([]);
+  const [todayAttendance, setTodayAttendance] = useState<{ class: string; present: number; absent: number; school_trip: number; late: number }[]>([]);
 
   // Notification refs — persist across renders without causing re-renders
   const mountedAtRef   = useRef(Date.now());
@@ -325,20 +326,20 @@ export default function AdminDashboard() {
       const dailyRecords = todayDailyDocs.map(d => {
         const data = d.data();
         classById[data.studentId] = data.class;
-        return { studentId: data.studentId as string, date: data.date as string, status: data.status as 'present' | 'absent' | 'late' };
+        return { studentId: data.studentId as string, date: data.date as string, status: data.status as AttendanceStatus };
       });
       const subjectRecords = todaySubjectDocs.map(d => {
         const data = d.data();
         if (!classById[data.studentId]) classById[data.studentId] = data.className;
-        return { studentId: data.studentId as string, attendanceDate: data.attendanceDate as string, status: data.status as 'present' | 'absent' | 'late', inheritedFromDaily: !!data.inheritedFromDaily };
+        return { studentId: data.studentId as string, attendanceDate: data.attendanceDate as string, status: data.status as AttendanceStatus, inheritedFromDaily: !!data.inheritedFromDaily };
       });
       const effectiveByStudent = buildEffectiveAttendanceByStudent(dailyRecords, subjectRecords);
-      const byClass: Record<string, { present: number; absent: number; late: number }> = {};
+      const byClass: Record<string, { present: number; absent: number; school_trip: number; late: number }> = {};
       Object.entries(effectiveByStudent).forEach(([studentId, byDate]) => {
         const cls = classById[studentId];
         const status = byDate[today];
         if (!cls || !status) return;
-        if (!byClass[cls]) byClass[cls] = { present: 0, absent: 0, late: 0 };
+        if (!byClass[cls]) byClass[cls] = { present: 0, absent: 0, school_trip: 0, late: 0 };
         byClass[cls][status]++;
       });
       setTodayAttendance(
@@ -418,15 +419,15 @@ export default function AdminDashboard() {
       // so this KPI never disagrees with what parents see per child.
       const dailyRecords = attendanceSnap.docs.map(d => {
         const data = d.data();
-        return { studentId: data.studentId as string, date: data.date as string, status: data.status as 'present' | 'absent' | 'late' };
+        return { studentId: data.studentId as string, date: data.date as string, status: data.status as AttendanceStatus };
       });
       const subjectRecords = subjectAttendanceSnap.docs.map((d: any) => {
         const data = d.data();
-        return { studentId: data.studentId as string, attendanceDate: data.attendanceDate as string, status: data.status as 'present' | 'absent' | 'late', inheritedFromDaily: !!data.inheritedFromDaily };
+        return { studentId: data.studentId as string, attendanceDate: data.attendanceDate as string, status: data.status as AttendanceStatus, inheritedFromDaily: !!data.inheritedFromDaily };
       });
       const effectiveValues = Object.values(buildEffectiveAttendanceByStudent(dailyRecords, subjectRecords)).flatMap(byDate => Object.values(byDate));
       const attTotal = effectiveValues.length;
-      const attPresent = effectiveValues.filter(s => s === 'present').length;
+      const attPresent = effectiveValues.filter(s => s === 'present' || s === 'school_trip').length;
       setAttendanceRate(attTotal > 0 ? Math.round((attPresent / attTotal) * 100) : 0);
 
       // Pending leaves
@@ -479,13 +480,14 @@ export default function AdminDashboard() {
       );
 
       // Attendance by day (last 7 days)
-      const dayMap: Record<string, { present: number; absent: number; late: number }> = {};
+      const dayMap: Record<string, { present: number; absent: number; school_trip: number; late: number }> = {};
       attendanceSnap.docs.forEach(d => {
         const date = d.data().date;
         if (date) {
-          if (!dayMap[date]) dayMap[date] = { present: 0, absent: 0, late: 0 };
+          if (!dayMap[date]) dayMap[date] = { present: 0, absent: 0, school_trip: 0, late: 0 };
           const st = d.data().status;
-          if (st === 'present') dayMap[date].present++;
+          if (st === 'school_trip') dayMap[date].school_trip++;
+          else if (st === 'present') dayMap[date].present++;
           else if (st === 'absent') dayMap[date].absent++;
           else if (st === 'late') dayMap[date].late++;
         }
@@ -1057,8 +1059,9 @@ export default function AdminDashboard() {
         const totalPresent = todayAttendance.reduce((s, r) => s + r.present, 0);
         const totalAbsent  = todayAttendance.reduce((s, r) => s + r.absent, 0);
         const totalLate    = todayAttendance.reduce((s, r) => s + r.late, 0);
-        const totalMarked  = totalPresent + totalAbsent + totalLate;
-        const presentPct   = totalMarked ? Math.round((totalPresent / totalMarked) * 100) : null;
+        const totalSchoolTrip = todayAttendance.reduce((s, r) => s + r.school_trip, 0);
+        const totalMarked  = totalPresent + totalAbsent + totalLate + totalSchoolTrip;
+        const presentPct   = totalMarked ? Math.round(((totalPresent + totalSchoolTrip) / totalMarked) * 100) : null;
 
         return (
           <div className="space-y-5">
@@ -1082,7 +1085,7 @@ export default function AdminDashboard() {
               {[
                 { label: 'Classes Active',  value: activeCount,         sub: `${scheduledCount} upcoming`,    color: 'emerald' },
                 { label: 'Staff In',        value: `${checkedInCount}/${staffRows.length}`, sub: geofenceEnabled ? 'GPS verified' : 'No geo-fence set', color: 'indigo' },
-                { label: 'Students Present',value: presentPct !== null ? `${presentPct}%` : '—', sub: `${totalPresent} of ${totalMarked} marked`, color: 'blue' },
+                { label: 'Attendance Today',value: presentPct !== null ? `${presentPct}%` : '—', sub: `${totalPresent + totalSchoolTrip} of ${totalMarked} attended (${totalSchoolTrip} on school trip)`, color: 'blue' },
                 { label: 'Absent Today',    value: totalAbsent,          sub: `${totalLate} late`,             color: 'rose' },
               ].map(k => (
                 <div key={k.label} className={`bg-white rounded-xl border border-slate-200 p-4 shadow-sm`}>
@@ -1228,19 +1231,21 @@ export default function AdminDashboard() {
                         <th className="text-center px-3 py-2 font-semibold text-emerald-600">Present</th>
                         <th className="text-center px-3 py-2 font-semibold text-rose-500">Absent</th>
                         <th className="text-center px-3 py-2 font-semibold text-amber-500">Late</th>
+                        <th className="text-center px-3 py-2 font-semibold text-blue-500">School trip</th>
                         <th className="text-right px-4 py-2 font-semibold text-slate-500">Rate</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
                       {todayAttendance.map(row => {
-                        const total = row.present + row.absent + row.late;
-                        const rate = total ? Math.round((row.present / total) * 100) : 0;
+                        const total = row.present + row.absent + row.late + row.school_trip;
+                        const rate = total ? Math.round(((row.present + row.school_trip) / total) * 100) : 0;
                         return (
                           <tr key={row.class} className="hover:bg-slate-50">
                             <td className="px-4 py-2 font-medium text-slate-700">{row.class}</td>
                             <td className="text-center px-3 py-2 text-emerald-700 font-semibold">{row.present}</td>
                             <td className="text-center px-3 py-2 text-rose-600 font-semibold">{row.absent}</td>
                             <td className="text-center px-3 py-2 text-amber-600 font-semibold">{row.late}</td>
+                            <td className="text-center px-3 py-2 text-blue-600 font-semibold">{row.school_trip}</td>
                             <td className="text-right px-4 py-2">
                               <span className={`font-bold ${rate >= 80 ? 'text-emerald-600' : rate >= 60 ? 'text-amber-600' : 'text-rose-600'}`}>
                                 {rate}%
@@ -1256,6 +1261,7 @@ export default function AdminDashboard() {
                         <td className="text-center px-3 py-2 font-bold text-emerald-700">{totalPresent}</td>
                         <td className="text-center px-3 py-2 font-bold text-rose-600">{totalAbsent}</td>
                         <td className="text-center px-3 py-2 font-bold text-amber-600">{totalLate}</td>
+                        <td className="text-center px-3 py-2 font-bold text-blue-600">{totalSchoolTrip}</td>
                         <td className="text-right px-4 py-2 font-bold text-slate-700">
                           {presentPct !== null ? `${presentPct}%` : '—'}
                         </td>
@@ -1380,6 +1386,7 @@ export default function AdminDashboard() {
                   <Legend wrapperStyle={{ fontSize: 11 }} />
                   <Bar dataKey="present" stackId="a" fill="#10b981" radius={[0, 0, 0, 0]} name="Present" />
                   <Bar dataKey="late" stackId="a" fill="#f59e0b" name="Late" />
+                  <Bar dataKey="school_trip" stackId="a" fill="#3b82f6" name="School trip" />
                   <Bar dataKey="absent" stackId="a" fill="#ef4444" radius={[3, 3, 0, 0]} name="Absent" />
                 </BarChart>
               </ResponsiveContainer>

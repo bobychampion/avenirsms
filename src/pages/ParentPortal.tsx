@@ -1,3 +1,4 @@
+import { countsAsAttended, attendanceStatusLabel, type AttendanceStatus } from '../utils/attendanceStatus';
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { db, handleFirestoreError, OperationType } from '../firebase';
@@ -405,7 +406,7 @@ export default function ParentPortal() {
   // admin-side screens use, so parents and admins never see two different numbers.
   const effectiveAttendanceByDate = React.useMemo(() => {
     if (!selectedChild?.id) return {};
-    const daily = attendance.map(a => ({ studentId: selectedChild.id!, date: a.date, status: a.status as 'present' | 'absent' | 'late' }));
+    const daily = attendance.map(a => ({ studentId: selectedChild.id!, date: a.date, status: a.status as AttendanceStatus }));
     const byStudent = buildEffectiveAttendanceByStudent(daily, subjectAttendanceHistory);
     return byStudent[selectedChild.id] ?? {};
   }, [attendance, subjectAttendanceHistory, selectedChild?.id]);
@@ -529,7 +530,8 @@ export default function ParentPortal() {
   const effectiveAttendanceValues = Object.values(effectiveAttendanceByDate);
   const presentCount = effectiveAttendanceValues.filter(s => s === 'present').length;
   const absentCount = effectiveAttendanceValues.filter(s => s === 'absent').length;
-  const attendanceRate = effectiveAttendanceValues.length > 0 ? Math.round((presentCount / effectiveAttendanceValues.length) * 100) : 0;
+  const attendedCount = effectiveAttendanceValues.filter(countsAsAttended).length;
+  const attendanceRate = effectiveAttendanceValues.length > 0 ? Math.round((attendedCount / effectiveAttendanceValues.length) * 100) : 0;
   const unpaidInvoices = invoices.filter(i => i.status !== 'paid');
   const unreadNotifs = notifications.filter(n => !n.read).length;
   const unreadMsgs = messages.filter(m => m.senderId !== user?.uid && !m.read).length;
@@ -907,8 +909,8 @@ export default function ParentPortal() {
         const days = Array.from({ length: daysInMonth }, (_, i) => i + 1);
 
         // date string → status lookup for this month, reconciled against subject attendance
-        const dateMap: Record<string, 'present' | 'absent' | 'late'> = {};
-        (Object.entries(effectiveAttendanceByDate) as [string, 'present' | 'absent' | 'late'][]).forEach(([date, status]) => {
+        const dateMap: Record<string, AttendanceStatus> = {};
+        (Object.entries(effectiveAttendanceByDate) as [string, AttendanceStatus][]).forEach(([date, status]) => {
           if (date.startsWith(displayMonth)) dateMap[date] = status;
         });
 
@@ -928,12 +930,14 @@ export default function ParentPortal() {
         const absentCount  = days.filter(d => dateMap[dateStr(d)] === 'absent').length;
         const lateCount    = days.filter(d => dateMap[dateStr(d)] === 'late').length;
         const recordedDays = days.filter(d => !!dateMap[dateStr(d)]).length;
-        const monthRate    = recordedDays > 0 ? Math.round((presentCount / recordedDays) * 100) : 0;
+        const schoolTripCount = days.filter(d => dateMap[dateStr(d)] === 'school_trip').length;
+        const monthRate    = recordedDays > 0 ? Math.round(((presentCount + schoolTripCount) / recordedDays) * 100) : 0;
 
         const dotClass = (status: string | undefined) => {
           if (status === 'present') return 'bg-emerald-400';
           if (status === 'absent')  return 'bg-rose-300';
           if (status === 'late')    return 'bg-amber-300';
+          if (status === 'school_trip') return 'bg-blue-300';
           return 'bg-slate-200';
         };
 
@@ -967,6 +971,7 @@ export default function ParentPortal() {
                     { label: 'Present',   dot: 'bg-emerald-400' },
                     { label: 'Absent',    dot: 'bg-rose-300'    },
                     { label: 'Late',      dot: 'bg-amber-300'   },
+                    { label: 'School trip', dot: 'bg-blue-300' },
                     { label: 'No record', dot: 'bg-slate-200'   },
                   ].map(l => (
                     <span key={l.label} className="flex items-center gap-1.5 font-medium">
@@ -1045,7 +1050,7 @@ export default function ParentPortal() {
                                   ? <span className="text-rose-400">·</span>
                                   : st === 'late'
                                     ? <span className="text-amber-400">·</span>
-                                    : null}
+                                    : st === 'school_trip' ? <span className="text-blue-500" title="School trip">ST</span> : null}
                             </td>
                           );
                         })}
@@ -1076,8 +1081,8 @@ export default function ParentPortal() {
                         <span className="text-sm font-medium text-slate-700">{sa.subjectName}</span>
                         <span className={`text-xs font-bold uppercase px-2 py-0.5 rounded-full ${
                           sa.status === 'present' ? 'bg-emerald-100 text-emerald-700' :
-                          sa.status === 'absent' ? 'bg-rose-100 text-rose-700' : 'bg-amber-100 text-amber-700'
-                        }`}>{sa.status}</span>
+                          sa.status === 'absent' ? 'bg-rose-100 text-rose-700' : sa.status === 'school_trip' ? 'bg-blue-100 text-blue-700' : 'bg-amber-100 text-amber-700'
+                        }`}>{attendanceStatusLabel(sa.status)}</span>
                       </div>
                     ))}
                   </div>
@@ -1087,11 +1092,12 @@ export default function ParentPortal() {
 
             {/* ── Summary stat cards ── */}
             {recordedDays > 0 && (
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
                 {[
                   { label: 'Present',         value: presentCount,  dot: 'bg-emerald-400', textColor: 'text-emerald-600' },
                   { label: 'Absent',          value: absentCount,   dot: 'bg-rose-300',    textColor: 'text-rose-500'    },
                   { label: 'Late',            value: lateCount,     dot: 'bg-amber-300',   textColor: 'text-amber-500'   },
+                  { label: 'School trip', value: schoolTripCount, dot: 'bg-blue-300', textColor: 'text-blue-600' },
                   { label: 'Attendance Rate', value: `${monthRate}%`, dot: '',
                     textColor: monthRate >= 75 ? 'text-emerald-600' : monthRate >= 50 ? 'text-amber-500' : 'text-rose-500' },
                 ].map(s => (
@@ -1133,7 +1139,7 @@ export default function ParentPortal() {
               const history = specialLessonAttendanceHistory
                 .filter(a => a.specialLessonId === lesson.id)
                 .sort((a, b) => b.attendanceDate.localeCompare(a.attendanceDate));
-              const present = history.filter(a => a.status === 'present').length;
+              const present = history.filter(a => countsAsAttended(a.status)).length;
               const rate = history.length > 0 ? Math.round((present / history.length) * 100) : 0;
               return (
                 <div key={lesson.id} className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5">
@@ -1153,7 +1159,7 @@ export default function ParentPortal() {
                     <div className="flex flex-wrap gap-1.5 mt-3">
                       {history.slice(0, 12).map(a => (
                         <span key={a.id} title={`${a.attendanceDate}: ${a.status}`}
-                          className={`w-3 h-3 rounded-full ${a.status === 'present' ? 'bg-emerald-400' : a.status === 'absent' ? 'bg-rose-300' : 'bg-amber-300'}`} />
+                          className={`w-3 h-3 rounded-full ${a.status === 'present' ? 'bg-emerald-400' : a.status === 'absent' ? 'bg-rose-300' : a.status === 'school_trip' ? 'bg-blue-300' : 'bg-amber-300'}`} />
                       ))}
                     </div>
                   )}

@@ -1,10 +1,11 @@
+import { assessmentDocumentId } from '../../utils/assessmentSessions';
 /**
  * Per-module CSV schemas, parse helpers, and export utilities.
  */
 import Papa from 'papaparse';
 import * as XLSX from 'xlsx';
 import {
-  collection, query, where, getDocs, addDoc, serverTimestamp, writeBatch, doc,
+  collection, query, where, getDocs, addDoc, serverTimestamp, writeBatch, doc, runTransaction,
 } from 'firebase/firestore';
 import { db } from '../../firebase';
 import { Student, Staff, Grade, Attendance, SubjectAttendance, SpecialLessonAttendance, calculateGrade, GradingMode, GradingSystem, CustomGradeScale } from '../../types';
@@ -259,24 +260,35 @@ export function exportStaffCsv(staff: Staff[]): void {
   );
 }
 
+export function exportEarlyDeparturesCsv(records: import('../../utils/earlyDeparture').EarlyDeparture[]): void {
+  downloadCsv(`early_departures_${new Date().toISOString().slice(0, 10)}.csv`,
+    ['studentId', 'studentName', 'class', 'date', 'departureTime', 'reason', 'notes', 'lesson', 'recordedBy', 'recordedAt'],
+    records.map(r => [r.studentId, r.studentName, r.class, r.date, r.departureTime, r.reason, r.notes, r.lesson, r.recordedBy,
+      r.recordedAt?.toDate ? r.recordedAt.toDate().toISOString() : '']));
+}
+
+export function exportAssessmentGradesCsv(records: (import('../../utils/assessmentSessions').AssessmentGrade & { studentName?: string })[]): void {
+  exportGradesCsv(records);
+}
+
 // ─── Grades ──────────────────────────────────────────────────────────────────
 
 export const GRADE_CSV_HEADERS = [
   'studentId', 'studentName', 'class', 'subject', 'term', 'session',
   'caScore', 'examScore', 'totalScore', 'grade', 'teacherNotes',
-  'classId', 'gradingMode',
+  'classId', 'gradingMode', 'assessmentId', 'assessmentName', 'assessmentDate',
 ] as const;
 
-export type GradeCsvRow = Record<(typeof GRADE_CSV_HEADERS)[number], string>;
+export type GradeCsvRow = Record<Exclude<(typeof GRADE_CSV_HEADERS)[number], 'assessmentId' | 'assessmentName' | 'assessmentDate'>, string> & Partial<Record<'assessmentId' | 'assessmentName' | 'assessmentDate', string>>;
 
-export function gradeToCsvRow(g: Grade & { studentName?: string }): string[] {
+export function gradeToCsvRow(g: Grade & { studentName?: string; assessmentId?: string; assessmentName?: string; assessmentDate?: string }): string[] {
   return [
     g.studentId ?? '', g.studentName ?? '', g.class ?? '', g.subject ?? '',
     g.term ?? '', g.session ?? '',
     // Empty (not '0') when genuinely absent — e.g. single_grade mode has no CA/Exam/Total.
     g.caScore != null ? String(g.caScore) : '', g.examScore != null ? String(g.examScore) : '',
     g.totalScore != null ? String(g.totalScore) : '', g.grade ?? '', g.teacherNotes ?? '',
-    g.classId ?? '', g.gradingMode ?? 'ca_exam',
+    g.classId ?? '', g.gradingMode ?? 'ca_exam', g.assessmentId ?? '', g.assessmentName ?? '', g.assessmentDate ?? '',
   ];
 }
 
@@ -323,9 +335,14 @@ export async function importGradesFromRows(
     const classId = row.classId?.trim() || classesByName?.[className];
 
     let payload: Record<string, unknown>;
-    if (grading?.gradingMode === 'single_grade') {
+    const mode = grading?.gradingMode ?? (row.gradingMode?.trim() || 'ca_exam');
+    if (!['single_grade', 'score_percentage', 'ca_exam', 'custom'].includes(mode)) {
+      results.push({ row: i + 2, studentId: row.studentId, status: 'error', message: 'Unknown grading mode' });
+      continue;
+    }
+    if (mode === 'single_grade') {
       const grade = row.grade?.trim() || '';
-      if (!grade || !(grading.allowedGrades ?? []).includes(grade)) {
+      if ((!grade && !row.assessmentId?.trim()) || (grade && grading && !(grading.allowedGrades ?? []).includes(grade))) {
         results.push({ row: i + 2, studentId: row.studentId, status: 'error', message: `grade "${grade}" not in the allowed list for ${className || 'this class'}` });
         continue;
       }
@@ -335,25 +352,42 @@ export async function importGradesFromRows(
       }
       payload = { grade, classId, gradingMode: 'single_grade' as GradingMode };
     } else {
-      const caScore = Math.min(parseFloat(row.caScore) || 0, 40);
-      const examScore = Math.min(parseFloat(row.examScore) || 0, 60);
-      const totalScore = caScore + examScore;
+      const caScore = Math.min(Math.max(parseFloat(row.caScore) || 0, 0), 40);
+      const examScore = Math.min(Math.max(parseFloat(row.examScore) || 0, 0), 60);
+      const totalScore = mode === 'score_percentage' ? Math.min(100, Math.max(0, parseFloat(row.totalScore) || 0)) : caScore + examScore;
       const grade = row.grade?.trim() || (grading ? calculateGrade(totalScore, grading.gradingSystem, grading.customGradingScale) : calculateGrade(totalScore));
-      payload = { caScore, examScore, totalScore, grade, classId: classId ?? null, gradingMode: (grading?.gradingMode ?? 'ca_exam') as GradingMode };
+      const draft = row.assessmentId?.trim() && !row.grade?.trim() && !row.caScore?.trim() && !row.examScore?.trim() && !row.totalScore?.trim();
+      payload = draft ? { grade: '', classId: classId ?? null, gradingMode: mode as GradingMode }
+        : { ...(mode === 'score_percentage' ? {} : { caScore, examScore }), totalScore, grade, classId: classId ?? null, gradingMode: mode as GradingMode };
     }
 
     try {
-      await addDoc(collection(db, 'grades'), {
+      const assessmentId = row.assessmentId?.trim();
+      const data = {
         studentId: row.studentId.trim(),
         subject: row.subject.trim(),
         class: className,
         term: row.term?.trim() || '1st Term',
         session,
         ...payload,
+        ...(assessmentId ? { assessmentId, assessmentName: row.assessmentName?.trim() || assessmentId, assessmentDate: row.assessmentDate?.trim() || '' } : {}),
         teacherNotes: row.teacherNotes?.trim() || (row as { teacherComment?: string }).teacherComment?.trim() || '',
         schoolId,
         updatedAt: serverTimestamp(),
-      });
+      };
+      if (assessmentId) {
+        const ref = doc(db, 'assessment_grades', assessmentDocumentId(schoolId, className, row.subject.trim(), session, assessmentId, row.studentId.trim()));
+        await runTransaction(db, async tx => {
+          const existing = await tx.get(ref);
+          const definition = await tx.get(doc(db, 'grade_assessments', assessmentDocumentId(schoolId, className, row.subject.trim(), session, assessmentId)));
+          if (definition.exists() && definition.data().term !== data.term) throw new Error('Assessment term does not match its saved definition.');
+          tx.set(ref, { ...data,
+            ...(definition.exists() ? { assessmentName: definition.data().name, assessmentDate: definition.data().date } : {}),
+            revision: (existing.data()?.revision ?? 0) + 1 });
+        });
+      } else {
+        await addDoc(collection(db, 'grades'), data);
+      }
       results.push({ row: i + 2, studentId: row.studentId, status: 'success' });
     } catch (e) {
       results.push({

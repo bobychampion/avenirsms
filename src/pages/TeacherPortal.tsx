@@ -1,3 +1,6 @@
+import AnnualAssessments from '../components/AnnualAssessments';
+import { chooseFinalAssessment } from '../utils/assessmentSessions';
+import EarlyDepartures from '../components/EarlyDepartures';
 import { attendanceStatusLabel, type AttendanceStatus } from '../utils/attendanceStatus';
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
@@ -1719,6 +1722,7 @@ export default function TeacherPortal() {
 
             {attendanceView === 'mark' && (
             <>
+            <EarlyDepartures schoolId={schoolId} className={selectedClass} date={attendanceDate} students={attendanceRows} editable />
             <div className="flex flex-wrap gap-2 mb-5">
               <button onClick={() => setAllStatus('present')} className="px-4 py-1.5 bg-emerald-600 text-white text-xs font-bold rounded-xl hover:bg-emerald-700 transition-colors flex items-center gap-1.5">
                 <CheckCircle2 className="w-3.5 h-3.5" /> All Present
@@ -2213,6 +2217,11 @@ export default function TeacherPortal() {
               <div className="text-center py-12 text-slate-400">{gradeRosterError ? 'Unable to load subject enrolment. Please try again.' : gradeRoster?.context !== gradeRosterContext ? 'Loading subject enrolment…' : gradeStudents.length === 0 ? `No students enrolled in ${gradeSubject} in ${selectedClass}.` : 'Loading grades…'}</div>
             ) : (
               <>
+                <AnnualAssessments key={`${schoolId}|${selectedClass}|${gradeSubject}|${gradeSession}`} schoolId={schoolId}
+                  className={selectedClass} classId={myClassNameToId[selectedClass]} subject={gradeSubject}
+                  session={gradeSession} term={gradeTerm as Grade['term']} students={gradeStudents} grading={gradebookGrading}
+                  onChooseFinal={(studentId, assessment) => setGrades(prev => ({ ...prev, [studentId]: chooseFinalAssessment(prev[studentId], assessment) }))} />
+                <h3 className="text-sm font-bold text-slate-700 mb-3">Final term grades — {gradeTerm}</h3>
                 <div className="overflow-x-auto rounded-xl border border-slate-100">
                   <table className="w-full text-left">
                     <thead className="bg-slate-50 text-xs font-bold text-slate-500 uppercase tracking-wide">
@@ -2293,7 +2302,7 @@ export default function TeacherPortal() {
                   <button onClick={handleSaveGrades} disabled={savingGrades}
                     className="px-6 py-3 bg-indigo-600 text-white font-bold rounded-xl hover:bg-indigo-700 transition-all disabled:opacity-50 flex items-center gap-2 shadow-lg shadow-indigo-100">
                     {savingGrades ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
-                    Save All Grades
+                    Save final grades
                   </button>
                 </div>
               </>

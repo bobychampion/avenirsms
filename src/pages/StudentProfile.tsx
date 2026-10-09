@@ -1,3 +1,5 @@
+import AssessmentHistory from '../components/AssessmentHistory';
+import EarlyDepartures from '../components/EarlyDepartures';
 import type { AttendanceStatus } from '../utils/attendanceStatus';
 import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
@@ -479,6 +481,10 @@ export default function StudentProfile() {
         </div>
       </div>
 
+      <div className="space-y-4 mb-6">
+        <AssessmentHistory schoolId={schoolId} studentId={student.id!} session={currentSession} />
+        <EarlyDepartures schoolId={schoolId} studentId={student.id!} />
+      </div>
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         <div className="lg:col-span-2 space-y-8">
           {/* Personal Information */}

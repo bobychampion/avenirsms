@@ -1,3 +1,6 @@
+import EarlyDepartures, { useEarlyDepartures } from '../../components/EarlyDepartures';
+import { departureDescription } from '../../utils/earlyDeparture';
+import { isAttendanceWeekend, attendanceDayTitle } from '../../utils/attendanceCalendar';
 import { attendanceStatusLabel, type AttendanceStatus } from '../../utils/attendanceStatus';
 import React, { useEffect, useMemo, useState } from 'react';
 import { collection, query, where, getDocs, addDoc, serverTimestamp } from 'firebase/firestore';
@@ -34,6 +37,7 @@ interface Props {
  * teacher's numbers never disagree with what an admin or parent sees for the same student.
  */
 export default function AttendanceReports({ view, schoolId, selectedClass, classId, students, attendanceMode }: Props) {
+  const { records: departureRecords } = useEarlyDepartures(schoolId, selectedClass);
   // ── Report ──────────────────────────────────────────────────────────────────
   const [reportData, setReportData] = useState<{ studentId: string; studentName: string; present: number; absent: number; late: number; school_trip: number; rate: number }[]>([]);
   const [loadingReport, setLoadingReport] = useState(false);
@@ -206,6 +210,7 @@ export default function AttendanceReports({ view, schoolId, selectedClass, class
 
   return (
     <div className="space-y-4">
+      <EarlyDepartures schoolId={schoolId} className={selectedClass} month={view === 'monthly' ? selectedMonth : undefined} />
       {view === 'report' && (
         <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
           <div className="p-5 border-b border-slate-100">
@@ -316,12 +321,14 @@ export default function AttendanceReports({ view, schoolId, selectedClass, class
                     <Users className="w-4 h-4 text-indigo-600" />
                     {selectedClass} — {new Date(year, month - 1).toLocaleString('default', { month: 'long', year: 'numeric' })}
                   </h3>
-                  <div className="flex gap-3 text-xs font-medium">
+                  <div className="flex flex-wrap gap-3 text-xs font-medium">
                     <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-emerald-200 inline-block" />Present</span>
                     <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-rose-200 inline-block" />Absent</span>
                     <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-amber-200 inline-block" />Late</span>
                     <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-blue-200 inline-block" />School trip</span>
                     <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-slate-100 inline-block" />No record</span>
+                    <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-violet-100 inline-block" />Weekend</span>
+                    <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-purple-600 inline-block" />Left early</span>
                     {attendanceMode !== 'daily_only' && (
                       <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-rose-500 inline-block" />Missed a subject lesson</span>
                     )}
@@ -333,12 +340,13 @@ export default function AttendanceReports({ view, schoolId, selectedClass, class
                       <tr className="bg-slate-50 border-b border-slate-200">
                         <th className="px-3 py-2 text-left font-bold text-slate-500 sticky left-0 bg-slate-50 z-10 min-w-[140px]">Student</th>
                         {days.map(d => (
-                          <th key={d} className="px-1 py-2 text-center font-bold text-slate-400 min-w-[28px]">{Number(d.split('-')[2])}</th>
+                          <th key={d} title={attendanceDayTitle(d)} className={`px-1 py-2 text-center font-bold min-w-[28px] ${isAttendanceWeekend(d) ? 'bg-violet-100 text-violet-700' : 'text-slate-400'}`}>{Number(d.split('-')[2])}</th>
                         ))}
                         <th className="px-3 py-2 text-center font-bold text-slate-500 min-w-[60px]">P</th>
                         <th className="px-3 py-2 text-center font-bold text-slate-500 min-w-[60px]">A</th>
                         <th className="px-3 py-2 text-center font-bold text-slate-500 min-w-[60px]">L</th>
                         <th className="px-3 py-2 text-center font-bold text-slate-500 min-w-[60px]">ST</th>
+                        <th className="px-3 py-2 text-center font-bold text-purple-700 min-w-[60px]" title="Early departures">E</th>
                         <th className="px-3 py-2 text-center font-bold text-slate-500 min-w-[60px]">%</th>
                       </tr>
                     </thead>
@@ -351,24 +359,26 @@ export default function AttendanceReports({ view, schoolId, selectedClass, class
                             const bg = st === 'present' ? 'bg-emerald-200' : st === 'absent' ? 'bg-rose-200' : st === 'late' ? 'bg-amber-200' : st === 'school_trip' ? 'bg-blue-200' : 'bg-slate-100';
                             const title = st ? attendanceStatusLabel(st) : '—';
                             const lessons = monthlyLessons[`${row.studentId}|${d}`] ?? [];
-                            const expandable = attendanceMode !== 'daily_only' && (!!st || lessons.length > 0);
+                            const departures = departureRecords.filter(r => r.studentId === row.studentId && r.date === d);
+                            const expandable = departures.length > 0 || (attendanceMode !== 'daily_only' && (!!st || lessons.length > 0));
                             if (!expandable) {
-                              return <td key={d} className="px-1 py-1.5 text-center"><span title={title} className={`inline-block w-5 h-5 rounded ${bg}`} /></td>;
+                              return <td key={d} className={`px-1 py-1.5 text-center ${isAttendanceWeekend(d) ? 'bg-violet-50' : ''}`}><span title={title} className={`inline-block w-5 h-5 rounded ${bg}`} /></td>;
                             }
                             const missed = lessons.filter(l => l.status === 'absent').length;
                             const partial = missed > 0 && st !== 'absent';
                             const isOpen = expandedCell?.studentId === row.studentId && expandedCell.date === d;
                             return (
-                              <td key={d} className={`px-1 py-1.5 text-center ${isOpen ? 'bg-indigo-50' : ''}`}>
+                              <td key={d} className={`px-1 py-1.5 text-center ${isOpen ? 'bg-indigo-50' : isAttendanceWeekend(d) ? 'bg-violet-50' : ''}`}>
                                 <button
                                   type="button"
-                                  title={`${title}${partial ? ` — missed ${missed} subject lesson${missed === 1 ? '' : 's'}` : ''} — click for subjects`}
-                                  aria-label={`${row.studentName}, ${d}: ${title}. Show subjects`}
+                                  title={`${title}${departures.length ? ` — ${departures.map(departureDescription).join('; ')}` : ''}${partial ? ` — missed ${missed} subject lesson${missed === 1 ? '' : 's'}` : ''} — click for subjects`}
+                                  aria-label={`${row.studentName}, ${d}: ${title}${departures.length ? ' — left early' : ''}. Show attendance details`}
                                   aria-expanded={isOpen}
                                   onClick={() => setExpandedCell(isOpen ? null : { studentId: row.studentId, date: d })}
                                   className={`relative inline-block w-5 h-5 rounded cursor-pointer hover:ring-2 hover:ring-indigo-300 ${bg} ${isOpen ? 'ring-2 ring-indigo-400' : ''}`}
                                 >
                                   {partial && <span className="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-rose-500 border border-white" />}
+                                  {departures.length > 0 && <span className="absolute -bottom-1 -left-1 w-2 h-2 rounded-full bg-purple-600 border border-white" />}
                                 </button>
                               </td>
                             );
@@ -377,6 +387,7 @@ export default function AttendanceReports({ view, schoolId, selectedClass, class
                           <td className="px-3 py-1.5 text-center font-bold text-rose-600">{row.absent}</td>
                           <td className="px-3 py-1.5 text-center font-bold text-amber-600">{row.late}</td>
                           <td className="px-3 py-1.5 text-center font-bold text-blue-600">{row.school_trip}</td>
+                          <td className="px-3 py-1.5 text-center font-bold text-purple-700">{departureRecords.filter(r => r.studentId === row.studentId && r.date.startsWith(selectedMonth)).length}</td>
                           <td className="px-3 py-1.5 text-center">
                             <span className={`font-bold ${row.rate >= 80 ? 'text-emerald-700' : row.rate >= 60 ? 'text-amber-600' : 'text-rose-600'}`}>{row.rate}%</span>
                           </td>
@@ -388,12 +399,13 @@ export default function AttendanceReports({ view, schoolId, selectedClass, class
                         <td className="px-3 py-2 sticky left-0 bg-slate-50 z-10">Total</td>
                         {days.map(d => {
                           const cnt = monthlyData.filter(r => r.cells[d] === 'present').length;
-                          return <td key={d} className="px-1 py-2 text-center text-[10px] text-emerald-700">{cnt > 0 ? cnt : ''}</td>;
+                          return <td key={d} className={`px-1 py-2 text-center text-[10px] text-emerald-700 ${isAttendanceWeekend(d) ? 'bg-violet-100' : ''}`}>{cnt > 0 ? cnt : ''}</td>;
                         })}
                         <td className="px-3 py-2 text-center text-emerald-700">{monthlyData.reduce((s, r) => s + r.present, 0)}</td>
                         <td className="px-3 py-2 text-center text-rose-600">{monthlyData.reduce((s, r) => s + r.absent, 0)}</td>
                         <td className="px-3 py-2 text-center text-amber-600">{monthlyData.reduce((s, r) => s + r.late, 0)}</td>
                         <td className="px-3 py-2 text-center text-blue-600">{monthlyData.reduce((s, r) => s + r.school_trip, 0)}</td>
+                        <td className="px-3 py-2 text-center text-purple-700">{departureRecords.filter(r => r.date.startsWith(selectedMonth) && monthlyData.some(row => row.studentId === r.studentId)).length}</td>
                         <td className="px-3 py-2 text-center">
                           {monthlyData.length > 0 ? Math.round(monthlyData.reduce((s, r) => s + r.rate, 0) / monthlyData.length) : 0}%
                         </td>
@@ -402,7 +414,7 @@ export default function AttendanceReports({ view, schoolId, selectedClass, class
                   </table>
                 </div>
 
-                {expandedCell && attendanceMode !== 'daily_only' && (() => {
+                {expandedCell && (() => {
                   const openRow = monthlyData.find(r => r.studentId === expandedCell.studentId);
                   if (!openRow) return null;
                   const lessons = monthlyLessons[`${expandedCell.studentId}|${expandedCell.date}`] ?? [];
@@ -425,6 +437,7 @@ export default function AttendanceReports({ view, schoolId, selectedClass, class
                           <XCircle className="w-4 h-4" />
                         </button>
                       </div>
+                      <EarlyDepartures schoolId={schoolId} studentId={expandedCell.studentId} date={expandedCell.date} />
                       {lessons.length === 0 ? (
                         <p className="text-xs text-slate-400 py-3 text-center">No per-subject records for this day — daily attendance only.</p>
                       ) : (

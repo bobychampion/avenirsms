@@ -158,8 +158,8 @@ export default function DataPortability() {
         const snap = await getDocs(query(collection(db, 'staff'), where('schoolId', '==', schoolId)));
         exportStaffCsv(snap.docs.map(d => ({ id: d.id, ...d.data() } as Staff)));
       } else if (module === 'grades') {
-        const snap = await getDocs(query(collection(db, 'grades'), where('schoolId', '==', schoolId)));
-        exportGradesCsv(snap.docs.map(d => ({ id: d.id, ...d.data() } as Grade)));
+        const snapshots = await Promise.all(['grades', 'assessment_grades'].map(name => getDocs(query(collection(db, name), where('schoolId', '==', schoolId)))));
+        exportGradesCsv(snapshots.flatMap(snap => snap.docs.map(d => ({ id: d.id, ...d.data() } as Grade))));
       } else {
         const snap = await getDocs(query(collection(db, 'attendance'), where('schoolId', '==', schoolId)));
         exportAttendanceCsv(snap.docs.map(d => ({ id: d.id, ...d.data() } as Attendance)));

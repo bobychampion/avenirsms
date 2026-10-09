@@ -40,7 +40,7 @@ export interface ImportResult {
 
 const WIPE_ORDER = [...getImportOrder([
   'assignment_submissions', 'trip_registrations', 'library_circulation',
-  'cbt_sessions', 'grades', 'attendance', 'student_skills', 'assignments',
+  'cbt_sessions', 'grades', 'grade_assessments', 'assessment_grades', 'attendance', 'attendance_departures', 'student_skills', 'assignments',
   'guardians', 'students', 'staff', 'class_subjects', 'classes', 'subjects',
   'invoices', 'fee_payments', 'expenses', 'payroll', 'leave_requests',
   'leave_entitlements', 'applications', 'promotions', 'lifecycle_events',

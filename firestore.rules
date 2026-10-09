@@ -439,6 +439,41 @@ service cloud.firestore {
                     ((isAdmin() || isTeacher()) && newDocBelongsToCallerSchool() && singleGradeValueIsValid());
     }
 
+    match /grade_assessments/{assessmentId} {
+      allow read: if isSuperAdmin() ||
+        ((isAdmin() || isTeacher()) && (resource == null || docBelongsToCallerSchool()));
+      allow create, update: if isSuperAdmin() ||
+        ((isAdmin() || isTeacher()) && newDocBelongsToCallerSchool() &&
+          (isAdmin() || request.resource.data.recordedBy == request.auth.uid) &&
+          request.resource.data.name is string && request.resource.data.name.size() > 0 &&
+          request.resource.data.term in ['1st Term', '2nd Term', '3rd Term'] &&
+          (resource == null || (request.resource.data.schoolId == resource.data.schoolId &&
+            request.resource.data.class == resource.data.class &&
+            request.resource.data.subject == resource.data.subject &&
+            request.resource.data.session == resource.data.session &&
+            request.resource.data.assessmentId == resource.data.assessmentId &&
+            request.resource.data.term == resource.data.term)));
+      allow delete: if isSuperAdmin() || (isAdmin() && docBelongsToCallerSchool());
+    }
+
+    match /assessment_grades/{assessmentGradeId} {
+      allow read: if isSuperAdmin() ||
+        ((isAdmin() || isTeacher()) && (resource == null || docBelongsToCallerSchool())) ||
+        isGuardianOfStudent(resource.data.studentId);
+      allow create, update: if isSuperAdmin() ||
+        ((isAdmin() || isTeacher()) && newDocBelongsToCallerSchool() &&
+          request.resource.data.assessmentId is string &&
+          (request.resource.data.grade == '' || singleGradeValueIsValid()) &&
+          (resource == null || (request.resource.data.schoolId == resource.data.schoolId &&
+            request.resource.data.studentId == resource.data.studentId &&
+            request.resource.data.assessmentId == resource.data.assessmentId &&
+            request.resource.data.class == resource.data.class &&
+            request.resource.data.subject == resource.data.subject &&
+            request.resource.data.session == resource.data.session &&
+            request.resource.data.term == resource.data.term)));
+      allow delete: if isSuperAdmin() || (isAdmin() && docBelongsToCallerSchool());
+    }
+
     match /student_skills/{skillId} {
       allow read: if isSuperAdmin() ||
                     (isAuthenticated() && docBelongsToCallerSchool()) ||
@@ -455,6 +490,21 @@ service cloud.firestore {
                     isGuardianOfStudent(resource.data.studentId);
       allow write: if isSuperAdmin() ||
                     ((isAdmin() || isTeacher()) && newDocBelongsToCallerSchool());
+    }
+
+    match /attendance_departures/{departureId} {
+      allow read: if isSuperAdmin() ||
+        ((isAdmin() || isTeacher()) && docBelongsToCallerSchool()) ||
+        isGuardianOfStudent(resource.data.studentId);
+      // Teachers append evidence; administrators retain backup/restore permissions.
+      allow create: if isSuperAdmin() ||
+        ((isAdmin() || isTeacher()) && newDocBelongsToCallerSchool() &&
+          (isAdmin() || request.resource.data.recordedBy == request.auth.uid) &&
+          request.resource.data.reason is string && request.resource.data.reason.size() > 0 &&
+          request.resource.data.departureTime.matches('^([01][0-9]|2[0-3]):[0-5][0-9]$') &&
+          request.resource.data.date.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$'));
+      allow update: if isSuperAdmin() || (isAdmin() && docBelongsToCallerSchool() && newDocBelongsToCallerSchool());
+      allow delete: if isSuperAdmin() || (isAdmin() && docBelongsToCallerSchool());
     }
 
     match /attendance_checkins/{checkinId} {

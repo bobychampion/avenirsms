@@ -30,7 +30,10 @@ export const COLLECTION_REGISTRY: CollectionDef[] = [
   { name: 'students', tier: 1, kind: 'collection', importOrder: 50 },
   { name: 'guardians', tier: 1, kind: 'collection', importOrder: 60 },
   { name: 'grades', tier: 1, kind: 'collection', importOrder: 70 },
+  { name: 'grade_assessments', tier: 1, kind: 'collection', importOrder: 71 },
+  { name: 'assessment_grades', tier: 1, kind: 'collection', importOrder: 72 },
   { name: 'attendance', tier: 1, kind: 'collection', importOrder: 80 },
+  { name: 'attendance_departures', tier: 1, kind: 'collection', importOrder: 81 },
   { name: 'student_skills', tier: 1, kind: 'collection', importOrder: 90 },
   { name: 'assignments', tier: 1, kind: 'collection', importOrder: 100 },
 

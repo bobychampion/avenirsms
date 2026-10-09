@@ -1,3 +1,5 @@
+import AnnualAssessments from '../components/AnnualAssessments';
+import { chooseFinalAssessment } from '../utils/assessmentSessions';
 import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { db, handleFirestoreError, OperationType } from '../firebase';
@@ -77,6 +79,8 @@ export default function Gradebook() {
   useEffect(() => {
     if (students.length === 0) { setLoading(false); return; }
     if (!schoolId) return;
+    let cancelled = false;
+    setGrades({});
     const fetchGrades = async () => {
       setLoading(true);
       const q = query(
@@ -88,6 +92,7 @@ export default function Gradebook() {
         where('session', '==', session)
       );
       const snapshot = await getDocs(q).catch(e => { handleFirestoreError(e, OperationType.LIST, 'grades'); return null; });
+      if (cancelled) return;
       if (!snapshot) { setLoading(false); return; }
       const gradeMap: Record<string, Grade> = {};
       snapshot.docs.forEach(d => {
@@ -98,7 +103,8 @@ export default function Gradebook() {
       setLoading(false);
     };
     fetchGrades();
-  }, [students, selectedSubject, selectedTerm, selectedClass, session]);
+    return () => { cancelled = true; };
+  }, [students, selectedSubject, selectedTerm, selectedClass, session, schoolId]);
 
   const emptyGrade = (studentId: string): Grade => ({
     studentId, subject: selectedSubject, class: selectedClass, term: selectedTerm, session,
@@ -130,8 +136,7 @@ export default function Gradebook() {
   };
 
   const handleNotesChange = (studentId: string, notes: string) => {
-    const current = grades[studentId];
-    if (!current) return;
+    const current = grades[studentId] || emptyGrade(studentId);
     setGrades({ ...grades, [studentId]: { ...current, teacherNotes: notes } });
   };
 
@@ -259,7 +264,7 @@ export default function Gradebook() {
                   session,
                 };
               })
-              .filter((g): g is Grade & { studentName: string } => g !== null);
+              .filter(g => g !== null);
             exportGradesCsv(rows);
           }}
           disabled={!selectedClass || students.length === 0}
@@ -292,6 +297,11 @@ export default function Gradebook() {
         </div>
       </div>
 
+      <AnnualAssessments key={`${schoolId}|${selectedClass}|${selectedSubject}|${session}`} schoolId={schoolId} className={selectedClass}
+        classId={classes.find(c => c.name === selectedClass)?.id} subject={selectedSubject} session={session}
+        term={selectedTerm} students={students.filter(s => s.currentClass === selectedClass)} grading={grading}
+        onChooseFinal={(studentId, assessment) => setGrades(prev => ({ ...prev, [studentId]: chooseFinalAssessment(prev[studentId] || emptyGrade(studentId), assessment) }))} />
+      <h2 className="text-sm font-bold text-slate-700 mb-3">Final term grades — {selectedTerm}</h2>
       {/* Table */}
       <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
         <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
@@ -305,7 +315,7 @@ export default function Gradebook() {
             className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white text-sm font-bold rounded-xl hover:bg-indigo-700 transition-all disabled:opacity-50 shadow-sm"
           >
             {savingAll ? <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" /> : <Save className="w-4 h-4" />}
-            Save All
+            Save final grades
           </button>
         </div>
         <div className="overflow-x-auto">

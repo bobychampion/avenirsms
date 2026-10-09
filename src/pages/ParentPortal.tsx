@@ -1,3 +1,5 @@
+import AssessmentHistory from '../components/AssessmentHistory';
+import EarlyDepartures from '../components/EarlyDepartures';
 import { countsAsAttended, attendanceStatusLabel, type AttendanceStatus } from '../utils/attendanceStatus';
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -803,6 +805,7 @@ export default function ParentPortal() {
       {/* ── ACADEMIC PROGRESS ── */}
       {activeTab === 'progress' && (
         <div className="space-y-6">
+          {selectedChild?.id && <AssessmentHistory key={selectedChild.id} schoolId={schoolId} studentId={selectedChild.id} session={currentSession} term={filterTerm} />}
           <div className="flex items-center gap-4">
             <label className="text-sm font-bold text-slate-500">Term:</label>
             <select value={filterTerm} onChange={e => setFilterTerm(e.target.value)}
@@ -943,6 +946,7 @@ export default function ParentPortal() {
 
         return (
           <div className="space-y-4">
+            {selectedChild?.id && <EarlyDepartures key={selectedChild.id} schoolId={schoolId} studentId={selectedChild.id} month={displayMonth} />}
 
             {/* ── Header card: class label + month picker + legend ── */}
             <div className="bg-white rounded-2xl border border-slate-200 shadow-sm px-5 py-4">
@@ -1003,7 +1007,7 @@ export default function ParentPortal() {
                           <th
                             key={d}
                             className={`w-7 py-3 text-center text-xs font-semibold select-none ${
-                              isWeekend(d) ? 'text-slate-300 bg-slate-50' : 'text-slate-400'
+                              isWeekend(d) ? 'text-violet-700 bg-violet-100' : 'text-slate-400'
                             }`}
                           >
                             {d}
@@ -1027,7 +1031,7 @@ export default function ParentPortal() {
                               key={d}
                               title={st ? `${ds}: ${st}${expandable ? ' — click for subject breakdown' : ''}` : `${ds}: no record`}
                               onClick={expandable ? () => setExpandedDay(prev => prev === ds ? null : ds) : undefined}
-                              className={`py-3 text-center ${isWeekend(d) ? 'bg-slate-50' : ''} ${expandable ? 'cursor-pointer hover:bg-indigo-50' : ''} ${expandedDay === ds ? 'bg-indigo-50 ring-2 ring-inset ring-indigo-300' : ''}`}
+                              className={`py-3 text-center ${isWeekend(d) ? 'bg-violet-50' : ''} ${expandable ? 'cursor-pointer hover:bg-indigo-50' : ''} ${expandedDay === ds ? 'bg-indigo-50 ring-2 ring-inset ring-indigo-300' : ''}`}
                             >
                               <span className={`inline-block w-4 h-4 rounded-full ${dotClass(st)}`} />
                             </td>
@@ -1043,7 +1047,7 @@ export default function ParentPortal() {
                         {days.map(d => {
                           const st = dateMap[dateStr(d)];
                           return (
-                            <td key={d} className={`py-2 text-center text-xs font-bold ${isWeekend(d) ? 'bg-slate-50' : ''}`}>
+                            <td key={d} className={`py-2 text-center text-xs font-bold ${isWeekend(d) ? 'bg-violet-50' : ''}`}>
                               {st === 'present'
                                 ? <span className="text-emerald-500">1</span>
                                 : st === 'absent'

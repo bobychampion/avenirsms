@@ -1,3 +1,4 @@
+import EarlyDepartures from '../../components/EarlyDepartures';
 import { ATTENDANCE_STATUSES, attendanceStatusLabel, type AttendanceStatus } from '../../utils/attendanceStatus';
 import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import {
@@ -90,10 +91,10 @@ export default function TeacherMobileAttendance() {
   // Effective rows: local (unsaved) tap wins, else the last value read from Firestore, else unmarked.
   const rows: AttendanceRow[] = useMemo(() =>
     students.filter(s => s.currentClass === selectedClass).map(s => ({
-      studentId: s.studentId || s.id,
+      studentId: s.id,
       studentName: s.studentName,
       currentClass: s.currentClass,
-      status: localEdits[s.studentId || s.id] ?? savedRecords[s.studentId || s.id] ?? null,
+      status: localEdits[s.id] ?? savedRecords[s.id] ?? null,
     })), [students, selectedClass, localEdits, savedRecords]);
 
   const mark = useCallback((studentId: string, status: AttStatus) => {
@@ -273,6 +274,7 @@ export default function TeacherMobileAttendance() {
         )}
       </div>
 
+      {assignedClasses.includes(selectedClass) && <EarlyDepartures schoolId={schoolId} className={selectedClass} date={date} students={rows} editable />}
       {/* Floating Save Button */}
       {assignedClasses.length > 0 && (
       <button

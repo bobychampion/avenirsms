@@ -3,7 +3,7 @@ import { addDoc, collection, onSnapshot, query, serverTimestamp, where } from 'f
 import toast from 'react-hot-toast';
 import { db } from '../firebase';
 import { useAuth } from './FirebaseProvider';
-import { EarlyDeparture, departureDescription, validDeparture } from '../utils/earlyDeparture';
+import { EarlyDeparture, departureDescription, validDeparture, filterDepartures } from '../utils/earlyDeparture';
 import { exportEarlyDeparturesCsv } from '../services/dataExport/csvModules';
 
 export function useEarlyDepartures(schoolId: string | null | undefined, className?: string, studentId?: string) {
@@ -33,10 +33,12 @@ interface Props {
   month?: string;
   students?: { studentId: string; studentName: string }[];
   editable?: boolean;
+  subjectName?: string;
+  timetablePeriodId?: string;
 }
 
 /** Append-only departure log: changing daily status cannot erase departure evidence. */
-export default function EarlyDepartures({ schoolId, className, studentId, date, month, students = [], editable = false }: Props) {
+export default function EarlyDepartures({ schoolId, className, studentId, date, month, students = [], editable = false, subjectName, timetablePeriodId }: Props) {
   const { user } = useAuth();
   const { records, error, loading } = useEarlyDepartures(schoolId, className, studentId);
   const [open, setOpen] = useState(false);
@@ -47,8 +49,8 @@ export default function EarlyDepartures({ schoolId, className, studentId, date, 
   const [lesson, setLesson] = useState('');
   const [saving, setSaving] = useState(false);
   const savingRef = useRef(false);
-  useEffect(() => { setOpen(false); setSelected(''); setTime(''); setNotes(''); setLesson(''); }, [className, date, studentId]);
-  const visible = records.filter(r => (!date || r.date === date) && (!month || r.date.startsWith(month)));
+  useEffect(() => { setOpen(false); setSelected(''); setTime(''); setNotes(''); setLesson(subjectName ?? ''); }, [schoolId, className, date, studentId, subjectName, timetablePeriodId]);
+  const visible = filterDepartures(records, { date, month, subjectName, timetablePeriodId, studentIds: subjectName ? students.map(s => s.studentId) : undefined });
   const save = async (e: React.FormEvent) => {
     e.preventDefault();
     if (savingRef.current || !schoolId || !className || !date || !user || !editable) return;
@@ -58,16 +60,16 @@ export default function EarlyDepartures({ schoolId, className, studentId, date, 
     try {
       await addDoc(collection(db, 'attendance_departures'), {
         schoolId, class: className, ...student, date, departureTime: time, reason: reason.trim(),
-        notes: notes.trim(), lesson: lesson.trim(), recordedBy: user.uid, recordedAt: serverTimestamp(),
+        notes: notes.trim(), lesson: lesson.trim(), ...(subjectName ? { subjectName } : {}), ...(timetablePeriodId ? { timetablePeriodId } : {}), recordedBy: user.uid, recordedAt: serverTimestamp(),
       });
-      setOpen(false); setNotes(''); setLesson(''); toast.success('Early departure recorded.');
+      setOpen(false); setNotes(''); setLesson(subjectName ?? ''); toast.success('Early departure recorded.');
     } catch { toast.error('Unable to record early departure.'); }
     finally { savingRef.current = false; setSaving(false); }
   };
   if (!className && !studentId) return null;
   return <section className="my-4 rounded-xl border border-purple-200 bg-white p-4">
     <div className="flex flex-wrap items-center justify-between gap-2">
-      <div><h3 className="text-sm font-bold text-purple-800">Early departures{date ? ` — ${date}` : month ? ` — ${month}` : ''}</h3>
+      <div><h3 className="text-sm font-bold text-purple-800">Early departures{subjectName ? ` — ${subjectName}` : ''}{date ? ` — ${date}` : month ? ` — ${month}` : ''}</h3>
         <p className="text-xs text-slate-500">{loading ? 'Loading…' : `${visible.length} recorded departure${visible.length === 1 ? '' : 's'}`}. Attendance status is recorded separately.</p></div>
       <div className="flex gap-2">
         {visible.length > 0 && <button type="button" onClick={() => exportEarlyDeparturesCsv(visible)} className="text-xs px-3 py-2 border rounded-lg">Export CSV</button>}

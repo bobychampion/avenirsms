@@ -1,3 +1,5 @@
+import { useClassSubjectRoster } from '../hooks/useClassSubjectRoster';
+import { permittedSubjects, resolveGradeSubject, teachingStudents, visibleSkills } from '../utils/teacherRoster';
 import AnnualAssessments from '../components/AnnualAssessments';
 import { chooseFinalAssessment } from '../utils/assessmentSessions';
 import EarlyDepartures from '../components/EarlyDepartures';
@@ -161,7 +163,7 @@ export default function TeacherPortal() {
   // Elective roster: `class_subjects.enrolledStudentIds` for the selected class+subject.
   // Non-empty → subject attendance lists only those students (secondary schools where a
   // class splits by subject). null → the whole class takes it (default). Mirrors Gradebook.
-  const [subjectAttendanceRoster, setSubjectAttendanceRoster] = useState<string[] | null>(null);
+
 
   // Special Lessons state — independent from Daily/Subject Attendance, scoped to enrolled students only.
   const [mySpecialLessons, setMySpecialLessons] = useState<SpecialLesson[]>([]);
@@ -276,7 +278,17 @@ export default function TeacherPortal() {
   const [selectedCurriculumDocId, setSelectedCurriculumDocId] = useState<string>('');
 
   // Gradebook state
-  const [gradeSubject, setGradeSubject] = useState(allSubjects[0]);
+  const [requestedGradeSubject, setGradeSubject] = useState('');
+  const mySubjectsForSelectedClass = permittedSubjects(myAssignedSubjectsByClass[selectedClass] ?? [], allSubjects);
+  const gradeSubject = resolveGradeSubject(requestedGradeSubject, mySubjectsForSelectedClass, assignmentLoading);
+  const classSubjectRoster = useClassSubjectRoster(schoolId, myClassNameToId[selectedClass]);
+  const teachingRosterReady = !assignmentLoading && !classSubjectRoster.loading && !classSubjectRoster.error;
+  const myStudents = useMemo(() => teachingRosterReady
+    ? teachingStudents(students, selectedClass, myAssignedSubjectsByClass[selectedClass] ?? [], classSubjectRoster.assignments) : [],
+    [teachingRosterReady, students, selectedClass, myAssignedSubjectsByClass, classSubjectRoster.assignments]);
+  const behaviourStudents = useMemo(() => teachingRosterReady
+    ? teachingStudents(students, selectedClass, [...(myAssignedSubjectsByClass[selectedClass] ?? []), ...(coverSubjectsByClassToday[selectedClass] ?? [])], classSubjectRoster.assignments) : [],
+    [teachingRosterReady, students, selectedClass, myAssignedSubjectsByClass, coverSubjectsByClassToday, classSubjectRoster.assignments]);
   const [gradeTerm, setGradeTerm] = useState<string>(terms[0] ?? TERMS[0]);
   const [gradeSession, setGradeSession] = useState(currentSession);
   const [grades, setGrades] = useState<Record<string, Grade>>({});
@@ -290,7 +302,7 @@ export default function TeacherPortal() {
   const [gradeRosterError, setGradeRosterError] = useState(false);
   const gradeRosterContext = JSON.stringify([schoolId, selectedClass, gradeSubject]);
   const gradeStudents = useMemo(() => gradeRoster?.context === gradeRosterContext
-    ? subjectGradeStudents(students, selectedClass, gradeRoster.ids)
+    ? (gradeRoster.ids?.length === 0 ? [] : subjectGradeStudents(students, selectedClass, gradeRoster.ids))
     : [], [students, gradeRoster, gradeRosterContext, selectedClass]);
 
   useEffect(() => {
@@ -298,17 +310,23 @@ export default function TeacherPortal() {
     if (!schoolId || !selectedClass || !gradeSubject) return;
     const classId = myClassNameToId[selectedClass];
     if (!classId) return;
-    return onSnapshot(query(collection(db, 'class_subjects'),
+    let cancelled = false;
+    const unsubscribe = onSnapshot(query(collection(db, 'class_subjects'),
       where('schoolId', '==', schoolId), where('classId', '==', classId),
       where('subjectName', '==', gradeSubject)), snap => {
-      const ids = snap.docs[0]?.data()?.enrolledStudentIds as string[] | undefined;
-      setGradeRoster({ context: gradeRosterContext, ids: ids?.length ? ids : null });
+      if (cancelled) return;
+      const active = snap.docs.filter(d => d.data().status !== 'inactive');
+      const fullClass = active.some(d => !d.data().enrolledStudentIds?.length);
+      const ids = active.flatMap(d => (d.data().enrolledStudentIds ?? []) as string[]);
+      setGradeRoster({ context: gradeRosterContext, ids: fullClass || (!active.length && (myAssignedSubjectsByClass[selectedClass] ?? []).includes('__all__')) ? null : ids });
       setGradeRosterError(false);
     }, () => {
+      if (cancelled) return;
       setGradeRoster(null);
       setGradeRosterError(true);
     });
-  }, [schoolId, selectedClass, gradeSubject, myClassNameToId, gradeRosterContext]);
+    return () => { cancelled = true; unsubscribe(); };
+  }, [schoolId, selectedClass, gradeSubject, myClassNameToId, gradeRosterContext, myAssignedSubjectsByClass]);
 
   // School settings arrive asynchronously. Follow their session until the teacher edits it.
   const gradeSessionEdited = useRef(false);
@@ -321,6 +339,10 @@ export default function TeacherPortal() {
   const [skillsSession, setSkillsSession] = useState(currentSession);
   const [skills, setSkills] = useState<Record<string, StudentSkills>>({});
   const [savingSkills, setSavingSkills] = useState(false);
+  const skillsContext = JSON.stringify([schoolId, selectedClass, skillsTerm, skillsSession, behaviourStudents.map(s => s.id)]);
+  const skillsContextRef = useRef(skillsContext);
+  skillsContextRef.current = skillsContext;
+  const [loadedSkillsContext, setLoadedSkillsContext] = useState('');
 
   // GPS check-in state — multi-event per day
   const [geofence, setGeofence] = useState<GeoFence | null>(null);
@@ -785,7 +807,7 @@ export default function TeacherPortal() {
       mySubjectOptionsForSelectedClass.includes(prev) ? prev : (mySubjectOptionsForSelectedClass[0] ?? '')
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedClass, myAssignedSubjectsByClass]);
+  }, [selectedClass, myAssignedSubjectsByClass, coverSubjectsByClassToday, allSubjects]);
 
   // Load daily attendance (to inherit from) + any existing subject-attendance overrides,
   // ONLY when class/subject/date actually change — same discipline as the daily-attendance
@@ -822,34 +844,14 @@ export default function TeacherPortal() {
     return () => { cancelled = true; };
   }, [activeTab, selectedClass, subjectAttendanceSubject, subjectAttendanceTimetablePeriodId, attendanceDate, schoolId, myClassNameToId]);
 
-  // Load the elective roster for the selected class+subject. A non-empty
-  // enrolledStudentIds list means only those students take the subject — so
-  // subject attendance shows just them (KIS feedback #6). Absent/empty = whole class.
-  useEffect(() => {
-    if (!schoolId || !selectedClass || !subjectAttendanceSubject) { setSubjectAttendanceRoster(null); return; }
-    const classId = myClassNameToId[selectedClass];
-    if (!classId) { setSubjectAttendanceRoster(null); return; }
-    const q = query(
-      collection(db, 'class_subjects'),
-      where('schoolId', '==', schoolId),
-      where('classId', '==', classId),
-      where('subjectName', '==', subjectAttendanceSubject),
-    );
-    const unsub = onSnapshot(
-      q,
-      snap => {
-        const ids = snap.docs[0]?.data()?.enrolledStudentIds as string[] | undefined;
-        setSubjectAttendanceRoster(ids && ids.length > 0 ? ids : null);
-      },
-      () => setSubjectAttendanceRoster(null),
-    );
-    return () => unsub();
-  }, [schoolId, selectedClass, subjectAttendanceSubject, myClassNameToId]);
+  const subjectStudents = useMemo(() => teachingRosterReady && mySubjectOptionsForSelectedClass.includes(subjectAttendanceSubject)
+    ? teachingStudents(students, selectedClass, [subjectAttendanceSubject], classSubjectRoster.assignments) : [],
+    [teachingRosterReady, students, selectedClass, subjectAttendanceSubject, myAssignedSubjectsByClass, coverSubjectsByClassToday, allSubjects, classSubjectRoster.assignments]);
+  const subjectAttendanceRoster = subjectStudents.map(s => s.id!);
 
   // Effective subject-attendance rows: local edit wins, else an existing saved override,
   // else inherited from the day's daily attendance, else default present.
-  const subjectAttendanceRows: (AttendanceRow & { inherited: boolean })[] = useMemo(() => students
-    .filter(s => !subjectAttendanceRoster || subjectAttendanceRoster.includes(s.id!))
+  const subjectAttendanceRows: (AttendanceRow & { inherited: boolean })[] = useMemo(() => subjectStudents
     .map(s => {
     const local = localSubjectAttendanceEdits[s.id!];
     const saved = savedSubjectAttendance[s.id!];
@@ -863,7 +865,7 @@ export default function TeacherPortal() {
       status,
       inherited,
     };
-  }), [students, subjectAttendanceRoster, localSubjectAttendanceEdits, savedSubjectAttendance, dailyInheritMap]);
+  }), [subjectStudents, localSubjectAttendanceEdits, savedSubjectAttendance, dailyInheritMap]);
 
   const cycleSubjectAttendanceStatus = (studentId: string) => {
     const current = subjectAttendanceRows.find(r => r.studentId === studentId)?.status ?? 'present';
@@ -872,7 +874,7 @@ export default function TeacherPortal() {
   };
 
   const handleSaveSubjectAttendance = async () => {
-    if (!user || subjectAttendanceRows.length === 0) return;
+    if (!user || !teachingRosterReady || !mySubjectOptionsForSelectedClass.includes(subjectAttendanceSubject) || subjectAttendanceRows.length === 0) return;
     const classId = myClassNameToId[selectedClass];
     if (!classId) return;
     setSavingSubjectAttendance(true);
@@ -1045,7 +1047,10 @@ export default function TeacherPortal() {
 
   // ── Load existing skills when class/term changes ──
   useEffect(() => {
-    if (activeTab !== 'skills' || students.length === 0) return;
+    setLoadedSkillsContext('');
+    setSkills({});
+    if (activeTab !== 'skills' || !teachingRosterReady || behaviourStudents.length === 0) return;
+    let cancelled = false;
     if (!schoolId) return;
     const fetchSkillsData = async () => {
       const q = query(
@@ -1062,11 +1067,15 @@ export default function TeacherPortal() {
         map[rec.studentId] = rec.skills;
       });
       const defaultSkills: StudentSkills = { punctuality: 'G', neatness: 'G', cooperation: 'G', honesty: 'G', sports: 'G', creativity: 'G' };
-      students.forEach(s => { if (!map[s.id!]) map[s.id!] = { ...defaultSkills }; });
-      setSkills(map);
+      behaviourStudents.forEach(s => { if (!map[s.id!]) map[s.id!] = { ...defaultSkills }; });
+      if (!cancelled) {
+        setSkills(Object.fromEntries(visibleSkills(behaviourStudents, map)));
+        setLoadedSkillsContext(skillsContext);
+      }
     };
-    fetchSkillsData();
-  }, [activeTab, students, selectedClass, skillsTerm, skillsSession]);
+    fetchSkillsData().catch(() => { if (!cancelled) toast.error('Unable to load behaviour. Please try again.'); });
+    return () => { cancelled = true; };
+  }, [activeTab, behaviourStudents, selectedClass, skillsTerm, skillsSession, schoolId, teachingRosterReady, skillsContext]);
 
   const updateGradeScore = (studentId: string, field: 'caScore' | 'examScore', val: number) => {
     setGrades(prev => {
@@ -1097,7 +1106,7 @@ export default function TeacherPortal() {
   };
 
   const handleSaveGrades = async () => {
-    if (!schoolId || gradeRosterError || loadedGradeContext !== gradeContext) return;
+    if (!schoolId || assignmentLoading || !myAssignedClasses.includes(selectedClass) || !mySubjectsForSelectedClass.includes(gradeSubject) || gradeRosterError || loadedGradeContext !== gradeContext) return;
     const classId = myClassNameToId[selectedClass];
     if (!classId) { toast.error('Unable to resolve the selected class.'); return; }
     const pending = gradesToSave(gradeStudents, grades);
@@ -1153,6 +1162,10 @@ export default function TeacherPortal() {
   };
 
   const handleSaveSkills = async () => {
+    if (!schoolId || !teachingRosterReady || loadedSkillsContext !== skillsContext || !attendanceClasses.includes(selectedClass)) return;
+    const pending = visibleSkills(behaviourStudents, skills);
+    if (!pending.length) return;
+    const savingContext = skillsContext;
     setSavingSkills(true);
     const tid = toast.loading('Saving skills…');
     try {
@@ -1168,7 +1181,8 @@ export default function TeacherPortal() {
       snap.docs.forEach(d => { existingMap[(d.data() as StudentSkillRecord).studentId] = d.id; });
 
       const batch = writeBatch(db);
-      for (const [studentId, s] of Object.entries(skills)) {
+      if (skillsContextRef.current !== savingContext) { toast.error('Selection changed. Please save the current class again.', { id: tid }); return; }
+      for (const [studentId, s] of pending) {
         const payload: Omit<StudentSkillRecord, 'id'> = {
           studentId,
           class: selectedClass,
@@ -1432,14 +1446,6 @@ export default function TeacherPortal() {
     { id: 'ai_tools', label: 'AI Tools', Icon: Sparkles },
   ];
 
-  // Helper: subjects the current teacher can grade in the selected class
-  // '__all__' means form tutor — can grade any subject
-  const mySubjectsForSelectedClass: string[] = (() => {
-    const subs = myAssignedSubjectsByClass[selectedClass] ?? [];
-    if (subs.includes('__all__')) return allSubjects;
-    return subs;
-  })();
-
   // Whether teacher is assigned to currently selected class (for attendance/grades/skills)
   const isAssignedToSelectedClass = myAssignedClasses.includes(selectedClass);
 
@@ -1621,10 +1627,10 @@ export default function TeacherPortal() {
                   options={myAssignedClasses}
                   className="px-4 py-2 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none bg-white font-medium text-sm"
                 />
-                <span className="text-sm text-slate-400 font-medium">{students.length} students</span>
+                <span className="text-sm text-slate-400 font-medium">{myStudents.length} students</span>
               </div>
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-                {students.map(student => (
+                {myStudents.map(student => (
                   <div key={student.id} className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm hover:shadow-md transition-all">
                     <div className="flex items-center mb-4">
                       <Avatar photoUrl={student.photoUrl} name={student.studentName} size="sm" gradientFrom="from-indigo-500" gradientTo="to-violet-600" className="mr-3" />
@@ -1645,10 +1651,10 @@ export default function TeacherPortal() {
                     </button>
                   </div>
                 ))}
-                {students.length === 0 && (
+                {myStudents.length === 0 && (
                   <div className="col-span-3 text-center py-16 bg-slate-50 rounded-2xl border-2 border-dashed border-slate-200">
                     <Users className="w-12 h-12 text-slate-200 mx-auto mb-3" />
-                    <p className="text-slate-500">No students in {selectedClass}</p>
+                    <p className="text-slate-500">{classSubjectRoster.error ? 'Unable to load subject enrolment. Please try again.' : !teachingRosterReady ? 'Loading subject enrolment…' : `No students enrolled in your subjects in ${selectedClass}.`}</p>
                   </div>
                 )}
               </div>
@@ -1910,6 +1916,11 @@ export default function TeacherPortal() {
                 />
               </div>
             </div>
+
+            {subjectAttendanceSubject && <EarlyDepartures schoolId={schoolId} className={selectedClass} date={attendanceDate}
+              students={subjectAttendanceRows} subjectName={subjectAttendanceSubject} timetablePeriodId={subjectAttendanceTimetablePeriodId}
+              editable={teachingRosterReady && mySubjectOptionsForSelectedClass.includes(subjectAttendanceSubject)} />}
+            {classSubjectRoster.error && <p role="alert" className="text-rose-600 text-sm">Unable to load subject enrolment. Please try again.</p>}
 
             {subjectAttendanceSaved && (
               <span className="inline-flex px-4 py-1.5 mb-4 bg-emerald-50 text-emerald-700 text-xs font-bold rounded-xl border border-emerald-200 items-center gap-1.5">
@@ -2200,10 +2211,8 @@ export default function TeacherPortal() {
               </div>
               <select value={gradeSubject} onChange={e => setGradeSubject(e.target.value)}
                 className="px-3 py-2 rounded-xl border border-slate-200 text-sm font-medium outline-none focus:ring-2 focus:ring-indigo-500">
-                {mySubjectsForSelectedClass.length > 0
-                  ? mySubjectsForSelectedClass.map(s => <option key={s}>{s}</option>)
-                  : allSubjects.map(s => <option key={s}>{s}</option>)
-                }
+                {!gradeSubject && <option value="">Select an assigned subject</option>}
+                {mySubjectsForSelectedClass.map(s => <option key={s}>{s}</option>)}
               </select>
               <select value={gradeTerm} onChange={e => setGradeTerm(e.target.value)}
                 className="px-3 py-2 rounded-xl border border-slate-200 text-sm font-medium outline-none focus:ring-2 focus:ring-indigo-500">
@@ -2342,8 +2351,8 @@ export default function TeacherPortal() {
             </div>
             <p className="text-xs text-slate-400 mb-6">Rate each student's psychomotor & affective skills for the selected term. These appear on the report card.</p>
 
-            {students.length === 0 ? (
-              <div className="text-center py-12 text-slate-400">No students in {selectedClass}.</div>
+            {behaviourStudents.length === 0 ? (
+              <div className="text-center py-12 text-slate-400">{classSubjectRoster.error ? 'Unable to load subject enrolment. Please try again.' : !teachingRosterReady ? 'Loading subject enrolment…' : `No students enrolled in your subjects in ${selectedClass}.`}</div>
             ) : (
               <>
                 <div className="overflow-x-auto rounded-xl border border-slate-100">
@@ -2357,7 +2366,7 @@ export default function TeacherPortal() {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-50">
-                      {students.map(s => (
+                      {behaviourStudents.map(s => (
                         <tr key={s.id} className="hover:bg-slate-50/50">
                           <td className="px-5 py-3 font-medium text-slate-900 whitespace-nowrap">{s.studentName}</td>
                           {behaviourTraits.map(({ key }) => {
@@ -2382,7 +2391,7 @@ export default function TeacherPortal() {
                   </table>
                 </div>
                 <div className="flex items-center gap-4 pt-4">
-                  <button onClick={handleSaveSkills} disabled={savingSkills}
+                  <button onClick={handleSaveSkills} disabled={savingSkills || loadedSkillsContext !== skillsContext}
                     className="px-6 py-3 bg-indigo-600 text-white font-bold rounded-xl hover:bg-indigo-700 transition-all disabled:opacity-50 flex items-center gap-2">
                     {savingSkills ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
                     Save All Skills

@@ -286,7 +286,7 @@ export default function AttendancePage() {
   // Local click wins, else a saved mark, else the day's daily register (approved leave counts as
   // absent when the daily register hasn't been taken), else present.
   const subjectMarkRows = useMemo(() => students
-    .filter(s => !markRoster || markRoster.includes(s.id!))
+    .filter(s => s.currentClass === selectedClass && (!markRoster || markRoster.includes(s.id!)))
     .map(s => {
       const local = localSubjectEdits[s.id!];
       const saved = savedSubjectMarks[s.id!];
@@ -298,7 +298,7 @@ export default function AttendancePage() {
         inherited: local === undefined && (saved ? saved.inheritedFromDaily : true),
       };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    }), [students, markRoster, localSubjectEdits, savedSubjectMarks, dailyInheritMap, selectedDate, approvedAbsences]);
+    }), [students, selectedClass, markRoster, localSubjectEdits, savedSubjectMarks, dailyInheritMap, selectedDate, approvedAbsences]);
 
   const cycleSubjectMark = (studentId: string) => {
     const current = subjectMarkRows.find(r => r.studentId === studentId)?.status ?? 'present';
@@ -879,6 +879,9 @@ export default function AttendancePage() {
               </div>
             )}
           </div>
+
+          {markSubject && <EarlyDepartures schoolId={schoolId} className={selectedClass} date={selectedDate}
+            students={subjectMarkRows} subjectName={markSubject} editable />}
 
           {!selectedClass ? (
             <div className="text-center py-12 bg-slate-50 rounded-2xl border-2 border-dashed border-slate-200">

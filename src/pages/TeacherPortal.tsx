@@ -1,5 +1,7 @@
 import { useClassSubjectRoster } from '../hooks/useClassSubjectRoster';
 import { permittedSubjects, resolveGradeSubject, teachingStudents, visibleSkills } from '../utils/teacherRoster';
+import { additionalAttendanceIds, mergeAttendanceStudents } from '../utils/subjectAttendanceRoster';
+import { useAdditionalAttendanceStudents } from '../hooks/useAdditionalAttendanceStudents';
 import AnnualAssessments from '../components/AnnualAssessments';
 import { chooseFinalAssessment } from '../utils/assessmentSessions';
 import EarlyDepartures from '../components/EarlyDepartures';
@@ -844,9 +846,16 @@ export default function TeacherPortal() {
     return () => { cancelled = true; };
   }, [activeTab, selectedClass, subjectAttendanceSubject, subjectAttendanceTimetablePeriodId, attendanceDate, schoolId, myClassNameToId]);
 
-  const subjectStudents = useMemo(() => teachingRosterReady && mySubjectOptionsForSelectedClass.includes(subjectAttendanceSubject)
+  const baseSubjectStudents = useMemo(() => teachingRosterReady && mySubjectOptionsForSelectedClass.includes(subjectAttendanceSubject)
     ? teachingStudents(students, selectedClass, [subjectAttendanceSubject], classSubjectRoster.assignments) : [],
     [teachingRosterReady, students, selectedClass, subjectAttendanceSubject, myAssignedSubjectsByClass, coverSubjectsByClassToday, allSubjects, classSubjectRoster.assignments]);
+  const extraSubjectIds = useMemo(() => teachingRosterReady && mySubjectOptionsForSelectedClass.includes(subjectAttendanceSubject)
+    ? additionalAttendanceIds(classSubjectRoster.assignments, subjectAttendanceSubject) : [],
+    [teachingRosterReady, mySubjectOptionsForSelectedClass.join('|'), subjectAttendanceSubject, classSubjectRoster.assignments]);
+  const extraSubjectStudents = useAdditionalAttendanceStudents(schoolId, extraSubjectIds, attendanceDate);
+  const subjectStudents = useMemo(() => extraSubjectStudents.loading || extraSubjectStudents.error ? []
+    : mergeAttendanceStudents(baseSubjectStudents, extraSubjectStudents.students, extraSubjectIds),
+    [baseSubjectStudents, extraSubjectStudents.students, extraSubjectStudents.loading, extraSubjectStudents.error, extraSubjectIds]);
   const subjectAttendanceRoster = subjectStudents.map(s => s.id!);
 
   // Effective subject-attendance rows: local edit wins, else an existing saved override,
@@ -855,17 +864,17 @@ export default function TeacherPortal() {
     .map(s => {
     const local = localSubjectAttendanceEdits[s.id!];
     const saved = savedSubjectAttendance[s.id!];
-    const status = local ?? saved?.status ?? dailyInheritMap[s.id!] ?? 'present';
+    const status = local ?? saved?.status ?? extraSubjectStudents.daily[s.id!] ?? dailyInheritMap[s.id!] ?? 'present';
     const inherited = local === undefined && (saved ? saved.inheritedFromDaily : true);
     return {
       studentId: s.id!,
-      studentName: s.studentName,
+      studentName: s.currentClass === selectedClass ? s.studentName : `${s.studentName} (${s.currentClass})`,
       studentIdCode: s.studentId,
       photoUrl: s.photoUrl,
       status,
       inherited,
     };
-  }), [subjectStudents, localSubjectAttendanceEdits, savedSubjectAttendance, dailyInheritMap]);
+  }), [subjectStudents, localSubjectAttendanceEdits, savedSubjectAttendance, dailyInheritMap, extraSubjectStudents.daily, selectedClass]);
 
   const cycleSubjectAttendanceStatus = (studentId: string) => {
     const current = subjectAttendanceRows.find(r => r.studentId === studentId)?.status ?? 'present';
@@ -874,7 +883,7 @@ export default function TeacherPortal() {
   };
 
   const handleSaveSubjectAttendance = async () => {
-    if (!user || !teachingRosterReady || !mySubjectOptionsForSelectedClass.includes(subjectAttendanceSubject) || subjectAttendanceRows.length === 0) return;
+    if (!user || !teachingRosterReady || extraSubjectStudents.loading || extraSubjectStudents.error || !mySubjectOptionsForSelectedClass.includes(subjectAttendanceSubject) || subjectAttendanceRows.length === 0) return;
     const classId = myClassNameToId[selectedClass];
     if (!classId) return;
     setSavingSubjectAttendance(true);
@@ -1932,7 +1941,7 @@ export default function TeacherPortal() {
               <div className="text-center py-12 bg-slate-50 rounded-2xl border-2 border-dashed border-slate-200">
                 <Users className="w-10 h-10 text-slate-200 mx-auto mb-3" />
                 <p className="text-slate-500 text-sm">
-                  {subjectAttendanceRoster
+                  {extraSubjectStudents.error ? 'Unable to load additional attendance students. Reload this page before saving.' : extraSubjectStudents.loading ? 'Loading additional attendance students…' : subjectAttendanceRoster
                     ? `No students in ${selectedClass} are enrolled in ${subjectAttendanceSubject}.`
                     : `No students found in ${selectedClass}.`}
                 </p>

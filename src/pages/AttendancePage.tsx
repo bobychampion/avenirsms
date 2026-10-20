@@ -1,4 +1,7 @@
 import EarlyDepartures, { useEarlyDepartures } from '../components/EarlyDepartures';
+import { additionalAttendanceIds, mergeAttendanceStudents } from '../utils/subjectAttendanceRoster';
+import { useAdditionalAttendanceStudents } from '../hooks/useAdditionalAttendanceStudents';
+import { useClassSubjectRoster } from '../hooks/useClassSubjectRoster';
 import { departureDescription } from '../utils/earlyDeparture';
 import { isAttendanceWeekend, attendanceDayTitle } from '../utils/attendanceCalendar';
 import { ATTENDANCE_STATUSES, attendanceStatusLabel, type AttendanceStatus } from '../utils/attendanceStatus';
@@ -215,8 +218,8 @@ export default function AttendancePage() {
 
   // ── Subject attendance (mark) — the admin counterpart of the Teacher Portal's Subject Attendance tab ──
   const selectedClassId = useMemo(() => classRows.find(c => c.name === selectedClass)?.id, [classRows, selectedClass]);
-  type ClassSubjectRow = { subjectName: string; teacherId?: string; enrolledStudentIds?: string[] };
-  const [classSubjectRows, setClassSubjectRows] = useState<ClassSubjectRow[]>([]);
+  const attendanceAssignments = useClassSubjectRoster(schoolId, attendanceMode === 'daily_only' ? undefined : selectedClassId);
+  const classSubjectRows = useMemo(() => attendanceAssignments.assignments.filter(r => r.status !== 'inactive'), [attendanceAssignments.assignments]);
   const [markSubject, setMarkSubject] = useState('');
   // Daily register for the class/date, which subject attendance is pre-filled from.
   const [dailyInheritMap, setDailyInheritMap] = useState<Record<string, AttendanceStatus>>({});
@@ -224,17 +227,6 @@ export default function AttendancePage() {
   const [localSubjectEdits, setLocalSubjectEdits] = useState<Record<string, AttendanceStatus>>({});
   const [savingSubjectMarks, setSavingSubjectMarks] = useState(false);
   const [subjectMarksSaved, setSubjectMarksSaved] = useState(false);
-
-  // Subjects assigned to the class (and any elective roster) — live, and only for schools that record subject attendance.
-  useEffect(() => {
-    if (!schoolId || !selectedClassId || attendanceMode === 'daily_only') { setClassSubjectRows([]); return; }
-    const unsub = onSnapshot(
-      query(collection(db, 'class_subjects'), where('schoolId', '==', schoolId), where('classId', '==', selectedClassId)),
-      snap => setClassSubjectRows(snap.docs.map(d => d.data() as ClassSubjectRow)),
-      () => setClassSubjectRows([]),
-    );
-    return unsub;
-  }, [schoolId, selectedClassId, attendanceMode]);
 
   const markSubjectOptions = useMemo(
     () => Array.from(new Set<string>(classSubjectRows.map(r => r.subjectName))).sort((a, b) => a.localeCompare(b)),
@@ -253,6 +245,11 @@ export default function AttendancePage() {
     return enrolment;
   }, [classSubjectRows]);
   const markRoster = subjectEnrolment[markSubject] ?? null;
+  const extraMarkIds = useMemo(() => additionalAttendanceIds(classSubjectRows, markSubject), [classSubjectRows, markSubject]);
+  const extraMarkStudents = useAdditionalAttendanceStudents(schoolId, extraMarkIds, selectedDate);
+  const subjectStudents = useMemo(() => extraMarkStudents.loading || extraMarkStudents.error ? []
+    : mergeAttendanceStudents(students.filter(s => s.currentClass === selectedClass && (!markRoster || markRoster.includes(s.id!))), extraMarkStudents.students, extraMarkIds),
+    [students, selectedClass, markRoster, extraMarkStudents.students, extraMarkStudents.loading, extraMarkStudents.error, extraMarkIds]);
 
   // Load the daily register + any saved subject marks ONLY when class/subject/date change, so
   // in-progress clicks are never reset by unrelated re-renders (same discipline as the daily tab).
@@ -285,20 +282,19 @@ export default function AttendancePage() {
 
   // Local click wins, else a saved mark, else the day's daily register (approved leave counts as
   // absent when the daily register hasn't been taken), else present.
-  const subjectMarkRows = useMemo(() => students
-    .filter(s => s.currentClass === selectedClass && (!markRoster || markRoster.includes(s.id!)))
+  const subjectMarkRows = useMemo(() => subjectStudents
     .map(s => {
       const local = localSubjectEdits[s.id!];
       const saved = savedSubjectMarks[s.id!];
       const fallback: AttendanceStatus = isOnApprovedLeave(s.id!, selectedDate) ? 'absent' : 'present';
       return {
         studentId: s.id!,
-        studentName: s.studentName,
-        status: local ?? saved?.status ?? dailyInheritMap[s.id!] ?? fallback,
+        studentName: s.currentClass === selectedClass ? s.studentName : `${s.studentName} (${s.currentClass})`,
+        status: local ?? saved?.status ?? extraMarkStudents.daily[s.id!] ?? dailyInheritMap[s.id!] ?? fallback,
         inherited: local === undefined && (saved ? saved.inheritedFromDaily : true),
       };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    }), [students, selectedClass, markRoster, localSubjectEdits, savedSubjectMarks, dailyInheritMap, selectedDate, approvedAbsences]);
+    }), [subjectStudents, selectedClass, localSubjectEdits, savedSubjectMarks, dailyInheritMap, extraMarkStudents.daily, selectedDate, approvedAbsences]);
 
   const cycleSubjectMark = (studentId: string) => {
     const current = subjectMarkRows.find(r => r.studentId === studentId)?.status ?? 'present';
@@ -307,7 +303,7 @@ export default function AttendancePage() {
   };
 
   const handleSaveSubjectMarks = async () => {
-    if (!user || !selectedClassId || !markSubject || subjectMarkRows.length === 0) return;
+    if (!user || !selectedClassId || !markSubject || extraMarkStudents.loading || extraMarkStudents.error || subjectMarkRows.length === 0) return;
     setSavingSubjectMarks(true);
     // Credit the lesson to the subject's assigned teacher; recordedBy still says who actually saved it.
     const teacherId = classSubjectRows.find(r => r.subjectName === markSubject)?.teacherId || user.uid;
@@ -898,7 +894,7 @@ export default function AttendancePage() {
             <div className="text-center py-12 bg-slate-50 rounded-2xl border-2 border-dashed border-slate-200">
               <Users className="w-10 h-10 text-slate-200 mx-auto mb-3" />
               <p className="text-slate-500 text-sm">
-                {markRoster ? `No students in ${selectedClass} are enrolled in ${markSubject}.` : `No students found in ${selectedClass}.`}
+                {extraMarkStudents.error ? 'Unable to load additional attendance students. Reload this page before saving.' : extraMarkStudents.loading ? 'Loading additional attendance students…' : markRoster ? `No students in ${selectedClass} are enrolled in ${markSubject}.` : `No students found in ${selectedClass}.`}
               </p>
             </div>
           ) : (

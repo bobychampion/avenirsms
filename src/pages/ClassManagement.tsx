@@ -64,6 +64,26 @@ export default function ClassManagement() {
   const [classStudents, setClassStudents] = useState<Student[]>([]);
   const [enrolmentMode, setEnrolmentMode] = useState<'all' | 'selected'>('all');
   const [enrolledIds, setEnrolledIds] = useState<string[]>([]);
+  const [additionalAttendanceIds, setAdditionalAttendanceIds] = useState<string[]>([]);
+  const [otherClassStudents, setOtherClassStudents] = useState<Student[]>([]);
+  const [attendanceStudentSearch, setAttendanceStudentSearch] = useState('');
+  const [attendanceStudentsError, setAttendanceStudentsError] = useState(false);
+
+  useEffect(() => {
+    setAdditionalAttendanceIds(editingSubject?.additionalAttendanceStudentIds ?? []);
+    setAttendanceStudentSearch('');
+  }, [editingSubject, selectedClass?.id]);
+
+  useEffect(() => {
+    setOtherClassStudents([]);
+    setAttendanceStudentsError(false);
+    if (!schoolId || !selectedClass) return;
+    return onSnapshot(query(collection(db, 'students'), where('schoolId', '==', schoolId)), snap => {
+      setOtherClassStudents(snap.docs.map(d => ({ ...d.data(), id: d.id } as Student))
+        .filter(s => s.currentClass !== selectedClass.name && s.admissionStatus !== 'withdrawn')
+        .sort((a, b) => a.studentName.localeCompare(b.studentName)));
+    }, () => setAttendanceStudentsError(true));
+  }, [schoolId, selectedClass?.id, selectedClass?.name]);
 
   // Google Classroom integration status
   const [classroomStatus, setClassroomStatus] = useState<ClassroomStatus>('loading');
@@ -240,6 +260,7 @@ export default function ClassManagement() {
           subjectName: subjectFormData.subjectName,
           teacherId: subjectFormData.teacherId,
           teacherName: teacher?.displayName || 'Not Assigned',
+          additionalAttendanceStudentIds: additionalAttendanceIds,
           schoolId: schoolId ?? 'main',
         };
         await updateDoc(doc(db, 'class_subjects', editingSubject.id), data);
@@ -275,6 +296,7 @@ export default function ClassManagement() {
             schoolId: schoolId ?? 'main',
             // Empty array = whole class, matching the pre-elective behaviour.
             enrolledStudentIds: enrolmentMode === 'selected' ? enrolledIds : [],
+            additionalAttendanceStudentIds: additionalAttendanceIds,
           };
           const existing = classSubjects.find(s => s.classId === selectedClass.id && s.subjectName === subjectName);
           if (existing) {
@@ -289,6 +311,7 @@ export default function ClassManagement() {
       setSelectedSubjects([]);
       setEnrolmentMode('all');
       setEnrolledIds([]);
+      setAdditionalAttendanceIds([]);
     } catch (error) {
       handleFirestoreError(error, OperationType.WRITE, 'class_subjects');
     }
@@ -837,6 +860,24 @@ export default function ClassManagement() {
                           </p>
                         </div>
                       )}
+
+                      <div className="space-y-2">
+                        <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">Additional attendance students</label>
+                        <p className="text-xs text-slate-500">Add students from another class who attend this subject, for example Year 12 students repeating Year 11 Maths. Their main class and gradebook enrolment stay unchanged.</p>
+                        <input value={attendanceStudentSearch} onChange={e => setAttendanceStudentSearch(e.target.value)}
+                          placeholder="Search student name or main class…" aria-label="Search additional attendance students"
+                          className="w-full px-3 py-2 rounded-xl border border-slate-200 text-sm" />
+                        <p className="text-xs text-slate-500">{additionalAttendanceIds.length} additional students selected</p>
+                        <div className="max-h-44 overflow-y-auto border border-slate-200 rounded-xl p-3 space-y-1">
+                          {attendanceStudentsError && <p className="text-xs text-rose-600">Unable to load students. Close and reopen this class to try again.</p>}
+                          {otherClassStudents.filter(s => `${s.studentName} ${s.currentClass}`.toLowerCase().includes(attendanceStudentSearch.toLowerCase())).map(s => (
+                            <label key={s.id} className="flex items-center gap-2 py-1 text-sm">
+                              <input type="checkbox" checked={additionalAttendanceIds.includes(s.id!)} onChange={() => setAdditionalAttendanceIds(prev => prev.includes(s.id!) ? prev.filter(id => id !== s.id) : [...prev, s.id!])} />
+                              <span>{s.studentName}</span><span className="ml-auto text-xs text-slate-500">{s.currentClass}</span>
+                            </label>
+                          ))}
+                        </div>
+                      </div>
 
                       <div className="space-y-2">
                         <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">Subject Teacher</label>

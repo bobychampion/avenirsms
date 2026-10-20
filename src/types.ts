@@ -150,6 +150,8 @@ export interface SchoolClass {
 }
 
 export interface ClassSubject {
+  /** Students from other classes attending this subject only; does not move them or enrol them for grades. */
+  additionalAttendanceStudentIds?: string[];
   id?: string;
   classId: string;
   subjectName: string;

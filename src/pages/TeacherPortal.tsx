@@ -1,4 +1,5 @@
 import { useClassSubjectRoster } from '../hooks/useClassSubjectRoster';
+import ClubAttendance from '../components/ClubAttendance';
 import { permittedSubjects, resolveGradeSubject, teachingStudents, visibleSkills } from '../utils/teacherRoster';
 import { additionalAttendanceIds, mergeAttendanceStudents } from '../utils/subjectAttendanceRoster';
 import { useAdditionalAttendanceStudents } from '../hooks/useAdditionalAttendanceStudents';
@@ -170,6 +171,7 @@ export default function TeacherPortal() {
   // Special Lessons state — independent from Daily/Subject Attendance, scoped to enrolled students only.
   const [mySpecialLessons, setMySpecialLessons] = useState<SpecialLesson[]>([]);
   const [selectedSpecialLessonId, setSelectedSpecialLessonId] = useState('');
+  const selectedClub = mySpecialLessons.find(l => l.id === selectedSpecialLessonId && l.activityType === 'club');
   const [specialLessonDate, setSpecialLessonDate] = useState(new Date().toISOString().split('T')[0]);
   const [specialLessonRoster, setSpecialLessonRoster] = useState<Student[]>([]);
   const [savedSpecialLessonAttendance, setSavedSpecialLessonAttendance] = useState<Record<string, AttendanceStatus>>({});
@@ -924,7 +926,7 @@ export default function TeacherPortal() {
   // Load the selected Special Lesson's roster (fetched fresh from the lesson doc, not from
   // the possibly-stale mySpecialLessons snapshot list) + any existing attendance for the date.
   useEffect(() => {
-    if (activeTab !== 'special_lessons' || !selectedSpecialLessonId || !schoolId) return;
+    if (activeTab !== 'special_lessons' || !selectedSpecialLessonId || !schoolId || selectedClub) return;
     let cancelled = false;
 
     (async () => {
@@ -958,7 +960,7 @@ export default function TeacherPortal() {
     })();
 
     return () => { cancelled = true; };
-  }, [activeTab, selectedSpecialLessonId, specialLessonDate, schoolId]);
+  }, [activeTab, selectedSpecialLessonId, specialLessonDate, schoolId, selectedClub]);
 
   const specialLessonRows: AttendanceRow[] = useMemo(() => specialLessonRoster.map(s => ({
     studentId: s.id!,
@@ -1444,7 +1446,7 @@ export default function TeacherPortal() {
     { id: 'timetable', label: 'My Timetable', Icon: Clock },
     { id: 'attendance', label: 'Attendance', Icon: ClipboardList },
     ...(attendanceMode !== 'daily_only' ? [{ id: 'subject_attendance' as TabType, label: 'Subject Attendance', Icon: CheckSquare }] : []),
-    ...(mySpecialLessons.length > 0 ? [{ id: 'special_lessons' as TabType, label: 'Special Lessons', Icon: Sparkles }] : []),
+    ...(mySpecialLessons.length > 0 ? [{ id: 'special_lessons' as TabType, label: 'Clubs & Activities', Icon: Sparkles }] : []),
     { id: 'absences', label: 'Absence Requests', Icon: AlertCircle, badge: myPendingAbsences.length || undefined },
     { id: 'grades', label: 'Gradebook', Icon: Award },
     { id: 'skills', label: 'Behaviour', Icon: Star },
@@ -2023,7 +2025,13 @@ export default function TeacherPortal() {
       )}
 
       {/* ── SPECIAL LESSONS TAB (coaching/clubs/remedial — independent of daily/subject attendance) ── */}
-      {activeTab === 'special_lessons' && (
+      {activeTab === 'special_lessons' && selectedClub && schoolId && <div className="bg-white border rounded-2xl p-6 space-y-4">
+        <select aria-label="Choose club or activity" value={selectedSpecialLessonId} onChange={e => setSelectedSpecialLessonId(e.target.value)} className="border rounded-xl p-2">
+          {mySpecialLessons.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
+        </select>
+        <ClubAttendance key={`${schoolId}:${selectedSpecialLessonId}`} schoolId={schoolId} clubId={selectedSpecialLessonId} />
+      </div>}
+      {activeTab === 'special_lessons' && !selectedClub && (
         <div className="space-y-6">
           {mySpecialLessons.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-20 bg-amber-50 rounded-2xl border border-amber-200">

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { db, handleFirestoreError, OperationType } from '../firebase';
-import { collection, query, onSnapshot, addDoc, updateDoc, doc, deleteDoc, where, serverTimestamp } from 'firebase/firestore';
+import { collection, query, onSnapshot, addDoc, updateDoc, doc, deleteDoc, where, serverTimestamp, arrayUnion, arrayRemove } from 'firebase/firestore';
+import ClubAttendance from '../components/ClubAttendance';
 import { SpecialLesson, Student, UserProfile, DAYS_OF_WEEK, WEEKEND_DAYS } from '../types';
 import { useSchool } from '../components/SchoolContext';
 import { useSchoolId } from '../hooks/useSchoolId';
@@ -26,7 +27,7 @@ const emptyForm: Omit<SpecialLesson, 'id' | 'schoolId'> = {
   enrolledStudentIds: [],
 };
 
-export default function SpecialLessons() {
+export default function SpecialLessons({ clubsOnly = false }: { clubsOnly?: boolean }) {
   const schoolId = useSchoolId();
   const { currentSession, currentTerm, terms } = useSchool();
   const [lessons, setLessons] = useState<SpecialLesson[]>([]);
@@ -40,6 +41,9 @@ export default function SpecialLessons() {
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [enrollingLesson, setEnrollingLesson] = useState<SpecialLesson | null>(null);
   const [studentSearch, setStudentSearch] = useState('');
+  const [attendanceClubId, setAttendanceClubId] = useState('');
+  const [enrolling, setEnrolling] = useState(false);
+  const visibleLessons = clubsOnly ? lessons.filter(l => l.activityType === 'club') : lessons;
 
   useEffect(() => {
     if (!schoolId) return;
@@ -61,13 +65,14 @@ export default function SpecialLessons() {
 
   const openCreate = () => {
     setEditingLesson(null);
-    setForm({ ...emptyForm, academicSession: currentSession, term: currentTerm });
+    setForm({ ...emptyForm, activityType: clubsOnly ? 'club' : 'lesson', academicSession: currentSession, term: currentTerm });
     setIsModalOpen(true);
   };
 
   const openEdit = (lesson: SpecialLesson) => {
     setEditingLesson(lesson);
     setForm({
+      activityType: lesson.activityType ?? 'lesson',
       name: lesson.name,
       description: lesson.description || '',
       teacherIds: lesson.teacherIds,
@@ -101,6 +106,7 @@ export default function SpecialLessons() {
     if (!schoolId) return;
     if (!form.name.trim()) { toast.error('Lesson name is required'); return; }
     if (form.teacherIds.length === 0) { toast.error('Assign at least one teacher'); return; }
+    if (form.startDate && form.endDate && form.endDate < form.startDate) { toast.error('End date must be on or after the start date'); return; }
     setSaving(true);
     try {
       if (editingLesson?.id) {
@@ -119,6 +125,12 @@ export default function SpecialLessons() {
   };
 
   const handleDelete = async (id: string) => {
+    if (lessons.find(l => l.id === id)?.activityType === 'club') {
+      if (!confirm('Archive this club? Its attendance history will remain available to administrators.')) return;
+      try { await updateDoc(doc(db, 'special_lessons', id), { status: 'completed', updatedAt: serverTimestamp() }); toast.success('Club archived; attendance history retained.'); }
+      catch { toast.error('Unable to archive club.'); }
+      return;
+    }
     if (!confirm('Delete this special lesson? Attendance history will be kept but the lesson will no longer appear for teachers or students.')) return;
     setDeletingId(id);
     try {
@@ -132,18 +144,19 @@ export default function SpecialLessons() {
   };
 
   const toggleEnrollment = async (lesson: SpecialLesson, studentId: string) => {
-    if (!lesson.id) return;
+    if (!lesson.id || enrolling) return;
     const enrolled = lesson.enrolledStudentIds.includes(studentId);
-    const next = enrolled ? lesson.enrolledStudentIds.filter(id => id !== studentId) : [...lesson.enrolledStudentIds, studentId];
+    setEnrolling(true);
     try {
-      await updateDoc(doc(db, 'special_lessons', lesson.id), { enrolledStudentIds: next, updatedAt: serverTimestamp() });
+      await updateDoc(doc(db, 'special_lessons', lesson.id), { enrolledStudentIds: enrolled ? arrayRemove(studentId) : arrayUnion(studentId), updatedAt: serverTimestamp() });
+      setEnrollingLesson(prev => prev?.id === lesson.id ? { ...prev, enrolledStudentIds: enrolled ? prev.enrolledStudentIds.filter(id => id !== studentId) : [...new Set([...prev.enrolledStudentIds, studentId])] } : prev);
     } catch (e) {
       toast.error('Failed to update enrollment');
-    }
+    } finally { setEnrolling(false); }
   };
 
   const filteredStudents = useMemo(() =>
-    students.filter(s => s.studentName.toLowerCase().includes(studentSearch.toLowerCase())),
+    students.filter(s => `${s.studentName} ${s.currentClass}`.toLowerCase().includes(studentSearch.toLowerCase())),
     [students, studentSearch]);
 
   return (
@@ -152,28 +165,28 @@ export default function SpecialLessons() {
         <div>
           <h1 className="text-2xl font-bold text-slate-900 flex items-center gap-2">
             <Sparkles className="w-6 h-6 text-indigo-600" />
-            Special Lessons
+            {clubsOnly ? 'After-school Clubs' : 'Special Lessons'}
           </h1>
           <p className="text-slate-500 mt-1 text-sm">
-            Coaching, clubs, remedial classes and other lessons outside the normal class timetable.
+            {clubsOnly ? 'Create chess, drama, sport, baking, music and other clubs, assign teacher leaders and track attendance.' : 'Coaching, clubs, remedial classes and other lessons outside the normal class timetable.'}
             A student can be enrolled in any number of these regardless of their class.
           </p>
         </div>
         <button onClick={openCreate} className="flex items-center gap-2 px-4 py-2.5 bg-indigo-600 text-white font-bold rounded-xl hover:bg-indigo-700 transition-colors">
-          <Plus className="w-4 h-4" /> New Special Lesson
+          <Plus className="w-4 h-4" /> {clubsOnly ? 'New Club' : 'New Special Lesson'}
         </button>
       </div>
 
       {loading ? (
         <div className="flex justify-center py-20"><Loader2 className="w-8 h-8 animate-spin text-indigo-600" /></div>
-      ) : lessons.length === 0 ? (
+      ) : visibleLessons.length === 0 ? (
         <div className="bg-white rounded-2xl border-2 border-dashed border-slate-200 py-20 text-center">
           <Sparkles className="w-10 h-10 text-slate-200 mx-auto mb-3" />
-          <p className="text-slate-500 text-sm">No special lessons yet. Create one to get started.</p>
+          <p className="text-slate-500 text-sm">{clubsOnly ? 'No clubs yet. Create a club to get started.' : 'No special lessons yet. Create one to get started.'}</p>
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {lessons.map(lesson => (
+          {visibleLessons.map(lesson => (
             <div key={lesson.id} className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5">
               <div className="flex items-start justify-between gap-2">
                 <div>
@@ -195,6 +208,7 @@ export default function SpecialLessons() {
               </div>
 
               <div className="flex gap-2 mt-4">
+                {lesson.activityType === 'club' && <button onClick={() => setAttendanceClubId(lesson.id!)} className="px-3 py-2 text-xs font-bold text-white bg-indigo-600 rounded-xl">Attendance & History</button>}
                 <button onClick={() => setEnrollingLesson(lesson)} className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-bold text-indigo-700 bg-indigo-50 rounded-xl hover:bg-indigo-100 transition-colors">
                   <Users className="w-3.5 h-3.5" /> Manage Students
                 </button>
@@ -211,12 +225,14 @@ export default function SpecialLessons() {
         </div>
       )}
 
+      {attendanceClubId && schoolId && <div className="mt-6 p-5 bg-white border rounded-2xl"><button onClick={() => setAttendanceClubId('')} className="mb-3 text-sm text-slate-500">Close register</button><ClubAttendance key={`${schoolId}:${attendanceClubId}`} schoolId={schoolId} clubId={attendanceClubId} /></div>}
+
       {/* Create/Edit modal */}
       {isModalOpen && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-50" onClick={() => setIsModalOpen(false)}>
           <div className="bg-white rounded-2xl max-w-lg w-full max-h-[90vh] overflow-y-auto p-6" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-5">
-              <h2 className="font-bold text-slate-900 text-lg">{editingLesson ? 'Edit' : 'New'} Special Lesson</h2>
+              <h2 className="font-bold text-slate-900 text-lg">{editingLesson ? 'Edit' : 'New'} {form.activityType === 'club' ? 'Club' : 'Special Lesson'}</h2>
               <button onClick={() => setIsModalOpen(false)}><X className="w-5 h-5 text-slate-400" /></button>
             </div>
 
@@ -224,7 +240,13 @@ export default function SpecialLessons() {
               <div>
                 <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">Name</label>
                 <input value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
-                  placeholder="e.g. WAEC Coaching" className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm" />
+                  placeholder={form.activityType === 'club' ? 'e.g. Chess, Drama, Sport, Baking or Music' : 'e.g. WAEC Coaching'} className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm" />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">Activity type</label>
+                <select aria-label="Activity type" value={form.activityType ?? 'lesson'} onChange={e => setForm(f => ({ ...f, activityType: e.target.value as 'club' | 'lesson' }))} className="w-full border rounded-xl p-2">
+                  {!clubsOnly && <option value="lesson">Special lesson</option>}<option value="club">After-school club</option>
+                </select>
               </div>
               <div>
                 <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">Description</label>
@@ -233,7 +255,7 @@ export default function SpecialLessons() {
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">Teacher(s)</label>
+                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">{form.activityType === 'club' ? 'Club leaders (teachers)' : 'Teacher(s)'}</label>
                 <div className="flex flex-wrap gap-2 max-h-32 overflow-y-auto p-2 border border-slate-200 rounded-xl">
                   {teachers.map(t => {
                     const active = form.teacherIds.includes(t.uid);
@@ -338,13 +360,7 @@ export default function SpecialLessons() {
                 const enrolled = enrollingLesson.enrolledStudentIds.includes(s.id!);
                 return (
                   <label key={s.id} className="flex items-center gap-3 px-3 py-2 rounded-xl hover:bg-slate-50 cursor-pointer">
-                    <input type="checkbox" checked={enrolled} onChange={() => {
-                      toggleEnrollment(enrollingLesson, s.id!);
-                      setEnrollingLesson(prev => prev ? {
-                        ...prev,
-                        enrolledStudentIds: enrolled ? prev.enrolledStudentIds.filter(id => id !== s.id) : [...prev.enrolledStudentIds, s.id!],
-                      } : prev);
-                    }} className="w-4 h-4 rounded text-indigo-600" />
+                    <input type="checkbox" checked={enrolled} disabled={enrolling} onChange={() => toggleEnrollment(enrollingLesson, s.id!)} className="w-4 h-4 rounded text-indigo-600" />
                     <span className="text-sm text-slate-800 flex-1">{s.studentName}</span>
                     <span className="text-xs text-slate-400">{s.currentClass}</span>
                   </label>

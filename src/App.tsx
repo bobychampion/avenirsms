@@ -323,6 +323,7 @@ function AppContent() {
           <Route path="/admin/classes" element={<Layout><ProtectedRoute role="admin"><ClassManagement /></ProtectedRoute></Layout>} />
           <Route path="/admin/attendance" element={<Layout><ProtectedRoute role="admin"><AttendancePage /></ProtectedRoute></Layout>} />
           <Route path="/admin/special-lessons" element={<Layout><ProtectedRoute role="admin"><SpecialLessons /></ProtectedRoute></Layout>} />
+          <Route path="/admin/clubs" element={<Layout><ProtectedRoute role="admin"><SpecialLessons clubsOnly /></ProtectedRoute></Layout>} />
           <Route path="/admin/staff" element={<Layout><ProtectedRoute role="admin"><StaffManagement /></ProtectedRoute></Layout>} />
           <Route path="/admin/payroll" element={<Layout><ProtectedRoute allowFinanceRoles><PayrollManagement /></ProtectedRoute></Layout>} />
           <Route path="/admin/analytics" element={<Layout><ProtectedRoute allowFinanceRoles><AnalyticsDashboard /></ProtectedRoute></Layout>} />

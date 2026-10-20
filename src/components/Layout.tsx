@@ -173,6 +173,7 @@ const adminNavGroups = [
       { to: '/admin/admissions', label: 'Admissions', icon: UserCheck },
       { to: '/admin/attendance', label: 'Attendance', icon: ClipboardList },
       { to: '/admin/special-lessons', label: 'Special Lessons', icon: Sparkles },
+      { to: '/admin/clubs', label: 'After-school Clubs', icon: Sparkles },
     ],
   },
   {

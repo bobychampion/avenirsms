@@ -441,6 +441,7 @@ export interface SubjectAttendance {
  * lists over join tables where the list stays small (a lesson's roster, not a global index).
  */
 export interface SpecialLesson {
+  activityType?: 'club' | 'lesson';
   id?: string;
   schoolId: string;
   name: string;
@@ -466,6 +467,8 @@ export interface SpecialLesson {
  * unless a school explicitly configures that (not implemented — flagged for a future setting).
  */
 export interface SpecialLessonAttendance {
+  studentName?: string;
+  studentClass?: string;
   id?: string;
   schoolId: string;
   specialLessonId: string;

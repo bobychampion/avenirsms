@@ -1,18 +1,45 @@
-# After-school club attendance
+# School Activities: lessons and clubs
 
-Administrators open **After-school Clubs** in the sidebar (or `/admin/clubs`).
+Administrators open **School Activities** in the sidebar (`/admin/activities`). The old Special Lessons and After-school Clubs links redirect here. Existing activities and attendance remain available without migration.
 
-1. Click **New Club** and enter a name such as Chess, Drama, Sport, Baking or Music.
-2. Select one or more teacher leaders and set the session, term, optional start/end dates, days and time. Save.
-3. Click **Manage Students**. Search by student name or class and tick students from any classes. A student may join multiple clubs.
-4. Click **Attendance & History**, choose a date, mark each student and save. **Mark all present** can initialise a register before adjusting absent/late students. Unmarked students cannot be saved accidentally.
+## Set up an activity
 
-Assigned teachers use **Clubs & Activities** in their teacher portal and select their club. Each row shows the student's main class. Teachers do not need to teach that main class. A saved session can be selected from **Recorded sessions**, viewed, corrected and saved again. Export all recorded attendance for that club using **Export history CSV**.
+1. Choose **New activity** and select **Special lesson** or **After-school club**.
+2. Enter a title. Suggestions such as Chess, Drama, Sports, Baking and Music fill an editable club title. Custom titles are supported.
+3. Add a description, location and teacher leaders. Set the school year, term, optional dates, start/end time and weekly days using the date and time controls.
+4. Search and select students from any classes, then save. Students can join multiple activities and retain their main class and academic enrolments.
 
-The register accepts present, absent, late and school-trip marks. Future dates and dates outside the configured club period cannot be saved. Marks are stored by club, date and student, independently from daily or subject attendance. Re-saving updates existing records. Club members keep their main class and academic enrolments.
+The larger setup form includes a preview. Edit an activity to change its details, leaders, membership or status. Completed/inactive activities retain history and stop new marking and planning.
 
-Use the club's archive action (trash icon) or edit its status to Completed to stop new attendance while retaining history. Administrators can reactivate it through Edit. Enrolment changes affect future/current marking rosters; previously recorded attendance stays in history and exports.
+## Plan meetings and activities
 
-Existing clubs previously created as Special Lessons can be edited in **Special Lessons**, changing **Activity type** to **After-school club**. Existing attendance is reused. This update does not change parent dashboards or official daily attendance percentages.
+Each workspace has **Overview**, **Members**, **Meetings & Plans** and **Attendance** tabs. Assigned teachers use **School Activities** in their portal. Administrators manage membership; assigned teachers can plan meetings and record attendance.
 
-For testing, create one club with students from two classes, assign a teacher who is not a class tutor for one of them, mark different statuses, save and reload. Check the teacher and administrator views agree, export the history, and verify the daily attendance register is unchanged. Archive the test club when finished.
+Choose **Plan meeting / weekly series**. Set the date, time, location and meeting leaders. Add planned exercises, projects, topics or rehearsals, then record completion and outcomes. To generate weekly meetings, select a repeat-until date and weekdays. The first chosen date is included, followed by selected weekdays. A series supports up to 80 meetings within one year. Each meeting can be edited independently.
+
+Weekly days on the activity are a schedule template: meetings must be created individually or generated as a series. Once attendance is saved, meeting timing is locked; plans, outcomes and cancellation remain editable.
+
+## Attendance and history
+
+Open a meeting register or select it under **Attendance**. Mark every student before saving. **Mark all present** provides a starting point before individual changes. Present, absent, late and school-trip marks are supported. Future dates and dates outside the configured activity period cannot be saved. Re-saving updates that meeting's marks.
+
+Two meetings on the same date have separate registers. **Export activity history CSV** includes meeting titles/times and students' main classes. Cancelled meetings retain their records but are excluded from workspace exports and School Activities attendance totals.
+
+Select **Earlier date-based attendance** to view and correct existing dates from before this update. Create meetings for new attendance. Previously recorded students remain in exports even after membership changes. Current membership determines the marking roster.
+
+Activity attendance is independent of daily and subject attendance. This update does not change parent dashboards or official daily attendance percentages. Testing previews use the production school database: use clearly named test activities and archive them afterwards.
+
+## Administrator testing checklist
+
+1. Create a test club using a suggested title, then customise it. Add a leader and students from two classes. Check the assigned teacher sees the same activity.
+2. Create two meetings on the same date at different times. Give them different plans and attendance marks, save and reload. Confirm the registers remain separate.
+3. Generate a short weekly series, then edit a single meeting's location, plan completion and outcomes.
+4. Export attendance, cancel one recorded meeting and export again. Confirm the marks remain viewable but are excluded from the new export and totals.
+5. Open an existing special lesson and earlier date-based attendance. Confirm existing information is available and daily/subject registers are unchanged.
+6. Archive the test activity when finished.
+
+## Verification
+
+Frontend suite: `npm run test:run -- --dir src --maxWorkers=1 --pool=forks`.
+
+`scripts/test-activity-rules.mjs` runs security checks against an isolated Firestore emulator and refuses non-demo projects. It checks school isolation, leader permissions, membership, cancellation, timing locks and atomic attendance writes without writing to the live school database.

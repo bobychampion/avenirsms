@@ -24,6 +24,11 @@ interface DataCategory {
 
 const CATEGORIES: DataCategory[] = [
   {
+    id: 'activities', label: 'School Activities',
+    description: 'Special lessons, clubs, meeting plans, and their attendance history.',
+    collections: ['specialLessonAttendance', 'activity_meetings', 'special_lessons'],
+  },
+  {
     id: 'academic',
     label: 'Academic Records',
     description: 'Grades, attendance records, student skills, assignments, and behavioral notes.',

@@ -1,5 +1,5 @@
 import { useClassSubjectRoster } from '../hooks/useClassSubjectRoster';
-import ClubAttendance from '../components/ClubAttendance';
+import ActivityWorkspace from '../components/ActivityWorkspace';
 import { permittedSubjects, resolveGradeSubject, teachingStudents, visibleSkills } from '../utils/teacherRoster';
 import { additionalAttendanceIds, mergeAttendanceStudents } from '../utils/subjectAttendanceRoster';
 import { useAdditionalAttendanceStudents } from '../hooks/useAdditionalAttendanceStudents';
@@ -17,7 +17,7 @@ import {
 } from 'firebase/firestore';
 import { Student, Assignment, AssignmentSubmission, Message, SUBJECTS, TERMS, Grade, calculateGrade, StudentSkills, visibleSkillLabels, SkillRating, StudentSkillRecord, Timetable, GeoFence, TeacherCheckIn, CurriculumDocument, SubjectAttendance, SpecialLesson } from '../types';
 import { getCurrentPosition, isWithinFence, isAccuracyAcceptable, isSpoofedVelocity } from '../services/geofenceService';
-import { batchUpsertAttendance, fetchDailyAttendanceMap, batchUpsertSubjectAttendance, batchUpsertSpecialLessonAttendance } from '../services/firestoreService';
+import { batchUpsertAttendance, fetchDailyAttendanceMap, batchUpsertSubjectAttendance } from '../services/firestoreService';
 import { generateLessonNotes, generateExamQuestions, generateQuestionsFromCurriculum } from '../services/geminiService';
 import { motion, AnimatePresence } from 'motion/react';
 import ReactMarkdown from 'react-markdown';
@@ -171,13 +171,6 @@ export default function TeacherPortal() {
   // Special Lessons state — independent from Daily/Subject Attendance, scoped to enrolled students only.
   const [mySpecialLessons, setMySpecialLessons] = useState<SpecialLesson[]>([]);
   const [selectedSpecialLessonId, setSelectedSpecialLessonId] = useState('');
-  const selectedClub = mySpecialLessons.find(l => l.id === selectedSpecialLessonId && l.activityType === 'club');
-  const [specialLessonDate, setSpecialLessonDate] = useState(new Date().toISOString().split('T')[0]);
-  const [specialLessonRoster, setSpecialLessonRoster] = useState<Student[]>([]);
-  const [savedSpecialLessonAttendance, setSavedSpecialLessonAttendance] = useState<Record<string, AttendanceStatus>>({});
-  const [localSpecialLessonEdits, setLocalSpecialLessonEdits] = useState<Record<string, AttendanceStatus>>({});
-  const [savingSpecialLessonAttendance, setSavingSpecialLessonAttendance] = useState(false);
-  const [specialLessonAttendanceSaved, setSpecialLessonAttendanceSaved] = useState(false);
 
   // Absence requests for this teacher's classes
   const [absenceRequests, setAbsenceRequests] = useState<any[]>([]);
@@ -923,89 +916,6 @@ export default function TeacherPortal() {
     }
   };
 
-  // Load the selected Special Lesson's roster (fetched fresh from the lesson doc, not from
-  // the possibly-stale mySpecialLessons snapshot list) + any existing attendance for the date.
-  useEffect(() => {
-    if (activeTab !== 'special_lessons' || !selectedSpecialLessonId || !schoolId || selectedClub) return;
-    let cancelled = false;
-
-    (async () => {
-      const lessonSnap = await getDoc(doc(db, 'special_lessons', selectedSpecialLessonId));
-      if (!lessonSnap.exists()) return;
-      const enrolledIds = (lessonSnap.data().enrolledStudentIds as string[]) || [];
-
-      const chunks: string[][] = [];
-      for (let i = 0; i < enrolledIds.length; i += 10) chunks.push(enrolledIds.slice(i, i + 10));
-      const studentSnaps = await Promise.all(
-        chunks.map(c => getDocs(query(collection(db, 'students'), where('__name__', 'in', c))))
-      );
-      const roster = studentSnaps.flatMap(snap => snap.docs.map(d => ({ id: d.id, ...d.data() } as Student)));
-
-      const attSnap = await getDocs(query(
-        collection(db, 'specialLessonAttendance'),
-        where('schoolId', '==', schoolId),
-        where('specialLessonId', '==', selectedSpecialLessonId),
-        where('attendanceDate', '==', specialLessonDate),
-      ));
-      const existing: Record<string, AttendanceStatus> = {};
-      attSnap.docs.forEach(d => {
-        const data = d.data();
-        existing[data.studentId] = data.status;
-      });
-
-      if (cancelled) return;
-      setSpecialLessonRoster(roster);
-      setSavedSpecialLessonAttendance(existing);
-      setLocalSpecialLessonEdits({});
-    })();
-
-    return () => { cancelled = true; };
-  }, [activeTab, selectedSpecialLessonId, specialLessonDate, schoolId, selectedClub]);
-
-  const specialLessonRows: AttendanceRow[] = useMemo(() => specialLessonRoster.map(s => ({
-    studentId: s.id!,
-    studentName: s.studentName,
-    studentIdCode: s.studentId,
-    photoUrl: s.photoUrl,
-    status: localSpecialLessonEdits[s.id!] ?? savedSpecialLessonAttendance[s.id!] ?? 'present',
-  })), [specialLessonRoster, localSpecialLessonEdits, savedSpecialLessonAttendance]);
-
-  const cycleSpecialLessonStatus = (studentId: string) => {
-    const current = specialLessonRows.find(r => r.studentId === studentId)?.status ?? 'present';
-    const next: Record<string, AttendanceStatus> = { present: 'absent', absent: 'late', late: 'school_trip', school_trip: 'present' };
-    setLocalSpecialLessonEdits(prev => ({ ...prev, [studentId]: next[current] }));
-  };
-
-  const handleSaveSpecialLessonAttendance = async () => {
-    if (!user || !selectedSpecialLessonId || specialLessonRows.length === 0) return;
-    setSavingSpecialLessonAttendance(true);
-    const records = specialLessonRows.map(r => ({
-      specialLessonId: selectedSpecialLessonId,
-      studentId: r.studentId,
-      attendanceDate: specialLessonDate,
-      status: r.status,
-      recordedBy: user.uid,
-    }));
-    const tid = toast.loading('Saving attendance…');
-    try {
-      await batchUpsertSpecialLessonAttendance(records, schoolId);
-      setSavedSpecialLessonAttendance(prev => {
-        const next = { ...prev };
-        records.forEach(r => { next[r.studentId] = r.status; });
-        return next;
-      });
-      setLocalSpecialLessonEdits({});
-      toast.success('Attendance saved!', { id: tid });
-      setSpecialLessonAttendanceSaved(true);
-      setTimeout(() => setSpecialLessonAttendanceSaved(false), 3000);
-    } catch (e: any) {
-      console.error('[TeacherPortal] Failed to save special lesson attendance:', e?.code, e?.message, e);
-      toast.error(`Failed to save attendance: ${e?.code || e?.message || 'unknown error'}`, { id: tid });
-    } finally {
-      setSavingSpecialLessonAttendance(false);
-    }
-  };
-
   // ── Load existing grades when subject/class/term changes ──
   useEffect(() => {
     setLoadedGradeContext('');
@@ -1446,7 +1356,7 @@ export default function TeacherPortal() {
     { id: 'timetable', label: 'My Timetable', Icon: Clock },
     { id: 'attendance', label: 'Attendance', Icon: ClipboardList },
     ...(attendanceMode !== 'daily_only' ? [{ id: 'subject_attendance' as TabType, label: 'Subject Attendance', Icon: CheckSquare }] : []),
-    ...(mySpecialLessons.length > 0 ? [{ id: 'special_lessons' as TabType, label: 'Clubs & Activities', Icon: Sparkles }] : []),
+    ...(mySpecialLessons.length > 0 ? [{ id: 'special_lessons' as TabType, label: 'School Activities', Icon: Sparkles }] : []),
     { id: 'absences', label: 'Absence Requests', Icon: AlertCircle, badge: myPendingAbsences.length || undefined },
     { id: 'grades', label: 'Gradebook', Icon: Award },
     { id: 'skills', label: 'Behaviour', Icon: Star },
@@ -2024,111 +1934,16 @@ export default function TeacherPortal() {
         </div>
       )}
 
-      {/* ── SPECIAL LESSONS TAB (coaching/clubs/remedial — independent of daily/subject attendance) ── */}
-      {activeTab === 'special_lessons' && selectedClub && schoolId && <div className="bg-white border rounded-2xl p-6 space-y-4">
-        <select aria-label="Choose club or activity" value={selectedSpecialLessonId} onChange={e => setSelectedSpecialLessonId(e.target.value)} className="border rounded-xl p-2">
-          {mySpecialLessons.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
-        </select>
-        <ClubAttendance key={`${schoolId}:${selectedSpecialLessonId}`} schoolId={schoolId} clubId={selectedSpecialLessonId} />
-      </div>}
-      {activeTab === 'special_lessons' && !selectedClub && (
-        <div className="space-y-6">
-          {mySpecialLessons.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-20 bg-amber-50 rounded-2xl border border-amber-200">
-              <Lock className="w-12 h-12 text-amber-400 mx-auto mb-3" />
-              <h3 className="font-bold text-slate-900 mb-1">No Special Lessons Assigned</h3>
-              <p className="text-slate-500 text-sm text-center max-w-sm">You'll see this once an admin assigns you to a special lesson (coaching, club, remedial class, etc.).</p>
-            </div>
-          ) : (
-          <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
-            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-6">
-              <div>
-                <h3 className="font-bold text-slate-900 text-lg flex items-center gap-2">
-                  <Sparkles className="w-5 h-5 text-indigo-600" />
-                  Special Lesson Attendance
-                </h3>
-                <p className="text-sm text-slate-500 mt-0.5">Only enrolled students appear here — independent of daily/subject attendance.</p>
-              </div>
-              <div className="flex flex-wrap items-center gap-3">
-                <select
-                  value={selectedSpecialLessonId}
-                  onChange={e => setSelectedSpecialLessonId(e.target.value)}
-                  className="px-3 py-2 rounded-xl border border-slate-200 text-sm font-medium outline-none focus:ring-2 focus:ring-indigo-500"
-                >
-                  {mySpecialLessons.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
-                </select>
-                <input
-                  type="date"
-                  value={specialLessonDate}
-                  onChange={e => setSpecialLessonDate(e.target.value)}
-                  className="px-3 py-2 rounded-xl border border-slate-200 text-sm font-medium outline-none focus:ring-2 focus:ring-indigo-500"
-                />
-              </div>
-            </div>
-
-            {specialLessonAttendanceSaved && (
-              <span className="inline-flex px-4 py-1.5 mb-4 bg-emerald-50 text-emerald-700 text-xs font-bold rounded-xl border border-emerald-200 items-center gap-1.5">
-                <CheckCircle2 className="w-3.5 h-3.5" /> Saved!
-              </span>
-            )}
-
-            {specialLessonRows.length === 0 ? (
-              <div className="text-center py-12 bg-slate-50 rounded-2xl border-2 border-dashed border-slate-200">
-                <Users className="w-10 h-10 text-slate-200 mx-auto mb-3" />
-                <p className="text-slate-500 text-sm">No students enrolled in this lesson yet. Contact your admin.</p>
-              </div>
-            ) : (
-              <div className="space-y-2">
-                <div className="flex gap-4 text-xs font-bold mb-3">
-                  <span className="text-emerald-600">{specialLessonRows.filter(r => r.status === 'present').length} Present</span>
-                  <span className="text-rose-600">{specialLessonRows.filter(r => r.status === 'absent').length} Absent</span>
-                  <span className="text-amber-600">{specialLessonRows.filter(r => r.status === 'late').length} Late</span>
-                  <span className="text-blue-600">{specialLessonRows.filter(r => r.status === 'school_trip').length} School trip</span>
-                  <span className="text-slate-400">/ {specialLessonRows.length} Total</span>
-                </div>
-
-                <div className="overflow-x-auto rounded-xl border border-slate-100">
-                  <table className="w-full text-left">
-                    <thead className="bg-slate-50">
-                      <tr>
-                        <th className="px-5 py-3 text-xs font-bold text-slate-400 uppercase">#</th>
-                        <th className="px-5 py-3 text-xs font-bold text-slate-400 uppercase">Student</th>
-                        <th className="px-5 py-3 text-xs font-bold text-slate-400 uppercase">Status</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-50">
-                      {specialLessonRows.map((row, i) => (
-                        <tr key={row.studentId} className="hover:bg-slate-50/50 transition-colors">
-                          <td className="px-5 py-3 text-sm text-slate-400 font-medium">{i + 1}</td>
-                          <td className="px-5 py-3 text-sm font-medium text-slate-900">{row.studentName}</td>
-                          <td className="px-5 py-3">
-                            <button
-                              onClick={() => cycleSpecialLessonStatus(row.studentId)}
-                              className={`px-3 py-1.5 rounded-xl text-xs font-bold uppercase border cursor-pointer transition-all hover:scale-105 ${statusColor(row.status)}`}
-                            >
-                              {attendanceStatusLabel(row.status)}
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-
-                <div className="pt-4">
-                  <button
-                    onClick={handleSaveSpecialLessonAttendance}
-                    disabled={savingSpecialLessonAttendance}
-                    className="px-6 py-3 bg-indigo-600 text-white font-bold rounded-xl hover:bg-indigo-700 transition-all disabled:opacity-50 flex items-center gap-2 shadow-lg shadow-indigo-200"
-                  >
-                    {savingSpecialLessonAttendance ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
-                    Save Attendance for {new Date(specialLessonDate + 'T12:00:00').toLocaleDateString('en-GB')}
-                  </button>
-                </div>
-              </div>
-            )}
+      {activeTab === 'special_lessons' && (
+        <div className="space-y-5">
+          <div className="flex flex-wrap items-center gap-4">
+            <h2 className="text-xl font-bold">School Activities</h2>
+            <select aria-label="Choose school activity" value={selectedSpecialLessonId} onChange={e => setSelectedSpecialLessonId(e.target.value)} className="border rounded-xl p-3 bg-white text-sm">
+              {!mySpecialLessons.length && <option value="">No activities assigned</option>}
+              {mySpecialLessons.map(activity => <option key={activity.id} value={activity.id}>{activity.name} · {activity.activityType === 'club' ? 'Club' : 'Special lesson'}</option>)}
+            </select>
           </div>
-          )}
+          {selectedSpecialLessonId && schoolId ? <ActivityWorkspace key={`${schoolId}:${selectedSpecialLessonId}`} schoolId={schoolId} activityId={selectedSpecialLessonId} /> : <p className="p-10 text-center bg-white rounded-2xl text-slate-500">Assigned clubs and special lessons will appear here. Ask your administrator to assign you as a leader.</p>}
         </div>
       )}
 

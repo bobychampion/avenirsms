@@ -569,18 +569,66 @@ service cloud.firestore {
       allow delete: if isSuperAdmin() || (isAdmin() && docBelongsToCallerSchool());
     }
 
+    function canPlanActivity(activityId) {
+      let activity = get(/databases/$(database)/documents/special_lessons/$(activityId)).data;
+      return activity.schoolId == userProfile().schoolId &&
+        (isAdmin() || (isTeacher() && request.auth.uid in activity.teacherIds));
+    }
+
+    function validActivityMeeting(data) {
+      let activity = get(/databases/$(database)/documents/special_lessons/$(data.specialLessonId)).data;
+      return data.schoolId == activity.schoolId && activity.status == 'active' &&
+        data.status in ['scheduled', 'completed', 'cancelled'] &&
+        data.title is string && data.title.size() > 0 && data.title.size() <= 300 &&
+        data.date.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$') &&
+        data.startTime.matches('^([01][0-9]|2[0-3]):[0-5][0-9]$') &&
+        data.endTime.matches('^([01][0-9]|2[0-3]):[0-5][0-9]$') && data.endTime > data.startTime &&
+        data.leaderIds is list && data.leaderIds.size() > 0 && data.leaderIds.hasOnly(activity.teacherIds) &&
+        data.items is list && data.items.size() <= 100 && data.notes is string && data.location is string;
+    }
+
+    match /activity_meetings/{meetingId} {
+      allow read: if isSuperAdmin() || ((isAdmin() || isTeacher()) && docBelongsToCallerSchool());
+      allow create: if (isSuperAdmin() || newDocBelongsToCallerSchool()) && validActivityMeeting(request.resource.data) &&
+        (isSuperAdmin() || canPlanActivity(request.resource.data.specialLessonId));
+      allow update: if (isSuperAdmin() || (newDocBelongsToCallerSchool() && docBelongsToCallerSchool())) &&
+        request.resource.data.specialLessonId == resource.data.specialLessonId && validActivityMeeting(request.resource.data) &&
+        (isSuperAdmin() || canPlanActivity(resource.data.specialLessonId)) &&
+        (!resource.data.get('attendanceRecorded', false) || (request.resource.data.attendanceRecorded == true &&
+          request.resource.data.date == resource.data.date && request.resource.data.startTime == resource.data.startTime && request.resource.data.endTime == resource.data.endTime));
+      allow delete: if isSuperAdmin() || (isAdmin() && docBelongsToCallerSchool());
+    }
+
+    function validMeetingAttendance(data) {
+      let meeting = get(/databases/$(database)/documents/activity_meetings/$(data.meetingId)).data;
+      let activity = get(/databases/$(database)/documents/special_lessons/$(data.specialLessonId)).data;
+      return meeting.schoolId == data.schoolId && meeting.specialLessonId == data.specialLessonId &&
+        meeting.status != 'cancelled' && activity.status == 'active' && data.attendanceDate == meeting.date &&
+        data.studentId in activity.enrolledStudentIds &&
+        get(/databases/$(database)/documents/students/$(data.studentId)).data.schoolId == data.schoolId &&
+        get(/databases/$(database)/documents/students/$(data.studentId)).data.get('admissionStatus', '') != 'withdrawn' &&
+        getAfter(/databases/$(database)/documents/activity_meetings/$(data.meetingId)).data.get('attendanceRecorded', false) == true &&
+        data.status in ['present', 'absent', 'late', 'school_trip'] &&
+        (isSuperAdmin() || canPlanActivity(data.specialLessonId));
+    }
+
     match /specialLessonAttendance/{docId} {
       allow read: if isSuperAdmin() ||
                     ((isAdmin() || isTeacher()) && docBelongsToCallerSchool()) ||
                     isGuardianOfStudent(resource.data.studentId);
-      allow create: if isSuperAdmin() ||
+      allow create: if (request.resource.data.get('meetingId', '') != '' ?
+        ((isSuperAdmin() || ((isAdmin() || isTeacher()) && newDocBelongsToCallerSchool())) && validMeetingAttendance(request.resource.data) && request.resource.data.recordedBy == request.auth.uid) : isSuperAdmin() ||
                     (isAdmin() && newDocBelongsToCallerSchool()) ||
                     (isTeacher() && newDocBelongsToCallerSchool() &&
-                     request.resource.data.get('recordedBy', '') == request.auth.uid);
-      allow update: if isSuperAdmin() ||
+                     request.resource.data.get('recordedBy', '') == request.auth.uid));
+      allow update: if (request.resource.data.get('meetingId', '') != '' ?
+        ((isSuperAdmin() || ((isAdmin() || isTeacher()) && docBelongsToCallerSchool() && newDocBelongsToCallerSchool())) &&
+          request.resource.data.meetingId == resource.data.get('meetingId', '') && request.resource.data.specialLessonId == resource.data.specialLessonId &&
+          request.resource.data.studentId == resource.data.studentId && validMeetingAttendance(request.resource.data) && request.resource.data.recordedBy == request.auth.uid) :
+        resource.data.get('meetingId', '') == '' && (isSuperAdmin() ||
                     (isAdmin() && docBelongsToCallerSchool()) ||
                     (isTeacher() && docBelongsToCallerSchool() &&
-                     request.resource.data.get('recordedBy', '') == request.auth.uid);
+                     request.resource.data.get('recordedBy', '') == request.auth.uid)));
       allow delete: if isSuperAdmin() || (isAdmin() && docBelongsToCallerSchool());
     }
 

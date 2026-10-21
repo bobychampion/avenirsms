@@ -441,6 +441,10 @@ export interface SubjectAttendance {
  * lists over join tables where the list stays small (a lesson's roster, not a global index).
  */
 export interface SpecialLesson {
+  subject?: string;
+  location?: string;
+  startTime?: string;
+  endTime?: string;
   activityType?: 'club' | 'lesson';
   id?: string;
   schoolId: string;
@@ -467,6 +471,9 @@ export interface SpecialLesson {
  * unless a school explicitly configures that (not implemented — flagged for a future setting).
  */
 export interface SpecialLessonAttendance {
+  meetingId?: string;
+  meetingTitle?: string;
+  meetingTime?: string;
   studentName?: string;
   studentClass?: string;
   id?: string;
@@ -477,6 +484,30 @@ export interface SpecialLessonAttendance {
   status: AttendanceStatus;
   recordedBy: string;
   recordedAt?: any;
+}
+
+export interface ActivityPlanItem {
+  id: string;
+  title: string;
+  completed: boolean;
+}
+
+export interface ActivityMeeting {
+  attendanceRecorded?: boolean;
+  id?: string;
+  schoolId: string;
+  specialLessonId: string;
+  title: string;
+  date: string;
+  startTime: string;
+  endTime: string;
+  location: string;
+  leaderIds: string[];
+  status: 'scheduled' | 'completed' | 'cancelled';
+  items: ActivityPlanItem[];
+  notes: string;
+  createdAt?: any;
+  updatedAt?: any;
 }
 
 export interface Assignment {

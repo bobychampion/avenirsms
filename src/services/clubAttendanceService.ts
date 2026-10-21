@@ -9,13 +9,13 @@ export async function saveClubAttendance(club: SpecialLesson, students: Student[
   marks: Record<string, AttendanceStatus>, uid: string, today: string) {
   assertNotImpersonating();
   const error = clubDateError(club, date, today);
-  if (!club.id || !club.schoolId || club.activityType !== 'club' || club.status !== 'active' || error || !completeClubMarks(students, marks)) {
+  if (!club.id || !club.schoolId || club.status !== 'active' || error || !completeClubMarks(students, marks)) {
     throw new Error(error || 'Choose an active club and mark every enrolled student.');
   }
   if (students.some(s => s.schoolId !== club.schoolId || !club.enrolledStudentIds.includes(s.id!) || s.admissionStatus === 'withdrawn')) throw new Error('Club enrolment has changed. Reload the register.');
   // Reuse legacy activity attendance when an existing activity is converted into a club.
   const existing = await getDocs(query(collection(db, 'specialLessonAttendance'), where('schoolId', '==', club.schoolId), where('specialLessonId', '==', club.id), where('attendanceDate', '==', date)));
-  const existingIds = new Map(existing.docs.map(d => [d.data().studentId as string, d.id]));
+  const existingIds = new Map(existing.docs.filter(d => !d.data().meetingId).map(d => [d.data().studentId as string, d.id]));
   for (let offset = 0; offset < students.length; offset += 450) {
     const batch = writeBatch(db);
     for (const student of students.slice(offset, offset + 450)) {

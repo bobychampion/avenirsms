@@ -83,6 +83,9 @@ export const SCHOOL_SCOPED_COLLECTIONS = [
   'attendance',
   'attendance_checkins',
   'timetables',
+  'special_lessons',
+  'activity_meetings',
+  'specialLessonAttendance',
 
   // Assignments & Assessments
   'assignments',

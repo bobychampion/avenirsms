@@ -14,6 +14,7 @@ const SCHOOL_SCOPED_COLLECTIONS = [
   'curriculum_documents','curriculum_items','leave_requests','payroll',
   'hr_policies','onboarding_records','leave_entitlements','pins','promotions',
   'whatsapp_logs','applications','library_books','library_circulation','mail',
+  'special_lessons','activity_meetings','specialLessonAttendance',
   'lifecycle_events','behavioral_records','alumni_profiles','cover_assignments',
   'school_trips','trip_registrations','absence_requests',
 ];

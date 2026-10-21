@@ -51,6 +51,9 @@ export const COLLECTION_REGISTRY: CollectionDef[] = [
   { name: 'leave_entitlements', tier: 2, kind: 'collection', importOrder: 210 },
 
   // Tier 3 — extended
+  { name: 'special_lessons', tier: 3, kind: 'collection', importOrder: 211 },
+  { name: 'activity_meetings', tier: 3, kind: 'collection', importOrder: 212 },
+  { name: 'specialLessonAttendance', tier: 3, kind: 'collection', importOrder: 213 },
   { name: 'exams', tier: 3, kind: 'collection', importOrder: 220 },
   { name: 'exam_seating', tier: 3, kind: 'collection', importOrder: 230 },
   { name: 'question_bank', tier: 3, kind: 'collection', importOrder: 240 },

@@ -10,7 +10,7 @@ import { downloadCsv } from '../services/dataExport/csvModules';
 import type { AttendanceStatus } from '../utils/attendanceStatus';
 import toast from 'react-hot-toast';
 
-export default function ClubAttendance({ schoolId, clubId }: { schoolId: string; clubId: string }) {
+export default function ClubAttendance({ schoolId, clubId, existingDatesOnly = false }: { schoolId: string; clubId: string; existingDatesOnly?: boolean }) {
   const { user, isAdmin, isSuperAdmin } = useAuth();
   const { timezone } = useSchool();
   const today = new Intl.DateTimeFormat('en-CA', { timeZone: timezone || 'UTC', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
@@ -34,7 +34,7 @@ export default function ClubAttendance({ schoolId, clubId }: { schoolId: string;
       const version = ++revision;
       setLoading(true);
       try {
-        if (!snap.exists() || snap.data().schoolId !== schoolId || snap.data().activityType !== 'club') throw new Error('Club not found.');
+        if (!snap.exists() || snap.data().schoolId !== schoolId) throw new Error('Activity not found.');
         const activity = { ...snap.data(), id: snap.id } as SpecialLesson;
         const all: Student[] = [];
         const ids = [...new Set(activity.enrolledStudentIds)];
@@ -53,7 +53,7 @@ export default function ClubAttendance({ schoolId, clubId }: { schoolId: string;
   useEffect(() => {
     setHistoryReady(false); setHistory([]);
     return onSnapshot(query(collection(db, 'specialLessonAttendance'), where('schoolId', '==', schoolId), where('specialLessonId', '==', clubId)), snap => {
-      setHistory(snap.docs.map(d => ({ ...d.data(), id: d.id } as SpecialLessonAttendance))); setHistoryReady(true);
+      setHistory(snap.docs.map(d => ({ ...d.data(), id: d.id } as SpecialLessonAttendance)).filter(r => !r.meetingId)); setHistoryReady(true);
     }, () => { setError('Unable to load attendance history. Reload before saving.'); setHistoryReady(false); });
   }, [schoolId, clubId]);
 
@@ -61,7 +61,7 @@ export default function ClubAttendance({ schoolId, clubId }: { schoolId: string;
   const marks = { ...saved, ...edits };
   const allowed = !!user && !!club && (isAdmin || isSuperAdmin || club.teacherIds.includes(user.uid));
   const dateError = club ? clubDateError(club, date, today) : '';
-  const editable = allowed && !loading && historyReady && !error && !dateError && club?.status === 'active' && !saving;
+  const editable = allowed && !loading && historyReady && !error && !dateError && club?.status === 'active' && !saving && (!existingDatesOnly || Object.keys(saved).length > 0);
   const sessions = [...new Set(history.map(r => r.attendanceDate))].sort().reverse();
   const save = async () => {
     if (!editable || !club || !user || savingRef.current) return;
@@ -87,6 +87,7 @@ export default function ClubAttendance({ schoolId, clubId }: { schoolId: string;
       <button onClick={exportHistory} disabled={!historyReady || !history.length} className="px-3 py-2 border rounded-lg text-sm disabled:opacity-40">Export history CSV</button>
     </div>
     <p className="text-sm text-slate-500">Students can belong to different classes. Club attendance is separate from daily and subject attendance.</p>
+    {existingDatesOnly && !Object.keys(saved).length && <p className="text-sm text-slate-500">Select a previously recorded date below to view or correct it. Create a meeting for new attendance.</p>}
     {error && <p role="alert" className="text-rose-600">{error}</p>}
     {dateError && <p role="alert" className="text-amber-700">{dateError}</p>}
     {club && club.status !== 'active' && <p className="text-amber-700">This club is {club.status}. Its history is available to view and export.</p>}

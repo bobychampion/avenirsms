@@ -103,7 +103,7 @@ export default function TodayPanel({
         {/* Special Lessons today */}
         <div>
           <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-2 flex items-center gap-1.5">
-            <Sparkles className="w-3.5 h-3.5" /> Special Lessons
+            <Sparkles className="w-3.5 h-3.5" /> School Activities
           </p>
           {todaysSpecialLessons.length === 0 ? (
             <p className="text-xs text-slate-400">None scheduled today.</p>

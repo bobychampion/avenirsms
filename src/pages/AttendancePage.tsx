@@ -2,6 +2,8 @@ import EarlyDepartures, { useEarlyDepartures } from '../components/EarlyDepartur
 import { additionalAttendanceIds, mergeAttendanceStudents } from '../utils/subjectAttendanceRoster';
 import { useAdditionalAttendanceStudents } from '../hooks/useAdditionalAttendanceStudents';
 import { useClassSubjectRoster } from '../hooks/useClassSubjectRoster';
+import { reportableActivityAttendance } from '../utils/schoolActivities';
+import type { ActivityMeeting } from '../types';
 import { departureDescription } from '../utils/earlyDeparture';
 import { isAttendanceWeekend, attendanceDayTitle } from '../utils/attendanceCalendar';
 import { ATTENDANCE_STATUSES, attendanceStatusLabel, type AttendanceStatus } from '../utils/attendanceStatus';
@@ -439,12 +441,13 @@ export default function AttendancePage() {
     if (!schoolId) return;
     setLoadingSpecialLessonReport(true);
     try {
-      const [lessonsSnap, attSnap] = await Promise.all([
+      const [lessonsSnap, attSnap, meetingsSnap] = await Promise.all([
         getDocs(query(collection(db, 'special_lessons'), where('schoolId', '==', schoolId))),
         getDocs(query(collection(db, 'specialLessonAttendance'), where('schoolId', '==', schoolId))),
+        getDocs(query(collection(db, 'activity_meetings'), where('schoolId', '==', schoolId))),
       ]);
       setSpecialLessons(lessonsSnap.docs.map(d => ({ id: d.id, ...d.data() } as SpecialLesson)));
-      setSpecialLessonReportRecords(attSnap.docs.map(d => ({ id: d.id, ...d.data() } as SpecialLessonAttendance)));
+      setSpecialLessonReportRecords(reportableActivityAttendance(attSnap.docs.map(d => ({ id: d.id, ...d.data() } as SpecialLessonAttendance)), meetingsSnap.docs.map(d => ({ ...d.data(), id: d.id } as ActivityMeeting))));
     } finally {
       setLoadingSpecialLessonReport(false);
     }
@@ -455,7 +458,7 @@ export default function AttendancePage() {
       const records = specialLessonReportRecords.filter(r => r.specialLessonId === lesson.id);
       const present = records.filter(r => r.status === 'present' || r.status === 'school_trip').length;
       const rate = records.length > 0 ? Math.round((present / records.length) * 100) : 0;
-      return { lesson, enrolled: lesson.enrolledStudentIds.length, sessionsRecorded: records.length, rate };
+      return { lesson, enrolled: lesson.enrolledStudentIds.length, sessionsRecorded: new Set(records.map(r => r.meetingId ?? r.attendanceDate)).size, rate };
     });
   }, [specialLessons, specialLessonReportRecords]);
 
@@ -684,7 +687,7 @@ export default function AttendancePage() {
               className={`px-4 py-2.5 rounded-xl text-sm font-semibold transition-colors ${activeTab === 'special_lessons_report' ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
             >
               <Sparkles className="w-4 h-4 inline mr-1.5" />
-              Special Lessons
+              School Activities
             </button>
           </div>
         </div>
@@ -1146,7 +1149,7 @@ export default function AttendancePage() {
       {activeTab === 'special_lessons_report' && (
         <div className="space-y-4">
           <div className="flex items-center justify-between">
-            <h2 className="font-bold text-slate-900">Special Lessons Summary</h2>
+            <h2 className="font-bold text-slate-900">School Activities Summary</h2>
             {specialLessonReportRecords.length > 0 && (
               <button
                 onClick={() => {

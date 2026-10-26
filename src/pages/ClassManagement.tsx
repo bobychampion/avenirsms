@@ -70,6 +70,9 @@ export default function ClassManagement() {
   const [attendanceStudentsError, setAttendanceStudentsError] = useState(false);
 
   useEffect(() => {
+    const ids = editingSubject?.enrolledStudentIds ?? [];
+    setEnrolmentMode(ids.length > 0 ? 'selected' : 'all');
+    setEnrolledIds([...ids]);
     setAdditionalAttendanceIds(editingSubject?.additionalAttendanceStudentIds ?? []);
     setAttendanceStudentSearch('');
   }, [editingSubject, selectedClass?.id]);
@@ -250,16 +253,22 @@ export default function ClassManagement() {
   const handleAddSubject = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedClass?.id) return;
+    // An empty stored roster means the whole class, not zero students.
+    if (enrolmentMode === 'selected' && enrolledIds.length === 0) {
+      toast.error('Select at least one student, or choose Whole class. To stop offering this subject, remove the assignment.');
+      return;
+    }
     const teacher = teachers.find(t => t.uid === subjectFormData.teacherId);
 
     try {
       if (editingSubject?.id) {
-        // Editing a single existing assignment — unchanged, one subject, teacher only.
+        // Save roster changes alongside the teacher for this assignment.
         const data = {
           classId: selectedClass.id,
           subjectName: subjectFormData.subjectName,
           teacherId: subjectFormData.teacherId,
           teacherName: teacher?.displayName || 'Not Assigned',
+          enrolledStudentIds: enrolmentMode === 'selected' ? enrolledIds : [],
           additionalAttendanceStudentIds: additionalAttendanceIds,
           schoolId: schoolId ?? 'main',
         };
@@ -712,7 +721,7 @@ export default function ClassManagement() {
               initial={{ opacity: 0, scale: 0.95, y: 20 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.95, y: 20 }}
-              className="bg-white rounded-3xl shadow-2xl w-full max-w-2xl relative z-10 overflow-hidden"
+              className="bg-white rounded-3xl shadow-2xl w-full max-w-2xl max-h-[90vh] relative z-10 overflow-y-auto"
             >
               <div className="p-8">
                 <div className="flex justify-between items-center mb-8">
@@ -784,8 +793,8 @@ export default function ClassManagement() {
                         )}
                       </div>
 
-                      {/* Who takes it — only meaningful for a new assignment. */}
-                      {!editingSubject && (
+                      {/* Show the current roster in both create and edit modes. */}
+                      <>
                         <div className="space-y-2">
                           <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">Who takes this?</label>
                           <div className="flex gap-2">
@@ -802,7 +811,10 @@ export default function ClassManagement() {
                             </button>
                             <button
                               type="button"
-                              onClick={() => setEnrolmentMode('selected')}
+                              onClick={() => {
+                                if (enrolmentMode === 'all') setEnrolledIds(classStudents.map(s => s.id!));
+                                setEnrolmentMode('selected');
+                              }}
                               className={`flex-1 px-3 py-2 rounded-xl text-xs font-bold border transition-colors ${
                                 enrolmentMode === 'selected'
                                   ? 'bg-indigo-600 text-white border-indigo-600'
@@ -813,7 +825,7 @@ export default function ClassManagement() {
                             </button>
                           </div>
 
-                          {enrolmentMode === 'selected' && (
+                          {(editingSubject || enrolmentMode === 'selected') && (
                             <div className="border border-slate-200 rounded-xl p-3 max-h-48 overflow-y-auto space-y-1">
                               {classStudents.length === 0 ? (
                                 <p className="text-xs text-slate-400 py-2 text-center">
@@ -823,26 +835,29 @@ export default function ClassManagement() {
                                 <>
                                   <div className="flex items-center justify-between pb-2 mb-1 border-b border-slate-100">
                                     <span className="text-[11px] font-bold text-slate-500">
-                                      {enrolledIds.length} of {classStudents.length} selected
+                                      {enrolmentMode === 'all' ? classStudents.length : enrolledIds.length} of {classStudents.length} selected
                                     </span>
                                     <button
                                       type="button"
-                                      onClick={() => setEnrolledIds(
-                                        enrolledIds.length === classStudents.length ? [] : classStudents.map(s => s.id!)
-                                      )}
+                                      onClick={() => {
+                                        setEnrolledIds(enrolmentMode === 'all' || enrolledIds.length === classStudents.length ? [] : classStudents.map(s => s.id!));
+                                        setEnrolmentMode('selected');
+                                      }}
                                       className="text-[11px] font-bold text-indigo-600 hover:text-indigo-700"
                                     >
-                                      {enrolledIds.length === classStudents.length ? 'Clear all' : 'Select all'}
+                                      {enrolmentMode === 'all' || enrolledIds.length === classStudents.length ? 'Clear all' : 'Select all'}
                                     </button>
                                   </div>
                                   {classStudents.map(st => (
                                     <label key={st.id} className="flex items-center gap-2 py-1 cursor-pointer">
                                       <input
                                         type="checkbox"
-                                        checked={enrolledIds.includes(st.id!)}
-                                        onChange={() => setEnrolledIds(prev =>
-                                          prev.includes(st.id!) ? prev.filter(i => i !== st.id) : [...prev, st.id!]
-                                        )}
+                                        checked={enrolmentMode === 'all' || enrolledIds.includes(st.id!)}
+                                        onChange={() => {
+                                          const currentIds = enrolmentMode === 'all' ? classStudents.map(s => s.id!) : enrolledIds;
+                                          setEnrolledIds(currentIds.includes(st.id!) ? currentIds.filter(id => id !== st.id) : [...currentIds, st.id!]);
+                                          setEnrolmentMode('selected');
+                                        }}
                                         className="rounded border-slate-300"
                                       />
                                       <span className="text-sm text-slate-700">{st.studentName}</span>
@@ -857,9 +872,10 @@ export default function ClassManagement() {
                             {enrolmentMode === 'all'
                               ? 'Every student in this class takes this subject.'
                               : 'Only the students you tick will be graded and registered for this subject.'}
+                            {editingSubject && ' Untick a student to remove them, then click Update Assignment.'}
                           </p>
                         </div>
-                      )}
+                      </>
 
                       <div className="space-y-2">
                         <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">Additional attendance students</label>
@@ -941,6 +957,7 @@ export default function ClassManagement() {
                             </div>
                             <div className="flex space-x-1">
                               <button
+                                aria-label={`Edit ${s.subjectName} assignment`}
                                 onClick={() => {
                                   setEditingSubject(s);
                                   setSubjectFormData({ subjectName: s.subjectName, teacherId: s.teacherId });

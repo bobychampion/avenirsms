@@ -1,3 +1,4 @@
+import { schoolHolidayLookup } from './utils/schoolCalendarDates';
 /**
  * Admin-only Cloud Functions for AvenirSMS.
  *
@@ -1242,6 +1243,7 @@ export const dailyReminders = onSchedule(
 
     let absenceAlertsSent = 0;
 
+    const isSchoolHoliday = schoolHolidayLookup(db);
     for (const studentId of consecutivelyAbsent) {
       try {
         // Check for approved absence request covering today
@@ -1260,6 +1262,7 @@ export const dailyReminders = onSchedule(
         const studentDoc = await db.doc(`students/${studentId}`).get();
         const student = studentDoc.data();
         if (!student?.guardianUserId) continue;
+        if (await isSchoolHoliday(student.schoolId ?? '', [todayStr, ...schoolDays])) continue;
 
         const tokenDoc = await db.doc(`fcm_tokens/${student.guardianUserId}`).get();
         const tokenData = tokenDoc.data();

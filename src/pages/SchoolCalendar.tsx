@@ -1,3 +1,4 @@
+import { calendarDateError, calendarEventOn } from '../utils/schoolHolidays';
 import React, { useState, useEffect } from 'react';
 import { db, handleFirestoreError, OperationType } from '../firebase';
 import { useAuth } from '../components/FirebaseProvider';
@@ -30,7 +31,7 @@ export default function SchoolCalendar() {
   const [formData, setFormData] = useState<Partial<SchoolEvent>>({
     title: '',
     description: '',
-    date: '',
+    date: '', endDate: '',
     type: 'academic',
   });
 
@@ -86,6 +87,7 @@ export default function SchoolCalendar() {
           title: eventData.title,
           description: eventData.description,
           date: eventData.date,
+          endDate: eventData.endDate || eventData.date,
           type: eventData.type,
         },
         googleEventId: existingGoogleId,
@@ -106,23 +108,25 @@ export default function SchoolCalendar() {
   const handleSaveEvent = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!schoolId) return;
+    const dateError = calendarDateError(formData.date, formData.endDate);
+    if (dateError) { toast.error(dateError); return; }
     setSaving(true);
     try {
       let savedId: string;
       let existingGoogleId: string | undefined;
 
       if (editingEvent?.id) {
-        await updateDoc(doc(db, 'events', editingEvent.id), { ...formData, schoolId });
+        await updateDoc(doc(db, 'events', editingEvent.id), { ...formData, endDate: formData.endDate || formData.date, schoolId });
         savedId = editingEvent.id;
         existingGoogleId = editingEvent.googleEventId;
       } else {
-        const ref = await addDoc(collection(db, 'events'), { ...formData, schoolId });
+        const ref = await addDoc(collection(db, 'events'), { ...formData, endDate: formData.endDate || formData.date, schoolId });
         savedId = ref.id;
       }
 
       setIsModalOpen(false);
       setEditingEvent(null);
-      setFormData({ title: '', description: '', date: '', type: 'academic' });
+      setFormData({ title: '', description: '', date: '', endDate: '', type: 'academic' });
 
       // Sync to Google Calendar in background
       await syncToGoogle(savedId, formData, existingGoogleId);
@@ -176,7 +180,7 @@ export default function SchoolCalendar() {
 
     for (let day = 1; day <= days; day++) {
       const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-      const dayEvents = events.filter(e => e.date === dateStr);
+      const dayEvents = events.filter(e => calendarEventOn(dateStr, e));
       const isToday = new Date().toISOString().split('T')[0] === dateStr;
 
       cells.push(
@@ -189,7 +193,7 @@ export default function SchoolCalendar() {
                 onClick={() => {
                   if (isAdmin) {
                     setEditingEvent(event);
-                    setFormData(event);
+                    setFormData({ ...event, endDate: event.endDate || '' });
                     setIsModalOpen(true);
                   }
                 }}
@@ -209,7 +213,7 @@ export default function SchoolCalendar() {
           </div>
           {isAdmin && (
             <button
-              onClick={() => { setFormData({ ...formData, date: dateStr }); setIsModalOpen(true); }}
+              onClick={() => { setEditingEvent(null); setFormData({ title: '', description: '', date: dateStr, endDate: '', type: 'academic' }); setIsModalOpen(true); }}
               className="absolute bottom-1 right-1 p-1 bg-indigo-600 text-white rounded-md opacity-0 group-hover:opacity-100 transition-opacity"
             >
               <Plus className="w-3 h-3" />
@@ -254,7 +258,7 @@ export default function SchoolCalendar() {
         </div>
         {isAdmin && (
           <button
-            onClick={() => { setEditingEvent(null); setFormData({ title: '', description: '', date: '', type: 'academic' }); setIsModalOpen(true); }}
+            onClick={() => { setEditingEvent(null); setFormData({ title: '', description: '', date: '', endDate: '', type: 'academic' }); setIsModalOpen(true); }}
             className="inline-flex items-center px-6 py-3 bg-indigo-600 text-white font-bold rounded-xl hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-100"
           >
             <Plus className="w-5 h-5 mr-2" />
@@ -321,7 +325,7 @@ export default function SchoolCalendar() {
           Upcoming Events
         </h3>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {events.filter(e => new Date(e.date) >= new Date()).slice(0, 6).map(event => (
+          {events.filter(e => (e.endDate || e.date) >= new Date().toISOString().slice(0, 10)).slice(0, 6).map(event => (
             <motion.div
               key={event.id}
               initial={{ opacity: 0, y: 10 }}
@@ -364,7 +368,7 @@ export default function SchoolCalendar() {
                     </button>
                   )}
                   <button
-                    onClick={() => { setEditingEvent(event); setFormData(event); setIsModalOpen(true); }}
+                    onClick={() => { setEditingEvent(event); setFormData({ ...event, endDate: event.endDate || '' }); setIsModalOpen(true); }}
                     className="p-2 text-slate-400 hover:text-indigo-600 transition-colors"
                   >
                     <Edit2 className="w-4 h-4" />
@@ -437,7 +441,7 @@ export default function SchoolCalendar() {
 
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
-                      <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">Date</label>
+                      <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">Start date</label>
                       <input
                         required type="date"
                         value={formData.date}
@@ -460,6 +464,7 @@ export default function SchoolCalendar() {
                     </div>
                   </div>
 
+                  <div className="space-y-2"><label className="text-xs font-bold text-slate-400 uppercase tracking-wider">End date (inclusive, optional)</label><input aria-label="Event end date" type="date" min={formData.date} value={formData.endDate || ''} onChange={e => setFormData({ ...formData, endDate: e.target.value })} className="w-full px-4 py-3 rounded-xl border border-slate-200" /><p className="text-xs text-slate-500">For a holiday, every date from start to end is automatically a whole-school holiday in daily and subject attendance. Leave blank for one day.</p></div>
                   <div className="space-y-2">
                     <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">Description</label>
                     <textarea

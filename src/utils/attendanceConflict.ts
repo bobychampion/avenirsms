@@ -1,4 +1,6 @@
 import type { AttendanceStatus } from './attendanceStatus';
+import type { SchoolEvent } from '../types';
+import { schoolHolidayOn } from './schoolHolidays';
 import type { AttendanceConflict } from '../services/firestoreService';
 
 type DailyStatus = AttendanceStatus;
@@ -42,14 +44,17 @@ export function effectiveDailyStatus(
 export function buildEffectiveAttendanceByStudent(
   daily: { studentId: string; date: string; status: DailyStatus }[],
   subject: { studentId: string; attendanceDate: string; status: DailyStatus; inheritedFromDaily: boolean }[],
+  holidays: readonly SchoolEvent[] = [],
 ): Record<string, Record<string, DailyStatus>> {
   const byStudent: Record<string, Record<string, DailyStatus>> = {};
   daily.forEach(a => {
+    if (schoolHolidayOn(a.date, holidays)) return;
     (byStudent[a.studentId] ??= {})[a.date] = a.status;
   });
 
   const subjectByStudentDate: Record<string, Record<string, { status: DailyStatus; inheritedFromDaily: boolean }[]>> = {};
   subject.forEach(sa => {
+    if (schoolHolidayOn(sa.attendanceDate, holidays)) return;
     const byDate = (subjectByStudentDate[sa.studentId] ??= {});
     (byDate[sa.attendanceDate] ??= []).push({ status: sa.status, inheritedFromDaily: sa.inheritedFromDaily });
   });

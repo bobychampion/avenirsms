@@ -1,3 +1,4 @@
+import { getSchoolHolidays } from '../hooks/useSchoolHolidays';
 import AssessmentHistory from '../components/AssessmentHistory';
 import EarlyDepartures from '../components/EarlyDepartures';
 import type { AttendanceStatus } from '../utils/attendanceStatus';
@@ -338,7 +339,7 @@ export default function StudentProfile() {
           return { studentId: data.studentId, attendanceDate: data.attendanceDate, status: data.status, inheritedFromDaily: data.inheritedFromDaily };
         });
       }
-      const effectiveDates = Object.values(buildEffectiveAttendanceByStudent(dailyRecords, subjectRecords)[student.id!] ?? {});
+      const effectiveDates = Object.values(buildEffectiveAttendanceByStudent(dailyRecords, subjectRecords, await getSchoolHolidays(schoolId!))[student.id!] ?? {});
       const total = effectiveDates.length;
       const present = effectiveDates.filter(s => s === 'present' || s === 'school_trip').length;
       const attendanceRate = total > 0 ? Math.round((present / total) * 100) : 100;

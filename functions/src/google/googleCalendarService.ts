@@ -25,6 +25,7 @@ export interface SchoolEventInput {
   description?: string;
   /** ISO date string YYYY-MM-DD */
   date: string;
+  endDate?: string;
   type: string;
 }
 
@@ -52,7 +53,7 @@ function buildGoogleEvent(event: SchoolEventInput) {
       ? `${event.description}\n\n[Synced from Avenir SMS — ${event.type}]`
       : `[Synced from Avenir SMS — ${event.type}]`,
     start: { date: event.date },
-    end:   { date: nextDay(event.date) },
+    end:   { date: nextDay(event.endDate && event.endDate >= event.date ? event.endDate : event.date) },
     // Colour coding by event type
     colorId: event.type === 'holiday'  ? '11'  // red
             : event.type === 'sports'  ? '2'   // sage

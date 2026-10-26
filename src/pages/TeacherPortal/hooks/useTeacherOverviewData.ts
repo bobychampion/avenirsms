@@ -1,3 +1,5 @@
+import { getSchoolHolidays } from '../../../hooks/useSchoolHolidays';
+import { schoolHolidayOn } from '../../../utils/schoolHolidays';
 import type { AttendanceStatus } from '../../../utils/attendanceStatus';
 import { useEffect, useState } from 'react';
 import { collection, getDocs, query, where } from 'firebase/firestore';
@@ -105,13 +107,15 @@ export function useTeacherOverviewData(params: {
           collection(db, 'cbt_exams'), where('schoolId', '==', schoolId), where('targetClass', '==', selectedClass),
         )).catch(() => ({ docs: [] as any[] })),
       ]);
+      const holidays = await getSchoolHolidays(schoolId);
       if (cancelled) return;
 
       // ── Attendance ──────────────────────────────────────────────────────────
       const byStudent: Record<string, { present: number; absent: number; school_trip: number; late: number; total: number }> = {};
       let present = 0, absent = 0, late = 0, school_trip = 0;
       attendanceSnap.docs.forEach(d => {
-        const data = d.data() as { studentId: string; status: AttendanceStatus };
+        const data = d.data() as { studentId: string; date: string; status: AttendanceStatus };
+        if (schoolHolidayOn(data.date, holidays)) return;
         if (!byStudent[data.studentId]) byStudent[data.studentId] = { present: 0, absent: 0, school_trip: 0, late: 0, total: 0 };
         byStudent[data.studentId].total++;
         byStudent[data.studentId][data.status]++;

@@ -565,6 +565,8 @@ export interface SchoolEvent {
   title: string;
   description: string;
   date: string;
+  /** Inclusive final day; omitted for a single-day event. */
+  endDate?: string;
   type: 'academic' | 'holiday' | 'sports' | 'other';
   schoolId?: string;
   /** Google Calendar event ID — set after successful sync */

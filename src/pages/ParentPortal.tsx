@@ -1,3 +1,5 @@
+import { useSchoolHolidays } from '../hooks/useSchoolHolidays';
+import { schoolHolidayOn } from '../utils/schoolHolidays';
 import AssessmentHistory from '../components/AssessmentHistory';
 import EarlyDepartures from '../components/EarlyDepartures';
 import { countsAsAttended, attendanceStatusLabel, type AttendanceStatus } from '../utils/attendanceStatus';
@@ -35,6 +37,7 @@ export default function ParentPortal() {
   const { user, profile } = useAuth();
   const navigate = useNavigate();
   const schoolId = useSchoolId();
+  const { holidays } = useSchoolHolidays(schoolId);
   const { getGradingForClass, locale, currency, schoolName, logoUrl, reportShowLogo, reportFooterText, attendanceMode, currentSession, hiddenBehaviourTraits, assignmentsModuleEnabled, classes, schoolDays, getPeriodSlotsForClass } = useSchool();
   // Children come from the shared useLinkedChildren hook so this page, the
   // mobile home, and the drop-off/pickup widget can never disagree about who
@@ -409,9 +412,9 @@ export default function ParentPortal() {
   const effectiveAttendanceByDate = React.useMemo(() => {
     if (!selectedChild?.id) return {};
     const daily = attendance.map(a => ({ studentId: selectedChild.id!, date: a.date, status: a.status as AttendanceStatus }));
-    const byStudent = buildEffectiveAttendanceByStudent(daily, subjectAttendanceHistory);
+    const byStudent = buildEffectiveAttendanceByStudent(daily, subjectAttendanceHistory, holidays);
     return byStudent[selectedChild.id] ?? {};
-  }, [attendance, subjectAttendanceHistory, selectedChild?.id]);
+  }, [attendance, subjectAttendanceHistory, selectedChild?.id, holidays]);
 
   const handleSubmitAbsence = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -902,11 +905,11 @@ export default function ParentPortal() {
       {activeTab === 'attendance' && (() => {
         // Unique months with data, newest first
         const availableMonths = Array.from(
-          new Set<string>(attendance.map(a => a.date.slice(0, 7)))
+          new Set<string>([new Date().toISOString().slice(0, 7), ...attendance.map(a => a.date.slice(0, 7)), ...holidays.flatMap(h => [h.date.slice(0, 7), (h.endDate || h.date).slice(0, 7)])])
         ).sort((a, b) => b.localeCompare(a));
 
         // Always show a specific month in the grid; default to most recent with data
-        const displayMonth = attendanceMonth || availableMonths[0] || new Date().toISOString().slice(0, 7);
+        const displayMonth = attendanceMonth || new Date().toISOString().slice(0, 7);
         const [gridYear, gridMonth] = displayMonth.split('-').map(Number);
         const daysInMonth = new Date(gridYear, gridMonth, 0).getDate();
         const days = Array.from({ length: daysInMonth }, (_, i) => i + 1);
@@ -976,6 +979,7 @@ export default function ParentPortal() {
                     { label: 'Absent',    dot: 'bg-rose-300'    },
                     { label: 'Late',      dot: 'bg-amber-300'   },
                     { label: 'School trip', dot: 'bg-blue-300' },
+                    { label: 'Holiday (H)', dot: 'bg-amber-200' },
                     { label: 'No record', dot: 'bg-slate-200'   },
                   ].map(l => (
                     <span key={l.label} className="flex items-center gap-1.5 font-medium">
@@ -1024,6 +1028,8 @@ export default function ParentPortal() {
                         </td>
                         {days.map(d => {
                           const ds = dateStr(d);
+                          const holiday = schoolHolidayOn(ds, holidays);
+                          if (holiday) return <td key={d} title={'Holiday — ' + holiday.title} className="py-3 text-center bg-amber-50"><span className="inline-flex w-5 h-5 rounded items-center justify-center bg-amber-200 text-amber-900 text-[10px] font-bold">H</span></td>;
                           const st = dateMap[ds];
                           const expandable = attendanceMode !== 'daily_only' && !!st;
                           return (

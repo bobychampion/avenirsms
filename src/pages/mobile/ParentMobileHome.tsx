@@ -1,3 +1,5 @@
+import { useSchoolHolidays } from '../../hooks/useSchoolHolidays';
+import { schoolHolidayOn } from '../../utils/schoolHolidays';
 import { attendanceStatusLabel } from '../../utils/attendanceStatus';
 import React, { useEffect, useState } from 'react';
 import {
@@ -35,6 +37,7 @@ const ATT_ICON: Record<string, React.ElementType> = {
 export default function ParentMobileHome() {
   const { profile } = useAuth();
   const schoolId = useSchoolId();
+  const { holidays } = useSchoolHolidays(schoolId);
   const { locale, currency, attendanceMode } = useSchool();
   const { children } = useLinkedChildren();
   const [selectedChild, setSelectedChild] = useState<(Student & { id: string }) | null>(null);
@@ -70,9 +73,9 @@ export default function ParentMobileHome() {
     const recompute = () => {
       const daily = dailyDocs.map(a => ({ studentId, date: a.date, status: a.status }));
       const subject = subjectDocs.map(sa => ({ studentId, attendanceDate: sa.attendanceDate, status: sa.status, inheritedFromDaily: sa.inheritedFromDaily }));
-      const effectiveDates = buildEffectiveAttendanceByStudent(daily, subject)[studentId] ?? {};
+      const effectiveDates = buildEffectiveAttendanceByStudent(daily, subject, holidays)[studentId] ?? {};
       const map: Record<string, Attendance> = {};
-      dailyDocs.forEach(a => { map[a.date] = a; });
+      dailyDocs.forEach(a => { if (!schoolHolidayOn(a.date, holidays)) map[a.date] = a; });
       Object.entries(effectiveDates).forEach(([date, status]) => {
         map[date] = { ...(map[date] ?? { studentId, date, class: '' } as Attendance), status };
       });
@@ -103,7 +106,7 @@ export default function ParentMobileHome() {
         )
       : () => {};
     return () => { unsub(); unsubSubject(); };
-  }, [selectedChild?.id, schoolId, attendanceMode]);
+  }, [selectedChild?.id, schoolId, attendanceMode, holidays]);
 
   // Load pending invoices for selected child
   useEffect(() => {
@@ -205,6 +208,8 @@ export default function ParentMobileHome() {
               <div className="bg-white rounded-2xl p-4 shadow-sm border border-slate-100">
                 <div className="flex justify-between">
                   {weekDays.map(dayISO => {
+                    const holiday = schoolHolidayOn(dayISO, holidays);
+                    if (holiday) return <div key={dayISO} title={'Holiday — ' + holiday.title} className="flex flex-col items-center gap-1"><span className="text-[10px] text-slate-500">{format(new Date(dayISO + 'T12:00:00'), 'EEE')}</span><span className="w-8 h-8 flex items-center justify-center rounded-full bg-amber-200 text-amber-900 text-xs font-bold">H</span></div>;
                     const record = weekAttendance[dayISO];
                     const dayLabel = format(new Date(dayISO + 'T12:00:00'), 'EEE');
                     const dayNum = format(new Date(dayISO + 'T12:00:00'), 'd');

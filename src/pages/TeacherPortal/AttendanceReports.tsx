@@ -1,3 +1,5 @@
+import { useSchoolHolidays } from '../../hooks/useSchoolHolidays';
+import { schoolHolidayOn } from '../../utils/schoolHolidays';
 import EarlyDepartures, { useEarlyDepartures } from '../../components/EarlyDepartures';
 import { departureDescription } from '../../utils/earlyDeparture';
 import { isAttendanceWeekend, attendanceDayTitle } from '../../utils/attendanceCalendar';
@@ -37,13 +39,19 @@ interface Props {
  * teacher's numbers never disagree with what an admin or parent sees for the same student.
  */
 export default function AttendanceReports({ view, schoolId, selectedClass, classId, students, attendanceMode }: Props) {
+  const { holidays, loading: holidaysLoading, error: holidaysError } = useSchoolHolidays(schoolId);
   const { records: departureRecords } = useEarlyDepartures(schoolId, selectedClass);
+  useEffect(() => {
+    setReportData([]); setMonthlyData([]); setMonthlySubjectRecords([]); setExpandedCell(null);
+  }, [holidays]);
+
   // ── Report ──────────────────────────────────────────────────────────────────
   const [reportData, setReportData] = useState<{ studentId: string; studentName: string; present: number; absent: number; late: number; school_trip: number; rate: number }[]>([]);
   const [loadingReport, setLoadingReport] = useState(false);
   const [aiAlertLoading, setAiAlertLoading] = useState<string | null>(null);
 
   const loadReport = async () => {
+    if (holidaysLoading || holidaysError) return;
     if (!selectedClass || !schoolId) return;
     setLoadingReport(true);
     try {
@@ -66,7 +74,7 @@ export default function AttendanceReports({ view, schoolId, selectedClass, class
         });
       }
 
-      const effectiveByStudent = buildEffectiveAttendanceByStudent(dailyRecords, subjectRecords);
+      const effectiveByStudent = buildEffectiveAttendanceByStudent(dailyRecords, subjectRecords, holidays);
       const byStudent: Record<string, { id: string; name: string; present: number; absent: number; late: number; school_trip: number }> = {};
       Object.entries(effectiveByStudent).forEach(([studentId, byDate]) => {
         const student = students.find(s => s.id === studentId);
@@ -93,7 +101,7 @@ export default function AttendanceReports({ view, schoolId, selectedClass, class
   useEffect(() => {
     if (view === 'report' && selectedClass) loadReport();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [view, selectedClass, classId, attendanceMode]);
+  }, [view, selectedClass, classId, attendanceMode, holidays, holidaysLoading, holidaysError]);
 
   const sendAIAlert = async (row: typeof reportData[0]) => {
     setAiAlertLoading(row.studentId);
@@ -135,6 +143,7 @@ export default function AttendanceReports({ view, schoolId, selectedClass, class
   const [expandedCell, setExpandedCell] = useState<{ studentId: string; date: string } | null>(null);
 
   const loadMonthlyData = async () => {
+    if (holidaysLoading || holidaysError) return;
     if (!selectedClass || !selectedMonth || !schoolId) return;
     setLoadingMonthly(true);
     const [year, month] = selectedMonth.split('-').map(Number);
@@ -173,7 +182,7 @@ export default function AttendanceReports({ view, schoolId, selectedClass, class
         studentId: data.studentId, attendanceDate: data.attendanceDate, status: data.status, inheritedFromDaily: data.inheritedFromDaily,
       }));
 
-      const lookup = buildEffectiveAttendanceByStudent(dailyRecords, subjectRecords);
+      const lookup = buildEffectiveAttendanceByStudent(dailyRecords, subjectRecords, holidays);
       const rows = students.map(s => {
         const cells: Record<string, AttStatus | null> = {};
         let present = 0, absent = 0, late = 0, school_trip = 0;
@@ -197,12 +206,12 @@ export default function AttendanceReports({ view, schoolId, selectedClass, class
   // Real lessons per student per day for the loaded month, keyed "studentId|YYYY-MM-DD".
   const monthlyLessons = useMemo(() => {
     const byCell: Record<string, SubjectAttendance[]> = {};
-    dedupeSubjectLessons<SubjectAttendance>(monthlySubjectRecords).forEach(r => {
+    dedupeSubjectLessons<SubjectAttendance>(monthlySubjectRecords.filter(r => !schoolHolidayOn(r.attendanceDate, holidays))).forEach(r => {
       (byCell[`${r.studentId}|${r.attendanceDate}`] ??= []).push(r);
     });
     Object.values(byCell).forEach(list => list.sort((a, b) => a.subjectName.localeCompare(b.subjectName)));
     return byCell;
-  }, [monthlySubjectRecords]);
+  }, [monthlySubjectRecords, holidays]);
 
   // Reset the loaded month's data when the class changes so stale numbers never show under a
   // new class name — matches admin's "click Load Month" gesture rather than auto-fetching.
@@ -328,6 +337,7 @@ export default function AttendanceReports({ view, schoolId, selectedClass, class
                     <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-blue-200 inline-block" />School trip</span>
                     <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-slate-100 inline-block" />No record</span>
                     <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-violet-100 inline-block" />Weekend</span>
+                    <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-amber-200 inline-block" />H: Holiday (excluded)</span>
                     <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-purple-600 inline-block" />Left early</span>
                     {attendanceMode !== 'daily_only' && (
                       <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-rose-500 inline-block" />Missed a subject lesson</span>
@@ -340,7 +350,7 @@ export default function AttendanceReports({ view, schoolId, selectedClass, class
                       <tr className="bg-slate-50 border-b border-slate-200">
                         <th className="px-3 py-2 text-left font-bold text-slate-500 sticky left-0 bg-slate-50 z-10 min-w-[140px]">Student</th>
                         {days.map(d => (
-                          <th key={d} title={attendanceDayTitle(d)} className={`px-1 py-2 text-center font-bold min-w-[28px] ${isAttendanceWeekend(d) ? 'bg-violet-100 text-violet-700' : 'text-slate-400'}`}>{Number(d.split('-')[2])}</th>
+                          <th key={d} title={schoolHolidayOn(d, holidays) ? 'Holiday — ' + schoolHolidayOn(d, holidays)!.title : attendanceDayTitle(d)} className={`px-1 py-2 text-center font-bold min-w-[28px] ${schoolHolidayOn(d, holidays) ? 'bg-amber-100 text-amber-800' : isAttendanceWeekend(d) ? 'bg-violet-100 text-violet-700' : 'text-slate-400'}`}>{Number(d.split('-')[2])}</th>
                         ))}
                         <th className="px-3 py-2 text-center font-bold text-slate-500 min-w-[60px]">P</th>
                         <th className="px-3 py-2 text-center font-bold text-slate-500 min-w-[60px]">A</th>
@@ -355,6 +365,8 @@ export default function AttendanceReports({ view, schoolId, selectedClass, class
                         <tr key={row.studentId} className="hover:bg-slate-50 transition-colors">
                           <td className="px-3 py-1.5 font-medium text-slate-800 sticky left-0 bg-white z-10">{row.studentName}</td>
                           {days.map(d => {
+                            const holiday = schoolHolidayOn(d, holidays);
+                            if (holiday) return <td key={d} className="px-1 py-1.5 text-center bg-amber-50"><span title={'Holiday — ' + holiday.title} className="inline-flex w-5 h-5 items-center justify-center rounded bg-amber-200 text-amber-900 text-[10px] font-bold">H</span></td>;
                             const st = row.cells[d];
                             const bg = st === 'present' ? 'bg-emerald-200' : st === 'absent' ? 'bg-rose-200' : st === 'late' ? 'bg-amber-200' : st === 'school_trip' ? 'bg-blue-200' : 'bg-slate-100';
                             const title = st ? attendanceStatusLabel(st) : '—';

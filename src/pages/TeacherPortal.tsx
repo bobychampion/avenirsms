@@ -1,3 +1,6 @@
+import HolidayAttendanceGate from '../components/HolidayAttendanceGate';
+import { useSchoolHolidays } from '../hooks/useSchoolHolidays';
+import { schoolHolidayOn } from '../utils/schoolHolidays';
 import { useClassSubjectRoster } from '../hooks/useClassSubjectRoster';
 import ActivityWorkspace from '../components/ActivityWorkspace';
 import { permittedSubjects, resolveGradeSubject, teachingStudents, visibleSkills } from '../utils/teacherRoster';
@@ -63,6 +66,7 @@ export default function TeacherPortal() {
   const { classNames, classes, subjects, currentSession, currentTerm, getGradingForClass, terms, schoolName, schoolDays, attendanceMode, hiddenBehaviourTraits, assignmentsModuleEnabled } = useSchool();
   const behaviourTraits = visibleSkillLabels(hiddenBehaviourTraits);
   const schoolId = useSchoolId();
+  const { holidays, loading: holidaysLoading, error: holidaysError } = useSchoolHolidays(schoolId);
 
   // Derived helpers (safe fallbacks)
   const allClasses = classNames.length > 0 ? classNames : ['—'];
@@ -744,6 +748,7 @@ export default function TeacherPortal() {
   };
 
   const handleSaveAttendance = async () => {
+    if (holidaysLoading || holidaysError || schoolHolidayOn(attendanceDate, holidays)) { toast.error('Attendance cannot be saved until the school calendar is available and the date is a school day.'); return; }
     if (!user || attendanceRows.length === 0) return;
     setSavingAttendance(true);
     const records = attendanceRows.map(r => ({
@@ -878,6 +883,7 @@ export default function TeacherPortal() {
   };
 
   const handleSaveSubjectAttendance = async () => {
+    if (holidaysLoading || holidaysError || schoolHolidayOn(attendanceDate, holidays)) { toast.error('Attendance cannot be saved until the school calendar is available and the date is a school day.'); return; }
     if (!user || !teachingRosterReady || extraSubjectStudents.loading || extraSubjectStudents.error || !mySubjectOptionsForSelectedClass.includes(subjectAttendanceSubject) || subjectAttendanceRows.length === 0) return;
     const classId = myClassNameToId[selectedClass];
     if (!classId) return;
@@ -1648,7 +1654,7 @@ export default function TeacherPortal() {
             </div>
 
             {attendanceView === 'mark' && (
-            <>
+            <HolidayAttendanceGate schoolId={schoolId} date={attendanceDate}>
             <EarlyDepartures schoolId={schoolId} className={selectedClass} date={attendanceDate} students={attendanceRows} editable />
             <div className="flex flex-wrap gap-2 mb-5">
               <button onClick={() => setAllStatus('present')} className="px-4 py-1.5 bg-emerald-600 text-white text-xs font-bold rounded-xl hover:bg-emerald-700 transition-colors flex items-center gap-1.5">
@@ -1764,7 +1770,7 @@ export default function TeacherPortal() {
                 </div>
               </div>
             )}
-            </>
+            </HolidayAttendanceGate>
             )}
           </div>
           {attendanceView !== 'mark' && (
@@ -1838,6 +1844,7 @@ export default function TeacherPortal() {
               </div>
             </div>
 
+            <HolidayAttendanceGate schoolId={schoolId} date={attendanceDate}>
             {subjectAttendanceSubject && <EarlyDepartures schoolId={schoolId} className={selectedClass} date={attendanceDate}
               students={subjectAttendanceRows} subjectName={subjectAttendanceSubject} timetablePeriodId={subjectAttendanceTimetablePeriodId}
               editable={teachingRosterReady && mySubjectOptionsForSelectedClass.includes(subjectAttendanceSubject)} />}
@@ -1929,6 +1936,7 @@ export default function TeacherPortal() {
                 </div>
               </div>
             )}
+            </HolidayAttendanceGate>
           </div>
           )}
         </div>

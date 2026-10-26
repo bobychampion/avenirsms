@@ -1,3 +1,6 @@
+import HolidayAttendanceGate from '../components/HolidayAttendanceGate';
+import { useSchoolHolidays } from '../hooks/useSchoolHolidays';
+import { schoolHolidayOn } from '../utils/schoolHolidays';
 import EarlyDepartures, { useEarlyDepartures } from '../components/EarlyDepartures';
 import { additionalAttendanceIds, mergeAttendanceStudents } from '../utils/subjectAttendanceRoster';
 import { useAdditionalAttendanceStudents } from '../hooks/useAdditionalAttendanceStudents';
@@ -37,6 +40,7 @@ interface AttendanceRow {
 export default function AttendancePage() {
   const { user } = useAuth();
   const schoolId = useSchoolId();
+  const { holidays, loading: holidaysLoading, error: holidaysError } = useSchoolHolidays(schoolId);
   const { attendanceMode, currentSession, currentTerm } = useSchool();
   const [selectedClass, setSelectedClass] = useState('');
   const { records: departureRecords } = useEarlyDepartures(schoolId, selectedClass);
@@ -102,6 +106,12 @@ export default function AttendancePage() {
 
   const isOnApprovedLeave = (studentId: string, date: string) =>
     approvedAbsences.some(a => a.studentId === studentId && a.startDate <= date && a.endDate >= date);
+
+  useEffect(() => {
+    setReportData([]); setMonthlyData([]); setMonthlySubjectRecords([]); setExpandedCell(null);
+  }, [holidays]);
+
+  useEffect(() => { if (activeTab === 'report' && !holidaysLoading && !holidaysError) loadReport(); }, [holidays, holidaysLoading, holidaysError]);
 
   // Load classes from Firestore so the dropdown matches actual data
   useEffect(() => {
@@ -177,6 +187,7 @@ export default function AttendancePage() {
   };
 
   const handleSave = async () => {
+    if (holidaysLoading || holidaysError || schoolHolidayOn(selectedDate, holidays)) { toast.error('Attendance cannot be saved until the school calendar is available and the date is a school day.'); return; }
     if (!user) return;
     setSaving(true);
     const records = attendanceRows.map(r => ({
@@ -305,6 +316,7 @@ export default function AttendancePage() {
   };
 
   const handleSaveSubjectMarks = async () => {
+    if (holidaysLoading || holidaysError || schoolHolidayOn(selectedDate, holidays)) { toast.error('Attendance cannot be saved until the school calendar is available and the date is a school day.'); return; }
     if (!user || !selectedClassId || !markSubject || extraMarkStudents.loading || extraMarkStudents.error || subjectMarkRows.length === 0) return;
     setSavingSubjectMarks(true);
     // Credit the lesson to the subject's assigned teacher; recordedBy still says who actually saved it.
@@ -342,6 +354,7 @@ export default function AttendancePage() {
   };
 
   const loadReport = async () => {
+    if (holidaysLoading || holidaysError) return;
     if (!selectedClass) return;
     setLoadingReport(true);
     const q = query(collection(db, 'attendance'), where('schoolId', '==', schoolId!), where('class', '==', selectedClass));
@@ -369,7 +382,7 @@ export default function AttendancePage() {
       }
     }
 
-    const effectiveByStudent = buildEffectiveAttendanceByStudent(dailyRecords, subjectRecords);
+    const effectiveByStudent = buildEffectiveAttendanceByStudent(dailyRecords, subjectRecords, holidays);
     const byStudent: Record<string, { id: string; name: string; present: number; absent: number; late: number; school_trip: number }> = {};
     Object.entries(effectiveByStudent).forEach(([studentId, byDate]) => {
       const student = students.find(s => s.id === studentId);
@@ -422,18 +435,18 @@ export default function AttendancePage() {
   // "studentId|YYYY-MM-DD" — drives the clickable day cells in the Monthly grid.
   const monthlyLessons = useMemo(() => {
     const byCell: Record<string, SubjectAttendance[]> = {};
-    dedupeSubjectLessons<SubjectAttendance>(monthlySubjectRecords).forEach(r => {
+    dedupeSubjectLessons<SubjectAttendance>(monthlySubjectRecords.filter(r => !schoolHolidayOn(r.attendanceDate, holidays))).forEach(r => {
       (byCell[`${r.studentId}|${r.attendanceDate}`] ??= []).push(r);
     });
     Object.values(byCell).forEach(list => list.sort((a, b) => a.subjectName.localeCompare(b.subjectName)));
     return byCell;
-  }, [monthlySubjectRecords]);
+  }, [monthlySubjectRecords, holidays]);
 
   // Student × subject grid for the selected day (or all recorded dates); see buildSubjectMatrix
   // for how duplicate records of the same lesson are collapsed.
   const subjectMatrix = useMemo(
-    () => buildSubjectMatrix(subjectReportRecords, subjectScope === 'day' ? selectedDate : undefined),
-    [subjectReportRecords, subjectScope, selectedDate],
+    () => buildSubjectMatrix(subjectReportRecords.filter(r => !schoolHolidayOn(r.attendanceDate, holidays)), subjectScope === 'day' ? selectedDate : undefined),
+    [subjectReportRecords, subjectScope, selectedDate, holidays],
   );
 
   // ── Special Lessons report: per-lesson enrollment + attendance rate ──
@@ -463,6 +476,7 @@ export default function AttendancePage() {
   }, [specialLessons, specialLessonReportRecords]);
 
   const loadMonthlyData = async () => {
+    if (holidaysLoading || holidaysError) return;
     if (!selectedClass || !selectedMonth) return;
     setLoadingMonthly(true);
     const [year, month] = selectedMonth.split('-').map(Number);
@@ -512,7 +526,7 @@ export default function AttendancePage() {
     }));
 
     // Build lookup: studentId -> day -> effective status
-    const lookup = buildEffectiveAttendanceByStudent(dailyRecords, subjectRecords);
+    const lookup = buildEffectiveAttendanceByStudent(dailyRecords, subjectRecords, holidays);
     const rows = students.map(s => {
       const cells: Record<string, AttendanceStatus | null> = {};
       let present = 0, absent = 0, late = 0, school_trip = 0;
@@ -592,7 +606,7 @@ export default function AttendancePage() {
     try {
       const snap = await getDocs(query(collection(db, 'attendance'), where('schoolId', '==', schoolId)));
       const nameById = Object.fromEntries(students.map(s => [s.id, s.studentName]));
-      exportAttendanceCsv(snap.docs.map(d => {
+      exportAttendanceCsv(snap.docs.filter(d => !schoolHolidayOn(d.data().date, holidays)).map(d => {
         const data = d.data() as Attendance;
         return { ...data, studentName: nameById[data.studentId] ?? '' };
       }));
@@ -694,7 +708,7 @@ export default function AttendancePage() {
       </div>
 
       {activeTab === 'mark' && selectedClass && (
-        <>
+        <HolidayAttendanceGate schoolId={schoolId} date={selectedDate}>
           {/* Summary + Quick Actions */}
           <div className="flex flex-wrap gap-3 mb-4 items-center justify-between">
             <div className="flex flex-wrap gap-3">
@@ -782,7 +796,7 @@ export default function AttendancePage() {
               </button>
             </div>
           )}
-        </>
+        </HolidayAttendanceGate>
       )}
 
       {activeTab === 'report' && (
@@ -879,6 +893,7 @@ export default function AttendancePage() {
             )}
           </div>
 
+          <HolidayAttendanceGate schoolId={schoolId} date={selectedDate}>
           {markSubject && <EarlyDepartures schoolId={schoolId} className={selectedClass} date={selectedDate}
             students={subjectMarkRows} subjectName={markSubject} editable />}
 
@@ -977,6 +992,7 @@ export default function AttendancePage() {
               </div>
             </>
           )}
+          </HolidayAttendanceGate>
         </div>
       )}
 
@@ -989,7 +1005,7 @@ export default function AttendancePage() {
               <button
                 onClick={() => {
                   const nameById = Object.fromEntries(students.map(s => [s.id, s.studentName]));
-                  exportSubjectAttendanceCsv(subjectReportRecords.map(r => ({ ...r, studentName: nameById[r.studentId] ?? r.studentName })));
+                  exportSubjectAttendanceCsv(subjectReportRecords.filter(r => !schoolHolidayOn(r.attendanceDate, holidays)).map(r => ({ ...r, studentName: nameById[r.studentId] ?? r.studentName })));
                 }}
                 className="flex items-center gap-2 px-4 py-2 rounded-xl border border-slate-200 text-sm font-semibold text-slate-700 hover:bg-slate-50"
               >
@@ -1259,6 +1275,7 @@ export default function AttendancePage() {
                     <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-blue-200 inline-block" />School trip</span>
                     <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-slate-100 inline-block" />No record</span>
                     <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-violet-100 inline-block" />Weekend</span>
+                    <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-amber-200 inline-block" />H: Holiday (excluded)</span>
                     <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-purple-600 inline-block" />Left early</span>
                     {attendanceMode !== 'daily_only' && (
                       <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-rose-500 inline-block" />Missed a subject lesson</span>
@@ -1271,7 +1288,7 @@ export default function AttendancePage() {
                       <tr className="bg-slate-50 border-b border-slate-200">
                         <th className="px-3 py-2 text-left font-bold text-slate-500 sticky left-0 bg-slate-50 z-10 min-w-[140px]">Student</th>
                         {days.map(d => (
-                          <th key={d} title={attendanceDayTitle(d)} className={`px-1 py-2 text-center font-bold min-w-[28px] ${isAttendanceWeekend(d) ? 'bg-violet-100 text-violet-700' : 'text-slate-400'}`}>
+                          <th key={d} title={schoolHolidayOn(d, holidays) ? 'Holiday — ' + schoolHolidayOn(d, holidays)!.title : attendanceDayTitle(d)} className={`px-1 py-2 text-center font-bold min-w-[28px] ${schoolHolidayOn(d, holidays) ? 'bg-amber-100 text-amber-800' : isAttendanceWeekend(d) ? 'bg-violet-100 text-violet-700' : 'text-slate-400'}`}>
                             {Number(d.split('-')[2])}
                           </th>
                         ))}
@@ -1288,6 +1305,8 @@ export default function AttendancePage() {
                         <tr key={row.studentId} className="hover:bg-slate-50 transition-colors">
                           <td className="px-3 py-1.5 font-medium text-slate-800 sticky left-0 bg-white z-10">{row.studentName}</td>
                           {days.map(d => {
+                            const holiday = schoolHolidayOn(d, holidays);
+                            if (holiday) return <td key={d} className="px-1 py-1.5 text-center bg-amber-50"><span title={'Holiday — ' + holiday.title} className="inline-flex w-5 h-5 items-center justify-center rounded bg-amber-200 text-amber-900 text-[10px] font-bold">H</span></td>;
                             const st = row.cells[d];
                             const bg = st === 'present' ? 'bg-emerald-200' : st === 'absent' ? 'bg-rose-200' : st === 'late' ? 'bg-amber-200' : st === 'school_trip' ? 'bg-blue-200' : 'bg-slate-100';
                             const title = st ? attendanceStatusLabel(st) : '—';

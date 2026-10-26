@@ -1,3 +1,4 @@
+import { getSchoolHolidays } from '../hooks/useSchoolHolidays';
 import React, { useState, useEffect } from 'react';
 import { db } from '../firebase';
 import { collection, getDocs, query, where } from 'firebase/firestore';
@@ -67,7 +68,7 @@ export default function AnalyticsDashboard() {
       const data = d.data();
       return { studentId: data.studentId as string, attendanceDate: data.attendanceDate as string, status: data.status as 'present'|'absent'|'late', inheritedFromDaily: !!data.inheritedFromDaily };
     });
-    const effectiveValues = Object.values(buildEffectiveAttendanceByStudent(dailyRecords, subjectRecords)).flatMap(byDate => Object.values(byDate));
+    const effectiveValues = Object.values(buildEffectiveAttendanceByStudent(dailyRecords, subjectRecords, await getSchoolHolidays(schoolId!))).flatMap(byDate => Object.values(byDate));
     const total = effectiveValues.length;
     const present = effectiveValues.filter(s => s === 'present').length;
     const activeStudents = stSnap.docs?.filter((d:any)=>d.data().admissionStatus!=='withdrawn').length||0;

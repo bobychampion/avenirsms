@@ -1,3 +1,5 @@
+import { schoolHolidayOn } from '../utils/schoolHolidays';
+import { getSchoolHolidays, useSchoolHolidays } from '../hooks/useSchoolHolidays';
 import type { AttendanceStatus } from '../utils/attendanceStatus';
 import React, { useState, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
@@ -205,6 +207,11 @@ export default function AdminDashboard() {
   const { user } = useAuth();
   const { locale, currency, schoolDays, hasDivisions, divisionOfClass, attendanceMode } = useSchool();
   const schoolId = useSchoolId();
+  const { holidays } = useSchoolHolidays(schoolId);
+  const holidaysRef = useRef(holidays);
+  holidaysRef.current = holidays;
+  const refreshHolidayAttendance = useRef<() => void>(() => {});
+  useEffect(() => { refreshHolidayAttendance.current(); }, [holidays]);
   const fmt = (amount: number) => formatCurrency(amount, locale, currency);
 
   // ─── Onboarding ──────────────────────────────────────────────────────────────
@@ -333,7 +340,7 @@ export default function AdminDashboard() {
         if (!classById[data.studentId]) classById[data.studentId] = data.className;
         return { studentId: data.studentId as string, attendanceDate: data.attendanceDate as string, status: data.status as AttendanceStatus, inheritedFromDaily: !!data.inheritedFromDaily };
       });
-      const effectiveByStudent = buildEffectiveAttendanceByStudent(dailyRecords, subjectRecords);
+      const effectiveByStudent = buildEffectiveAttendanceByStudent(dailyRecords, subjectRecords, holidaysRef.current);
       const byClass: Record<string, { present: number; absent: number; school_trip: number; late: number }> = {};
       Object.entries(effectiveByStudent).forEach(([studentId, byDate]) => {
         const cls = classById[studentId];
@@ -349,6 +356,7 @@ export default function AdminDashboard() {
       );
     };
 
+    refreshHolidayAttendance.current = recomputeTodayAttendance;
     const unsubStudentAtt = onSnapshot(
       query(collection(db, 'attendance'), where('schoolId', '==', schoolId!), where('date', '==', today)),
       snap => { todayDailyDocs = snap.docs; recomputeTodayAttendance(); },
@@ -363,6 +371,7 @@ export default function AdminDashboard() {
     // ── Idle-class alert: every 5 min check for started-but-unteachered periods ──
     const idleCheck = setInterval(() => {
       const now = new Date();
+      if (schoolHolidayOn(today, holidaysRef.current)) return;
       const liveClasses = computeLiveClasses(timetablesRef.current, checkinsRef.current, now, schoolDays);
       liveClasses.forEach(cls => {
         if (cls.status !== 'scheduled') return;           // only "due but no check-in"
@@ -425,7 +434,7 @@ export default function AdminDashboard() {
         const data = d.data();
         return { studentId: data.studentId as string, attendanceDate: data.attendanceDate as string, status: data.status as AttendanceStatus, inheritedFromDaily: !!data.inheritedFromDaily };
       });
-      const effectiveValues = Object.values(buildEffectiveAttendanceByStudent(dailyRecords, subjectRecords)).flatMap(byDate => Object.values(byDate));
+      const effectiveValues = Object.values(buildEffectiveAttendanceByStudent(dailyRecords, subjectRecords, await getSchoolHolidays(schoolId!))).flatMap(byDate => Object.values(byDate));
       const attTotal = effectiveValues.length;
       const attPresent = effectiveValues.filter(s => s === 'present' || s === 'school_trip').length;
       setAttendanceRate(attTotal > 0 ? Math.round((attPresent / attTotal) * 100) : 0);

@@ -2,6 +2,7 @@ import type { VercelResponse } from '@vercel/node';
 import { getFirestore, getMessaging } from './admin.js';
 import { sendToRecipients } from '../comms.js';
 import { Timestamp } from 'firebase-admin/firestore';
+import { schoolHolidayLookup } from '../../functions/src/utils/schoolCalendarDates.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Shared cron job bodies. These live under api/_lib/ (not a deployable route)
@@ -142,6 +143,7 @@ export async function runDailyReminders(res: VercelResponse) {
   console.log(`[dailyReminders] Students absent 3+ consecutive days: ${consecutivelyAbsent.length}`);
   let absenceAlertsSent = 0;
 
+  const isSchoolHoliday = schoolHolidayLookup(db);
   for (const studentId of consecutivelyAbsent) {
     try {
       const absenceReqSnap = await db
@@ -157,6 +159,7 @@ export async function runDailyReminders(res: VercelResponse) {
       const studentDoc = await db.doc(`students/${studentId}`).get();
       const student = studentDoc.data();
       if (!student?.guardianUserId) continue;
+      if (await isSchoolHoliday(student.schoolId ?? '', [todayStr, ...schoolDays])) continue;
 
       const tokenDoc = await db.doc(`fcm_tokens/${student.guardianUserId}`).get();
       const token = tokenDoc.data()?.token;
@@ -291,12 +294,14 @@ export async function runAttendanceWatch(res: VercelResponse) {
   let alertsSent = 0;
   const details: Array<{ schoolId: string; class: string; subject: string; startTime: string }> = [];
 
+  const isSchoolHoliday = schoolHolidayLookup(db);
   for (const settingsDoc of settingsSnap.docs) {
     const schoolId = settingsDoc.id;
     const s = settingsDoc.data();
     const grace = Math.max(0, Math.min(180, Number(s.attendanceAlertGraceMinutes ?? 15)));
     const { weekday, dateStr, minutes: nowMin } = nowInTz(s.timezone);
     schoolsChecked++;
+    if (await isSchoolHoliday(schoolId, [dateStr])) continue;
 
     // Single-field query (no composite index); session/term filtered in memory.
     const ttSnap = await db.collection('timetables').where('schoolId', '==', schoolId).get();

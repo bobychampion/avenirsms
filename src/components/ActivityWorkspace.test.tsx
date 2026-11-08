@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import ActivityWorkspace from './ActivityWorkspace';
 const state = vi.hoisted(() => ({ exportCsv: vi.fn() }));
 vi.mock('./FirebaseProvider', () => ({ useAuth: () => ({ user: { uid: 'leader' }, isAdmin: false, isSuperAdmin: false }) }));
-vi.mock('./SchoolContext', () => ({ useSchool: () => ({ timezone: 'UTC' }) }));
+vi.mock('./SchoolContext', () => ({ useSchool: () => ({ timezone: 'Central European Summer Time' }) }));
 vi.mock('../hooks/useActivityWorkspace', () => ({ useActivityWorkspace: () => ({ ready: true, error: '', activity: { id: 'a', schoolId: 's', name: 'Legacy revision', status: 'active', teacherIds: ['leader'], teacherNames: ['Leader'], enrolledStudentIds: [], days: [], time: '4–5 pm' }, students: [], meetings: [
   { id: 'first', title: 'Afternoon rehearsal', date: '2026-10-21', startTime: '15:00', endTime: '16:00', status: 'scheduled', items: [] },
   { id: 'second', title: 'Evening performance', date: '2026-10-21', startTime: '18:00', endTime: '19:00', status: 'scheduled', items: [] },

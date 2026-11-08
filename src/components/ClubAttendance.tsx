@@ -1,3 +1,4 @@
+import { schoolCalendarDate } from '../utils/schoolTimeZone';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { collection, doc, documentId, getDocs, onSnapshot, query, where } from 'firebase/firestore';
 import { db } from '../firebase';
@@ -13,7 +14,7 @@ import toast from 'react-hot-toast';
 export default function ClubAttendance({ schoolId, clubId, existingDatesOnly = false }: { schoolId: string; clubId: string; existingDatesOnly?: boolean }) {
   const { user, isAdmin, isSuperAdmin } = useAuth();
   const { timezone } = useSchool();
-  const today = new Intl.DateTimeFormat('en-CA', { timeZone: timezone || 'UTC', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+  const today = schoolCalendarDate(timezone);
   const [date, setDate] = useState(today);
   const [club, setClub] = useState<SpecialLesson | null>(null);
   const [roster, setRoster] = useState<Student[]>([]);

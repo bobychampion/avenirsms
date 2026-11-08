@@ -1,3 +1,4 @@
+import { schoolCalendarDate } from '../utils/schoolTimeZone';
 import React, { useState } from 'react';
 import { useActivityWorkspace } from '../hooks/useActivityWorkspace';
 import { useAuth } from './FirebaseProvider';
@@ -16,7 +17,7 @@ export default function ActivityWorkspace({ schoolId, activityId, onBack, onEdit
   const data = useActivityWorkspace(schoolId, activityId);
   const { user, isAdmin, isSuperAdmin } = useAuth();
   const { timezone } = useSchool();
-  const today = new Intl.DateTimeFormat('en-CA', { timeZone: timezone || 'UTC', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+  const today = schoolCalendarDate(timezone);
   const [tab, setTab] = useState('overview');
   const [meetingEditor, setMeetingEditor] = useState<ActivityMeeting | 'new' | null>(null);
   const [selectedId, setSelectedId] = useState('');

@@ -1,3 +1,4 @@
+import { supportedSchoolTimeZone } from '../utils/schoolTimeZone';
 import React, { useState, useEffect, useRef } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { db, handleFirestoreError, OperationType } from '../firebase';
@@ -1382,6 +1383,8 @@ export default function SchoolSettingsPage() {
   };
 
   const handleSave = async () => {
+    const timezone = supportedSchoolTimeZone(form.timezone);
+    if (!timezone) { toast.error('Enter a valid timezone, for example Europe/Ljubljana or Africa/Lagos.'); return; }
     setSaving(true);
     const tid = toast.loading('Saving settings…');
     try {
@@ -1408,7 +1411,7 @@ export default function SchoolSettingsPage() {
         // Mark settings step done for onboarding wizard
         onboardingSettingsDone: true,
       });
-      setForm(f => ({ ...f, gradingConfigHistory }));
+      setForm(f => ({ ...f, timezone: f.timezone.trim() ? timezone : '', gradingConfigHistory }));
       setIsDirty(false);
       toast.success('Settings saved!', { id: tid });
     } catch (e: any) {
@@ -1661,7 +1664,7 @@ export default function SchoolSettingsPage() {
               </div>
               <div>
                 <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">Timezone <span className="font-normal text-slate-400">(IANA)</span></label>
-                <input value={form.timezone} onChange={e => field('timezone', e.target.value)} placeholder="e.g. Africa/Lagos"
+                <input value={form.timezone} onChange={e => field('timezone', e.target.value)} placeholder="e.g. Europe/Ljubljana or Africa/Lagos"
                   className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm font-mono" />
               </div>
               <div>
